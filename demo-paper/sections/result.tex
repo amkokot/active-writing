@@ -1,0 +1,15 @@
+\section{Keep a statement and its proof together}\label{sec:result}
+The finite geometric series is a convenient example: it has a short proof and
+a numerical check that uses no scientific Python packages.
+
+\begin{theorem}[Finite geometric series]\label{thm:geometric}
+For a real number $r\ne1$ and an integer $n\ge0$,
+\begin{equation}\label{eq:sum}
+\sum_{k=0}^{n}r^k=\frac{1-r^{n+1}}{1-r}.
+\end{equation}
+\end{theorem}
+
+The proof is in the appendix. Try the proof-focused view to bring it next to
+Theorem~\ref{thm:geometric}; editing the brought-forward proof changes its real
+appendix source, not a detached copy. Equation~\eqref{eq:sum} is also an internal
+reference you can follow.

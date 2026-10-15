@@ -1,0 +1,51 @@
+{
+  "name": "active-writing",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "license": "MIT",
+  "engines": { "node": ">=24" },
+  "overrides": { "micromark-extension-math": { "katex": "$katex" } },
+  "scripts": {
+    "dev": "vite",
+    "setup": "node scripts/portableSetup.mjs",
+    "start": "node scripts/desktopLauncher.mjs",
+    "demo": "node scripts/seedWelcome.mjs",
+    "build": "tsc -b && vite build",
+    "typecheck": "tsc -b --pretty false",
+    "check": "node scripts/checkChanges.mjs",
+    "check:full": "node scripts/checkChanges.mjs --full",
+    "export:app": "node scripts/exportAw.mjs",
+    "test:checks": "node --test scripts/checkPlan.test.mjs",
+    "test:sharing-deployment": "node --test deploy/cloudflare-reader/project.test.mjs",
+    "test:files": "node --test server/projectFiles.test.ts server/collaboratorExport.test.ts server/shareReader.test.ts server/portableExport.test.ts",
+    "test:storage": "node --test server/projectStorage.test.ts",
+    "test:sync": "node --test server/deviceSync.test.ts server/syncStaging.test.ts server/syncReconcile.test.ts server/syncClone.test.ts server/syncCollect.test.ts server/syncConversationCollect.test.ts server/syncResearchMerge.test.ts server/syncExchange.test.ts server/syncSsh.test.ts",
+    "test:workflow": "node --test server/researchWorkflow.test.ts server/workspaceFolders.test.ts server/researchHarness.test.ts server/agentEfficiency.test.ts server/researchPhase.test.ts server/experimentSessions.test.ts server/experimentConcurrency.test.ts server/experimentExtensions.test.ts server/evidenceSnapshots.test.ts server/experimentHeatmap.test.ts",
+    "test:writing": "node --test server/writing.test.ts",
+    "test:versions": "node --test server/manuscriptVersions.test.ts",
+    "test:queue": "node --test server/queueEntries.test.ts server/attention.test.ts server/projectQueue.test.ts",
+    "test:chrome": "node --test scripts/chromePreferences.test.mjs",
+    "test:startup": "node --test scripts/desktopServer.test.mjs scripts/desktopLauncher.test.mjs server/startup.test.ts",
+    "test": "node --test server/selectionPassages.test.ts server/windowWorkspace.test.ts server/environmentEditing.test.ts server/repositories.test.ts server/focus.test.ts server/sourceSync.test.ts server/references.test.ts server/headings.test.ts server/paneZoom.test.ts server/editorGeometry.test.ts server/idleCompilation.test.ts server/turbo.test.ts server/notebook.test.ts server/workspace.test.ts server/localModels.test.ts server/localReview.test.ts server/handoffs.test.ts server/attention.test.ts server/queueEntries.test.ts server/workbench.test.ts server/taskSource.test.ts server/sourceRefresh.test.ts server/chunks.test.ts server/replyOutline.test.ts server/replyMarkdown.test.ts server/experiments.test.ts server/efficiency.test.ts server/branding.test.ts server/review.test.ts server/researchWorkflow.test.ts server/workspaceFolders.test.ts",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "katex": "^0.19.0",
+    "lucide-react": "^0.468.0",
+    "pdfjs-dist": "^6.2.108",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
+    "remark-math": "^6.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^4.3.4",
+    "typescript": "~5.7.2",
+    "vite": "^6.0.5"
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "files": ["src/largerBrowserRecovery.ts", "src/manuscriptBuildCache.ts", "scripts/awOffline.ts", "src/answerCue.ts", "src/sourceLines.ts", "src/manuscripts.ts", "src/researchLinks.ts", "src/browserRecovery.ts", "src/researchReadiness.ts", "src/projectQueue.ts", "src/experimentActions.ts", "src/projectFiles.ts", "src/notebookCatalogue.ts", "src/experimentImages.ts", "src/experimentLimits.ts", "src/experimentEvidence.ts", "src/experimentSweep.ts", "src/freshExperimentContext.ts", "src/experimentDrafts.ts", "src/plotInspection.ts", "scripts/awResearch.ts", "src/researchInstructions.ts", "src/loadDocument.ts", "src/blockReel.ts", "src/proofLinks.ts", "src/idleCompilation.ts", "src/sourceViewport.ts", "src/queueEntries.ts", "src/environmentEditing.ts", "src/windowWorkspace.ts", "src/windowMessages.ts", "src/selectionPassages.ts"],
+  "compilerOptions": {
+    "composite": true,
+    "skipLibCheck": true,
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "allowImportingTsExtensions": true,
+    "noEmit": true
+  },
+  "include": ["scripts/awSync.ts", "src/readingFigures.ts", "src/latexReading.ts", "src/latexStructure.ts", "src/textareaViewport.ts", "scripts/awVersions.ts", "src/writing.ts", "scripts/awWriting.ts", "scripts/awAgentState.ts", "src/experimentInputs.ts", "src/workspaceResume.ts", "src/readingPosition.ts", "src/experimentHeatmap.ts", "vite.config.ts", "server/**/*.ts", "src/brand.ts", "src/types.ts", "src/display.ts", "src/paperAppearance.ts", "src/headingHierarchy.ts", "src/paneZoom.ts", "src/editorGeometry.ts", "src/references.ts", "src/pdfLinks.ts", "src/turbo.ts", "src/manuscriptView.ts", "src/projectNavigation.ts", "src/rewrite.ts", "src/editableText.ts", "src/sourceChunks.ts", "src/sourceAnchors.ts", "src/notebook.ts", "src/notebookSync.ts", "src/workspaceTools.ts", "src/workspaceFolders.ts", "src/study.ts", "src/localReview.ts", "src/review.ts", "src/mathText.ts", "src/replyOutline.ts", "src/replyMarkdown.ts", "src/lazyDisclosure.ts", "src/jsonSnapshot.ts", "src/handoffs.ts", "src/attention.ts", "src/workbench.ts", "src/taskSource.ts", "src/sourceRefresh.ts", "src/acknowledgedSave.ts", "src/experiments.ts", "src/experimentContext.ts"]
+}

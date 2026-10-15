@@ -1,0 +1,14 @@
+# Aw-local scientific tools; no GPU stack or optional POT backends.
+# Existing bundled array/dataframe versions are retained in the local overlay.
+numpy==2.3.5
+pandas==3.0.1
+scipy
+matplotlib
+sympy
+networkx
+scikit-learn
+statsmodels
+cvxpy
+POT
+nbformat
+psutil

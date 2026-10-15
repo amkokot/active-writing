@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <title>Active Writing</title>
+  <rect x="1" y="1" width="30" height="30" rx="9" fill="#262722" stroke="#999b92" stroke-width=".6" />
+  <text x="15.5" y="22" text-anchor="middle" fill="#fff" font-family="Georgia, 'Times New Roman', serif" font-size="20" font-style="italic" letter-spacing="-1">Aw</text>
+</svg>

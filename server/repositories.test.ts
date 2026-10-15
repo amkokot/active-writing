@@ -1,0 +1,121 @@
+import assert from "node:assert/strict";
+import { test } from "node:test";
+import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
+import path from "node:path";
+import { checked } from "./commands.ts";
+import { cloneRepository, fullVerified, normalizeRemote, repoStatus, selectProject, syncRepository } from "./repositories.ts";
+import { getProject, parseProject, registry, saveEdits } from "./projects.ts";
+import { writeNotebook } from "./notebookStore.ts";
+import { readExperiments } from "./experiments.ts";
+import { createHandoff } from "./handoffs.ts";
+
+test("repository import, source-preserving edits, commit/push, and collaborator pull", async () => {
+  const trials = path.join(process.cwd(), ".paperfocus", "trials");
+  await mkdir(trials, { recursive: true });
+  const workspace = await mkdtemp(path.join(trials, "repositories-"));
+  const seed = path.join(workspace, "seed");
+  const remote = path.join(workspace, "remote.git");
+  await mkdir(seed); await mkdir(path.join(seed, "sections"));
+  const main = "\\documentclass{article}\n\\usepackage{amsthm}\n\\newtheorem{theorem}{Theorem}\n\\newtheorem{claim}[theorem]{Claim}\n\\newtheorem*{remark}{Remark}\n\\begin{document}\n\\input{sections/body}\n\\end{document}\n";
+  const body = "% A collaborator comment must survive.\n\\section{Introduction}\n% Inline prefix must not swallow prose.\n\nFirst paragraph with $x_1$ and \\ref{result}.\n\n\\begin{theorem}\\label{result}\nThe result holds.\n\\end{theorem}\n";
+  await writeFile(path.join(seed, "main.tex"), main);
+  await writeFile(path.join(seed, "sections/body.tex"), body);
+  await checked("git", ["init", "-b", "main"], seed);
+  await checked("git", ["config", "user.name", "Paper Focus Trial"], seed);
+  await checked("git", ["config", "user.email", "trial@example.test"], seed);
+  await checked("git", ["add", "."], seed);
+  await checked("git", ["commit", "-m", "Trial seed"], seed);
+  await checked("git", ["clone", "--bare", seed, remote], workspace);
+
+  const document = await cloneRepository(workspace, "", "Trial paper", undefined, remote);
+  const { root } = await getProject(workspace, document.project.id);
+  assert.match(document.project.folder, /^papers\//);
+  await writeNotebook(workspace, document.project.id, 0, []);
+  await readExperiments(workspace, document.project.id, "experiment");
+  await createHandoff(workspace, document.project.id, { packet: "Private local notes", transport: "files" });
+  const originalMain = await readFile(path.join(root, "main.tex"), "utf8");
+  assert.equal(document.project.mainFile, "main.tex");
+  assert.ok(document.nodes.some((node) => node.title === "Introduction"));
+  assert.ok(document.nodes.some((node) => node.kind === "theorem"));
+  assert.equal((await registry(workspace)).activeId, document.project.id);
+  await checked("git", ["config", "user.name", "Paper Focus Trial"], root);
+  await checked("git", ["config", "user.email", "trial@example.test"], root);
+  const first = document.paragraphs.find((paragraph) => paragraph.text.startsWith("First paragraph"))!;
+  assert.ok(first);
+  const revised = await saveEdits(workspace, document.project.id, { [first.id]: "Revised paragraph with $x_1$ and \\ref{result}." }, document.revision);
+  const source = await readFile(path.join(root, "sections/body.tex"), "utf8");
+  assert.ok(source.includes("% A collaborator comment must survive."));
+  assert.ok(source.includes("\\label{result}"));
+  assert.equal(await readFile(path.join(root, "main.tex"), "utf8"), originalMain);
+  assert.equal(revised.paragraphs.find((paragraph) => paragraph.id === first.id)?.text, "Revised paragraph with $x_1$ and \\ref{result}.");
+  await assert.rejects(() => saveEdits(workspace, document.project.id, { [first.id]: "Stale overwrite" }, document.revision), /changed on disk/);
+  await assert.rejects(() => syncRepository(workspace, document.project.id, "pull", "origin"), /commit your local changes/);
+  await assert.rejects(() => syncRepository(workspace, document.project.id, "push", "origin", "Revise"), /compile the full paper/);
+
+  // Simulate the compile-verification record; compilation itself is trialed through the live UI.
+  const build = path.join(workspace, ".paperfocus", "project-data", document.project.id, "build");
+  await mkdir(build, { recursive: true });
+  await writeFile(path.join(build, "full-compile.json"), JSON.stringify({ success: true, sourceRevision: revised.revision, mainFile: revised.project.mainFile, engine: "pdflatex" }));
+  const pushed = await syncRepository(workspace, document.project.id, "push", "origin", "Revise paragraph");
+  assert.equal(pushed.status.changes.length, 0);
+  assert.equal(await checked("git", ["ls-files", "--", ".paperfocus"], root), "");
+  const collaborator = path.join(workspace, "collaborator");
+  await checked("git", ["clone", remote, collaborator], workspace);
+  assert.deepEqual((await checked("git", ["ls-files"], collaborator)).split("\n").sort(), ["main.tex", "sections/body.tex"]);
+  await checked("git", ["config", "user.name", "Collaborator"], collaborator);
+  await checked("git", ["config", "user.email", "collaborator@example.test"], collaborator);
+  await writeFile(path.join(collaborator, "sections/body.tex"), source + "\nCollaborator contribution.\n");
+  await checked("git", ["add", "."], collaborator);
+  await checked("git", ["commit", "-m", "Collaborator edit"], collaborator);
+  await checked("git", ["push"], collaborator);
+  const pulled = await syncRepository(workspace, document.project.id, "pull", "origin");
+  assert.ok(pulled.document.paragraphs.some((paragraph) => paragraph.text.includes("Collaborator contribution")));
+  assert.equal(pulled.status.fullVerified, false);
+  assert.equal((await repoStatus(workspace, document.project.id)).changes.length, 0);
+  assert.equal((await parseProject(workspace, document.project.id)).project.id, document.project.id);
+
+  const currentBody = await readFile(path.join(root, "sections/body.tex"), "utf8");
+  await writeFile(path.join(root, "sections/body.tex"), currentBody + "\n\\begin{claim}[Local claim]\nThe claim holds.\n\\end{claim}\n\\begin{proof}[Proof of the claim]\nThe proof holds.\n\\end{proof}\n\\begin{remark}\nA remark.\n\\end{remark}\n");
+  const expanded = await parseProject(workspace, document.project.id);
+  const claim = expanded.nodes.find((node) => node.environment === "claim")!;
+  assert.equal(claim.title, "Claim 2 · Local claim");
+  assert.equal(claim.environmentCounter, "theorem");
+  assert.ok(expanded.nodeBodies[claim.id].includes("\\begin{claim}[Local claim]"));
+  assert.ok(expanded.nodes.some((node) => node.environment === "remark" && node.title === "Remark"));
+  const proof = expanded.nodes.find((node) => node.environment === "proof")!;
+  assert.equal(proof.parentId, claim.id);
+  assert.ok(expanded.nodeBodies[proof.id].includes("\\begin{proof}[Proof of the claim]"));
+  const intro = expanded.nodes.find((node) => node.title === "Introduction")!;
+  assert.match(expanded.nodeBodies[intro.id], /% Inline prefix must not swallow prose\.\r?\n/);
+
+  // A different root requires its own verification even when no source file changes.
+  await writeFile(path.join(root, "other.tex"), main);
+  const withOtherRoot = await parseProject(workspace, document.project.id);
+  await writeFile(path.join(build, "full-compile.json"), JSON.stringify({ success: true, sourceRevision: withOtherRoot.revision, mainFile: "main.tex", engine: "pdflatex" }));
+  assert.equal(await fullVerified(workspace, document.project.id), true);
+  await selectProject(workspace, document.project.id, "other.tex");
+  assert.equal(await fullVerified(workspace, document.project.id), false);
+  // Root changes don't alter the source revision; saves must fence both identities.
+  await assert.rejects(() => saveEdits(workspace, document.project.id, { [first.id]: "Wrong-root overwrite" }, withOtherRoot.revision, undefined, "main.tex"), /main file changed/);
+  assert.equal(await readFile(path.join(root, "sections/body.tex"), "utf8"), currentBody + "\n\\begin{claim}[Local claim]\nThe claim holds.\n\\end{claim}\n\\begin{proof}[Proof of the claim]\nThe proof holds.\n\\end{proof}\n\\begin{remark}\nA remark.\n\\end{remark}\n");
+  await selectProject(workspace, document.project.id, "main.tex", "xelatex");
+  assert.equal(await fullVerified(workspace, document.project.id), false);
+  await writeFile(path.join(root, "broken.tex"), "\\documentclass{article}\n\\begin{document}\n\\input{missing}\n\\end{document}");
+  const unfinished = await selectProject(workspace, document.project.id, "broken.tex");
+  assert.equal(unfinished.project.mainFile, "broken.tex");
+  assert.ok(unfinished.paragraphs.some(p => p.renderIssue?.includes("not available")));
+  assert.ok(unfinished.paragraphs.some(p => p.file === "broken.tex" && p.text.includes("\\input{missing}")));
+  await assert.rejects(() => selectProject(workspace, document.project.id, "sections/body.tex"), /documentclass/);
+  await assert.rejects(() => selectProject(workspace, document.project.id, "../outside.tex"), /inside the project/);
+  assert.equal((await getProject(workspace, document.project.id)).project.mainFile, "broken.tex");
+});
+
+test("remote URLs normalize without permitting embedded secrets or shell options", () => {
+  assert.equal(normalizeRemote("owner/paper"), "https://github.com/owner/paper.git");
+  assert.equal(normalizeRemote("owner/paper.git"), "https://github.com/owner/paper.git");
+  assert.equal(normalizeRemote("https://github.com/owner/paper/"), "https://github.com/owner/paper.git");
+  assert.equal(normalizeRemote("https://www.overleaf.com/project/abcdef123"), "https://git.overleaf.com/abcdef123");
+  assert.throws(() => normalizeRemote("https://secret:token@github.com/owner/paper"));
+  assert.throws(() => normalizeRemote("--upload-pack=evil"));
+  assert.throws(() => normalizeRemote("file:///somewhere"));
+});
