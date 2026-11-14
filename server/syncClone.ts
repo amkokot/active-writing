@@ -4,7 +4,7 @@ import { lstat, mkdir, readdir, realpath } from "node:fs/promises";
 import path from "node:path";
 import { initializeSyncDevice, privateSyncPath, readSyncBytes, saveSyncSnapshot, syncStatus } from "./deviceSync.ts";
 import { saveImmutableSyncArtifact, stageSyncSnapshot } from "./syncStaging.ts";
-import { canonical, safeSyncId, safeSyncPath, syncHash, syncLimits, validateSnapshot, validateSyncJson, type SyncSnapshot } from "./syncProtocol.ts";
+import { canonical, canonicalHash, safeSyncId, safeSyncPath, syncHash, syncLimits, validateSnapshot, validateSyncJson, type SyncSnapshot } from "./syncProtocol.ts";
 import { withRecordLock } from "./recordLock.ts";
 import { projectCatalogue } from "./projectStorage.ts";
 import { validateNotebookEntries } from "./notebookStore.ts";
@@ -13,8 +13,11 @@ import { validateExperimentNotebook } from "../src/experiments.ts";
 import { manuscriptRoots } from "./manuscriptRoots.ts";
 import type { NotebookEntry, PaperProject } from "../src/types.ts";
 import { appCodeRoot } from "./appPaths.ts";
+import {verifyBlob,receiveBlob,materializeBlob,guardedBulkHash,streamedHash,type BlobRef} from './syncBlobs.ts';
+import {enableBulkSync} from './syncBulkCapture.ts';
+import {createReadStream} from 'node:fs';
 
-export interface CloneOptions { destination: string; mainFile: string; label: string; engine?: PaperProject["engine"] }
+export interface CloneOptions { destination: string; mainFile: string; label: string; engine?: PaperProject["engine"]; blobHome?:string }
 const ownedFolders = new Set(["experiments", "handoffs", "references", "research", "study-evidence", "trial-evidence"]);
 function portable(name: string) {
   return typeof name === "string" && safeSyncPath(`source/${name}`) && name.split("/").length <= 32 && name.split("/").every(part => !part.startsWith(".") && !/[<>"|?*]/.test(part) && !/^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(part));
@@ -23,12 +26,14 @@ async function info(target: string) {
   try { const stat = await lstat(target); if (stat.isSymbolicLink()) throw new Error("First copy cannot use linked destinations."); return stat; }
   catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
 }
-function json(snapshot: SyncSnapshot, name: string) {
+async function json(snapshot: SyncSnapshot, name: string, blobHome?:string) {
   const record = snapshot.records.find(item => item.path === name); if (!record) return undefined;
-  const value = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(Buffer.from(record.data, "base64"))); validateSyncJson(value); return value;
+  const bytes=record.external?await readSyncBytes(await verifyBlob(blobHome!,record),syncLimits.fileBytes):Buffer.from(record.data,'base64');
+  const value = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)); validateSyncJson(value);if(record.external&&record.kind==='experiment'&&canonicalHash(value)!==record.semanticHash)throw new Error('Notebook semantic reference checksum mismatch.'); return value;
 }
-function inspectPacket(snapshot: SyncSnapshot, options: CloneOptions) {
+async function inspectPacket(snapshot: SyncSnapshot, options: CloneOptions) {
   validateSnapshot(snapshot);
+  if(snapshot.records.some(r=>r.external)&&!options.blobHome)throw new Error('Version 2 first copy needs the explicit verified --blob-home staging cache.');
   if (!portable(snapshot.projectId)) throw new Error("Project identity is not portable to a new desktop.");
   if (!portable(options.mainFile) || !options.mainFile.endsWith(".tex") || !options.label?.trim() || options.label.length > 60 || /[\x00-\x1f]/.test(options.label) || options.engine && !["pdflatex", "xelatex", "lualatex"].includes(options.engine)) throw new Error("Choose an exact TeX root, device name and supported compiler.");
   const sources: Record<string, string> = {}, notebooks = new Set<string>(), pending: string[] = []; let cells = 0, runs = 0;
@@ -57,10 +62,10 @@ function inspectPacket(snapshot: SyncSnapshot, options: CloneOptions) {
     }
     if (record.kind === "experiment") {
       const owner = parts[1]; if (!safeSyncId(owner) || owner.length > 64) throw new Error("Invalid experiment owner.");
-      const notebook = json(snapshot, record.path); validateExperimentNotebook(notebook); notebooks.add(owner); cells += notebook.cells.length;
+      const notebook = await json(snapshot, record.path,options.blobHome); validateExperimentNotebook(notebook); notebooks.add(owner); cells += notebook.cells.length;
     }
     if (record.kind === "run") {
-      const saved = json(snapshot, record.path), filename = parts.at(-1)!;
+      const saved = await json(snapshot, record.path,options.blobHome), filename = parts.at(-1)!;
       if (!saved || !safeSyncId(saved.id) || ![`${saved.id}.json`, `${saved.id}.collection.json`].includes(filename) || filename === `${saved.id}.json` && typeof saved.cellId !== "string") throw new Error("Invalid saved-run identity; original packet preserved.");
       if (saved.status === "working" || saved.status === "queued") pending.push(record.path);
       if (!filename.endsWith(".collection.json")) runs++;
@@ -69,9 +74,10 @@ function inspectPacket(snapshot: SyncSnapshot, options: CloneOptions) {
   if (Object.keys(sources).length > 500) throw new Error("First copy supports up to 500 TeX files; use the paper's smaller project scope.");
   const roots = manuscriptRoots(sources, true);
   if (!roots.includes(options.mainFile)) throw new Error("Choose an independent TeX root present in the packet, not an included section.");
-  const policy = json(snapshot, "project/manuscripts.json");
+  const policy = await json(snapshot, "project/manuscripts.json",options.blobHome);
   if (!policy || typeof policy.name !== "string" || !policy.name.trim() || policy.name.length > 200 || typeof policy.createdAt !== "string" || !Number.isFinite(Date.parse(policy.createdAt))
-    || Object.keys(policy).some(key => !["name", "createdAt", "manuscriptPurposes", "manuscriptVersions", "manuscriptOverviewTargets"].includes(key))) throw new Error("Invalid or newer manuscript policy. No copy made.");
+    || Object.keys(policy).some(key => !["name", "createdAt", "manuscriptPurposes", "manuscriptVersions", "manuscriptOverviewTargets", "manuscriptPins"].includes(key))) throw new Error("Invalid or newer manuscript policy. No copy made.");
+  if (policy.manuscriptPins !== undefined && (!policy.manuscriptPins || typeof policy.manuscriptPins !== "object" || Array.isArray(policy.manuscriptPins) || Object.entries(policy.manuscriptPins).some(([role, file]) => !["overview", "notes", "publication"].includes(role) || typeof file !== "string" || !roots.includes(file) || (policy.manuscriptPurposes?.[file] ?? "notes") !== role))) throw new Error("Invalid pinned manuscript metadata.");
   for (const field of ["manuscriptPurposes", "manuscriptOverviewTargets"]) {
     const map = policy[field];
     if (!map || typeof map !== "object" || Array.isArray(map) || Object.keys(map).length > 1000) throw new Error("Invalid manuscript policy map.");
@@ -81,7 +87,7 @@ function inspectPacket(snapshot: SyncSnapshot, options: CloneOptions) {
   if (!Array.isArray(policy.manuscriptVersions) || policy.manuscriptVersions.length > 1000) throw new Error("Invalid manuscript lineage.");
   for (const version of policy.manuscriptVersions) if (!version || !portable(version.file) || !version.file.endsWith(".tex") || typeof version.family !== "string" || !version.family || version.family.length > 100 || !Number.isSafeInteger(version.number) || version.number < 1 || typeof version.createdAt !== "string" || !Number.isFinite(Date.parse(version.createdAt))
     || !["fresh", "continue"].includes(version.notebook) || version.previousFile !== undefined && (!portable(version.previousFile) || !version.previousFile.endsWith(".tex"))) throw new Error("Invalid version ancestry.");
-  const catalogue = json(snapshot, "data/notebook.json");
+  const catalogue = await json(snapshot, "data/notebook.json",options.blobHome);
   if (catalogue) {
     if (catalogue.version !== 1 || !Number.isSafeInteger(catalogue.revision) || catalogue.revision < 0) throw new Error("Unsupported notebook catalogue.");
     validateNotebookEntries(catalogue.entries);
@@ -92,14 +98,14 @@ function inspectPacket(snapshot: SyncSnapshot, options: CloneOptions) {
       if (entry.handoffs.some(item => !item.historyOnly && !item.studyTurnId) && !entry.reply.trim() && entry.status === "open") pending.push(`conversation ${entry.id}, legacy handoff`);
     }
   }
-  const workbench = json(snapshot, "data/workbench.json");
+  const workbench = await json(snapshot, "data/workbench.json",options.blobHome);
   if (workbench) {
     if (workbench.version !== 1 || !Number.isSafeInteger(workbench.revision) || workbench.revision < 0) throw new Error("Unsupported assistance store.");
     validateWorkbench(workbench);
     for (const task of workbench.attentionTasks) if (["queued", "working"].includes(task.status) && !task.reminder && task.review?.kind !== "comment" && task.writing?.kind !== "paragraph") pending.push(`manuscript request ${task.id}`);
   }
   const project: PaperProject = { id: snapshot.projectId, name: policy.name, folder: "paper", mainFile: options.mainFile, createdAt: policy.createdAt,
-    ...(options.engine ? { engine: options.engine } : {}), manuscriptPurposes: policy.manuscriptPurposes, manuscriptVersions: policy.manuscriptVersions, manuscriptOverviewTargets: policy.manuscriptOverviewTargets };
+    ...(options.engine ? { engine: options.engine } : {}), manuscriptPurposes: policy.manuscriptPurposes, manuscriptVersions: policy.manuscriptVersions, manuscriptOverviewTargets: policy.manuscriptOverviewTargets, ...(policy.manuscriptPins ? { manuscriptPins: policy.manuscriptPins } : {}) };
   return { project, roots, pending, cells, notebooks: notebooks.size, runs, sourceFiles: snapshot.records.filter(record => record.path.startsWith("source/")).length };
 }
 async function newHome(options: CloneOptions) {
@@ -112,15 +118,15 @@ async function newHome(options: CloneOptions) {
   if (existing && !existing.isDirectory()) throw new Error("Destination is an existing file. It was preserved.");
   return { destination, existing: Boolean(existing) };
 }
-async function verifyCopiedFiles(home: string, projectId: string, expected: Array<{ path: string; bytes: Buffer }>) {
-  const wanted = new Map(expected.map(file => [file.path, file.bytes])), seen = new Set<string>(); let visited = 0;
+async function verifyCopiedFiles(home: string, projectId: string, expected: Array<{ path: string; bytes?: Buffer; ref?:BlobRef }>) {
+  const wanted = new Map(expected.map(file => [file.path, file])), seen = new Set<string>(); let visited = 0;
   async function walk(relative: string) {
-    if (++visited > 10000) throw new Error("First-copy verification exceeded its bounded file window.");
+    if (++visited > 100000) throw new Error("First-copy verification exceeded its bounded file window.");
     const target = path.join(home, ...relative.split("/")), stat = await info(target);
     if (stat?.isDirectory()) for (const entry of await readdir(target)) await walk(`${relative}/${entry}`);
     else if (stat?.isFile()) {
       const original = wanted.get(relative);
-      if (!original || !(await readSyncBytes(target, syncLimits.fileBytes)).equals(original)) throw new Error(`Copied records changed during preparation: ${relative}. Copy retained; no overwrite allowed.`);
+      if (!original || (original.ref?(await streamedHash(target)).sha256!==original.ref.sha256:!(await readSyncBytes(target, syncLimits.fileBytes)).equals(original.bytes!))) throw new Error(`Copied records changed during preparation: ${relative}. Copy retained; no overwrite allowed.`);
       seen.add(relative);
     } else throw new Error("A copied file/folder disappeared or changed type.");
   }
@@ -130,8 +136,8 @@ async function verifyCopiedFiles(home: string, projectId: string, expected: Arra
   if (seen.size !== wanted.size) throw new Error("Incomplete first copy. Original packet retained.");
 }
 export async function previewSyncClone(snapshot: SyncSnapshot, options: CloneOptions) {
-  const packet = inspectPacket(snapshot, options), target = await newHome(options);
-  const normalized = { destination: target.destination, mainFile: options.mainFile, label: options.label.trim(), ...(options.engine ? { engine: options.engine } : {}) };
+  const packet = await inspectPacket(snapshot, options), target = await newHome(options);
+  const normalized = { destination: target.destination, mainFile: options.mainFile, label: options.label.trim(), ...(options.engine ? { engine: options.engine } : {}),...(options.blobHome?{blobHome:await realpath(options.blobHome)}:{}) };
   const planId = syncHash(canonical({ version: 1, snapshotId: snapshot.id, projectId: snapshot.projectId, options: normalized, codeRoot: appCodeRoot }));
   return { planId, snapshotId: snapshot.id, projectId: snapshot.projectId, options: normalized, destinationExists: target.existing,
     project: packet.project, roots: packet.roots, pending: packet.pending, counts: { sourceFiles: packet.sourceFiles, notebooks: packet.notebooks, cells: packet.cells, runs: packet.runs },
@@ -192,8 +198,8 @@ export async function commitSyncClone(snapshot: SyncSnapshot, options: CloneOpti
     }
     const device = await initializeSyncDevice(home, plan.options.label);
     if (device.device?.id === snapshot.device.id) throw new Error("Destination copied the source device identity. It must have its own identity.");
-    const expected: Array<{ path: string; bytes: Buffer }> = snapshot.records.filter(record => !record.path.startsWith("project/")).map(record => ({
-      path: record.path.startsWith("source/") ? `paper/${record.path.slice(7)}` : `.paperfocus/project-data/${snapshot.projectId}/${record.path.slice(5)}`, bytes: Buffer.from(record.data, "base64") }));
+    const expected: Array<{ path: string; bytes?: Buffer; ref?:BlobRef }> = snapshot.records.filter(record => !record.path.startsWith("project/")).map(record => ({
+      path: record.path.startsWith("source/") ? `paper/${record.path.slice(7)}` : `.paperfocus/project-data/${snapshot.projectId}/${record.path.slice(5)}`, ...(record.external?{ref:record}:{bytes:Buffer.from(record.data, "base64")}) }));
     expected.push({ path: `.paperfocus/project-data/${snapshot.projectId}/project.json`, bytes: Buffer.from(JSON.stringify(projectCatalogue(plan.project, journal.createdAt), null, 2)) });
     expected.push({ path: "AGENTS.md", bytes: Buffer.from(cloneGuide(home, plan.codeRoot, plan.project)) });
     let count = 0;
@@ -206,10 +212,14 @@ export async function commitSyncClone(snapshot: SyncSnapshot, options: CloneOpti
         directory = path.join(directory, part); const prior = await info(directory);
         if (!prior) await mkdir(directory); else if (!prior.isDirectory()) throw new Error("A clone destination parent is not a folder.");
       }
-      await saveImmutableSyncArtifact(target, file.bytes, syncLimits.fileBytes); await hooks.afterFile?.(++count);
+      if(file.ref){
+        try{await verifyBlob(home,file.ref);}catch(e){if((e as NodeJS.ErrnoException).code!=='ENOENT')throw e;await receiveBlob(home,file.ref,createReadStream(await verifyBlob(plan.options.blobHome!,file.ref)));}
+        const existing=await guardedBulkHash(home,file.path);if(existing!==file.ref.sha256){if(existing)throw new Error('Partial bulk copy changed; preserved.');await materializeBlob(home,home,file.path,file.ref,'');}
+      }else await saveImmutableSyncArtifact(target, file.bytes!, syncLimits.fileBytes); await hooks.afterFile?.(++count);
     }
     const registryFile = path.join(home, ".paperfocus/projects.json");
     await saveImmutableSyncArtifact(registryFile, Buffer.from(JSON.stringify({ activeId: plan.projectId, projects: [plan.project] }, null, 2)), 100000);
+    if(snapshot.version===2)await enableBulkSync(home,snapshot.projectId);
     const saved = await saveSyncSnapshot(home, snapshot); await stageSyncSnapshot(home, snapshot.projectId, snapshot);
     await verifyCopiedFiles(home, snapshot.projectId, expected);
     if (!(await readSyncBytes(registryFile, 100000)).equals(Buffer.from(JSON.stringify({ activeId: plan.projectId, projects: [plan.project] }, null, 2)))) throw new Error("First-copy registration changed. It was preserved; no completion claimed.");

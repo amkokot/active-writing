@@ -15,6 +15,7 @@ import { collaboratorExport, collaborationPages } from "./collaboratorExport.ts"
 import { latexMiddleware } from "./latexPlugin.ts";
 import { renderSharingPdf } from "./sharingPdf.ts";
 import { sharingPdfBrowser, sharingPdfHtml } from "./sharingPdf.ts";
+import { explorerMime } from "../src/experimentExplorer.ts";
 
 function unzip(archive: Buffer) {
   const files = new Map<string, Buffer>(); let offset = 0;
@@ -47,6 +48,23 @@ test("single-file sharing renders math and figures offline, links passages, excl
   assert.doesNotMatch(html, /PRIVATE_ARCHIVED_PROMPT|PRIVATE_LOCAL_PATH|PRIVATE_METADATA|PRIVATE_FILED_NOTE|PRIVATE_RECOVERY|PRIVATE_HIDDEN_CELL|PRIVATE_TRASH|EXECUTABLE_OUTPUT|<script|notebooks\/|href="manuscript\.md"|https?:\/\/.*\.woff/);
   assert.ok(html.includes("script-src 'none'"));
   assert.deepEqual(await readFile(f.experiments.path), original); assert.equal((await readNotebook(f.workspace, f.request.projectId)).revision, f.conversations.revision);
+});
+
+test("sharing explorers and uncertainty retains full native data, static bounds and no broken standalone downloads", async () => {
+  const f = await fixture(), nb = structuredClone(f.experiments.notebook), plot = nb.cells[0].outputs![0].data!["application/vnd.paperfocus.plot+json"] as any;
+  plot.series[0].band = { lower: [.1, .05], upper: [.7, .5], label: "Saved trial range" };
+  const explorer = { version: 1, title: "Trial explorer", description: "Saved repeated trials", ids: ["a", "b"], columns: [{ key: "x", label: "Cost", values: [1, 2] }, { key: "y", label: "Error", values: [.2, .1] }], x: "x", y: "y", dimensions: ["x", "y"] };
+  nb.cells[0].outputs!.push({ output_type: "display_data", data: { [explorerMime]: explorer } });
+  const saved = await writeExperiments(f.workspace, f.request.projectId, "question", f.experiments.revision, nb);
+  const html = (await collaboratorExport(f.workspace, { ...f.request, format: "html" })).data.toString();
+  assert.match(html, /Trial explorer/); assert.match(html, /<polygon/); assert.match(html, /Saved trial range/); assert.match(html, /<td>0.7<\/td>/);
+  assert.doesNotMatch(html, /href="figures\/[^" ]+\.json"/);
+  const zip = unzip((await collaboratorExport(f.workspace, { ...f.request, format: "zip" })).data);
+  const file = [...zip.keys()].find(name => name.endsWith("-visual.json"))!; assert.ok(file);
+  assert.deepEqual(JSON.parse(zip.get(file)!.toString()), explorer);
+  const shared = JSON.parse(zip.get("notebooks/conversation-1.ipynb")!.toString());
+  assert.deepEqual(shared.cells[0].outputs[1].data[explorerMime], explorer);
+  assert.equal((await readExperiments(f.workspace, f.request.projectId, "question")).revision, saved.revision);
 });
 
 test("sharing emits a section once when prose resumes after theorem/proof, preserving distinct same-title sections", async () => {

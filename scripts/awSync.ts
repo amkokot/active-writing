@@ -2,6 +2,10 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { open } from "node:fs/promises";
+import {createReadStream,createWriteStream} from 'node:fs';
+import {pipeline} from 'node:stream/promises';
+import {verifyBlob} from '../server/syncBlobs.ts';
+import {withSyncCycle} from '../server/syncAuto.ts';
 import { captureSyncSnapshot, initializeSyncDevice, readSyncBytes, readSyncSnapshot, saveSyncSnapshot, syncStatus } from "../server/deviceSync.ts";
 import { previewSync, type SyncPlan } from "../server/syncProtocol.ts";
 import { hydrateStagedSnapshot, prepareSyncReview, previewStagedSync, stageSyncSnapshot, stagedPlan, stagedSnapshots } from "../server/syncStaging.ts";
@@ -14,18 +18,20 @@ import { previewResearchMerge, commitResearchMerge, researchMergeCandidate, rese
 import { acknowledgeSyncHead, createSyncInventory, exchangeStatus, exportExchangeForPeer, exportSyncExchange, readSyncInventory, receiveSyncExchange, rememberSyncHead, syncWorkingCheckpoint, exchangeLimits } from "../server/syncExchange.ts";
 import { previewSshPeer, commitSshPeer, reconnectSshPeer, handleExchangeMessage } from "../server/syncSsh.ts";
 import { previewPairedSync, commitPairedSync, pairedSyncStatus } from "../server/syncPaired.ts";
+import {listReadingSourceReviews,readReadingSourceReview} from '../server/syncReadingSource.ts';
 
 export function syncOptions(args: string[]) {
   const command = args.shift() ?? "help", flags: Record<string, string> = {};
   const supported: Record<string, string[]> = { status: ["workspace"], init: ["workspace", "label"], snapshot: ["workspace", "project", "parent", "output"], preview: ["base", "local", "remote", "output", "brief"],
+    'source-reviews':['workspace','project','review','output'],
     stage: ["workspace", "project", "file"], staged: ["workspace", "project"], compare: ["workspace", "project", "local", "remote", "base", "output", "brief"],
     plan: ["workspace", "project", "plan", "output", "brief"], prepare: ["workspace", "project", "plan", "proposal"],
     checkpoint: ["workspace", "project", "parent"], changes: ["workspace", "project", "plan", "path", "output", "brief"], conflict: ["workspace", "project", "plan", "conflict", "output"],
     file: ["workspace", "project", "plan", "path", "side", "output"], reconcile: ["workspace", "project", "plan", "file", "conflict", "text-file", "note"],
-    clone: ["file", "destination", "main-file", "label", "engine", "plan"], collect: ["workspace", "project", "plan", "path", "entries", "review"], "collect-status": ["workspace", "project", "collection"],
+    clone: ["file", "destination", "main-file", "label", "engine", "plan", "blob-home"], collect: ["workspace", "project", "plan", "path", "entries", "review"], "collect-status": ["workspace", "project", "collection"],
     merge: ["workspace", "project", "plan", "proposal", "decisions", "review"], "merge-details": ["workspace", "project", "plan", "proposal", "decisions", "output"], "merge-file": ["workspace", "project", "plan", "path", "proposal", "decisions", "output"], "merge-status": ["workspace", "project", "merge"],
     inventory: ["workspace", "project", "output"], export: ["workspace", "project", "head", "inventory", "peer", "output"], receive: ["workspace", "project", "file"], "exchange-status": ["workspace", "project"], acknowledge: ["workspace", "project", "head"], remember: ["workspace", "project", "head"],
-    pair: ["workspace", "project", "host", "platform", "tool", "remote-workspace", "device", "review"], reconnect: ["workspace", "project", "peer", "max-mb", "timeout-seconds"], "exchange-stdio": ["workspace", "project"],
+    pair: ["workspace", "project", "host", "platform", "tool", "remote-workspace", "device", "review"], reconnect: ["workspace", "project", "peer", "max-mb", "timeout-seconds"], "exchange-stdio": ["workspace", "project"], "reading-stream-stdio":["workspace","project"],
     sync: ["workspace", "project", "peer", "max-mb", "timeout-seconds", "review"], "sync-status": ["workspace", "project", "sync"] };
   if (["help", "--help"].includes(command) || args.includes("--help")) return { command: "help", flags };
   if (!supported[command]) throw new Error("Unguarded whole-project apply is not implemented. Use --help for review, collection and explicitly paired exchanges.");
@@ -39,6 +45,7 @@ export function syncOptions(args: string[]) {
     flags[key] = value;
   }
   if (!["preview", "clone"].includes(command) && !flags.workspace) throw new Error("Use --workspace with the confirmed Aw home.");
+  if(command==='source-reviews'&&!flags.project)throw Error('Use the confirmed project for saved source comparisons.');
   if (command === "clone" && (["file", "destination", "main-file", "label"].some(key => !flags[key]) || flags.commit && !flags.plan)) throw new Error("First copy needs an exact packet, NEW destination, TeX root/device name and --plan HASH for commit.");
   if (command === "collect" && (!flags.project || !flags.plan || Boolean(flags.path) === Boolean(flags.entries) || flags.commit && !flags.review)
     || command === "collect-status" && (!flags.project || !flags.collection)) throw new Error("Notebook collection needs exact project/plan and either --path or --entries, with --review HASH for commit; status needs --collection HASH.");
@@ -49,7 +56,7 @@ export function syncOptions(args: string[]) {
   if (command === "reconcile" && ((flags["text-file"] || flags.conflict || flags.note) && (!flags["text-file"] || !flags.conflict || flags.file))) throw new Error("Use --conflict and --text-file together, or --file for decisions, never both.");
   if (["merge", "merge-details", "merge-file"].includes(command) && (!flags.project || !flags.plan || flags.commit && !flags.review || command === "merge-file" && !flags.path) || command === "merge-status" && (!flags.project || !flags.merge)) throw new Error("Merge needs exact project/plan and review ID for commit; file needs --path, status needs --merge HASH.");
   if (["inventory", "export", "receive", "exchange-status", "acknowledge", "remember"].includes(command) && (!flags.project || ["export", "acknowledge", "remember"].includes(command) && !flags.head || command === "export" && (!flags.output || flags.inventory && flags.peer) || command === "receive" && !flags.file)) throw new Error("Exchange needs exact project/head and NEW export file or received file; choose inventory or peer, not both.");
-  if (["pair", "reconnect", "exchange-stdio"].includes(command) && (!flags.project || command === "pair" && (["host", "platform", "tool", "remote-workspace", "device"].some(key => !flags[key]) || flags.commit && !flags.review) || command === "reconnect" && !flags.peer)) throw new Error("Pair needs an SSH alias, remote OS/tool/data home/device and exact review for commit; reconnect needs --peer HASH.");
+  if (["pair", "reconnect", "exchange-stdio", "reading-stream-stdio"].includes(command) && (!flags.project || command === "pair" && (["host", "platform", "tool", "remote-workspace", "device"].some(key => !flags[key]) || flags.commit && !flags.review) || command === "reconnect" && !flags.peer)) throw new Error("Pair needs an SSH alias, remote OS/tool/data home/device and exact review for commit; reconnect needs --peer HASH.");
   if (command === "sync" && (!flags.project || (flags.commit ? !flags.review || flags.peer || flags["max-mb"] || flags["timeout-seconds"] : !flags.peer || flags.review)) || command === "sync-status" && (!flags.project || !flags.sync)) throw new Error("Sync previews with --peer; commit uses only its exact --review HASH and saved budget/scope. Status needs --sync HASH.");
   return { command, flags };
 }
@@ -131,6 +138,7 @@ export async function syncCommand(args: string[]) {
 Ordinary proposals never import live data.
 
 node scripts/awSync.ts status --workspace AW_HOME
+node scripts/awSync.ts source-reviews --workspace AW_HOME --project ID [--review HASH] [--output NEW.json]
 node scripts/awSync.ts init --workspace AW_HOME --label Laptop
 node scripts/awSync.ts snapshot --workspace AW_HOME --project ID [--parent SNAPSHOT.json] [--output NEW.json]
 node scripts/awSync.ts checkpoint --workspace AW_HOME --project ID [--parent STAGED_HASH]
@@ -187,23 +195,29 @@ With --entries, it adds 1–8 settled new conversations and their distinct new n
 Existing conversations/owners, pending requests, source/review policy and deletions remain held.
 Merge previews a recoverable batch of safe research-source, conversation-field and notebook edits.
 Independent literal edits combine; held overlaps can use scoped source proposals/ordinary note decisions.
-Publication/locked text, review/task/policy changes and deletions are never automatically imported.
+Saved comments/replies and explicit UI human Resolve/Reopen markers may collect; competing comment edits stay held.
+Publication/locked text, other review/task/policy decisions and deletions remain protected.
 Save drafts first. Other conflicts remain held. Interrupted copies need status/identical retry, never forced JSON replacement.
 Snapshots contain private selected-project source and research. Save editor drafts first.
 Distinct device IDs and the same project ID/shared baseline are required. No unguarded apply or remote Python worker exists.
 Outputs never replace existing files. Keep snapshots private; these are not collaborator sharing copies.` };
   if (command === "clone") {
-    const snapshot = await readSyncSnapshot(flags.file), options = { destination: flags.destination, mainFile: flags["main-file"], label: flags.label, ...(flags.engine ? { engine: flags.engine as "pdflatex" | "xelatex" | "lualatex" } : {}) };
+    const snapshot = await readSyncSnapshot(flags.file), options = { destination: flags.destination, mainFile: flags["main-file"], label: flags.label, ...(flags.engine ? { engine: flags.engine as "pdflatex" | "xelatex" | "lualatex" } : {}),...(flags['blob-home']?{blobHome:flags['blob-home']}:{}) };
     return flags.commit ? commitSyncClone(snapshot, options, flags.plan) : previewSyncClone(snapshot, options);
   }
   if (command === "status") return syncStatus(flags.workspace);
+  if(command==='source-reviews')return detailResult(flags.review?await readReadingSourceReview(flags.workspace,flags.project,flags.review):{reviews:await listReadingSourceReviews(flags.workspace,flags.project)},flags.output);
   if (command === "sync-status") return pairedSyncStatus(flags.workspace, flags.project, flags.sync);
-  if (command === "sync") return flags.commit ? commitPairedSync(flags.workspace, flags.project, flags.review) : previewPairedSync(flags.workspace, flags.project, flags.peer, { ...(flags["max-mb"] ? { maxBytes: Number(flags["max-mb"]) * 1024 * 1024 } : {}), ...(flags["timeout-seconds"] ? { timeoutMs: Number(flags["timeout-seconds"]) * 1000 } : {}) });
+  if (command === "sync") return withSyncCycle(flags.workspace,flags.project,()=>flags.commit ? commitPairedSync(flags.workspace, flags.project, flags.review) : previewPairedSync(flags.workspace, flags.project, flags.peer, { ...(flags["max-mb"] ? { maxBytes: Number(flags["max-mb"]) * 1024 * 1024 } : {}), ...(flags["timeout-seconds"] ? { timeoutMs: Number(flags["timeout-seconds"]) * 1000 } : {}) }),2000);
   if (command === "pair") {
     const options = { host: flags.host, platform: flags.platform as "windows" | "posix", tool: flags.tool, workspace: flags["remote-workspace"], deviceId: flags.device };
     return flags.commit ? commitSshPeer(flags.workspace, flags.project, options, flags.review) : previewSshPeer(flags.workspace, flags.project, options);
   }
   if (command === "reconnect") return reconnectSshPeer(flags.workspace, flags.project, flags.peer, { ...(flags["max-mb"] ? { maxBytes: Number(flags["max-mb"]) * 1024 * 1024 } : {}), ...(flags["timeout-seconds"] ? { timeoutMs: Number(flags["timeout-seconds"]) * 1000 } : {}) });
+  if(command==='reading-stream-stdio'){
+    await (await import('../server/syncReadingStream.ts')).serveReadingStream(flags.workspace,flags.project,process.stdin,process.stdout);
+    return {streamClosed:true};
+  }
   if (command === "exchange-stdio") {
     let size = 0; const chunks: Buffer[] = [];
     for await (const chunk of process.stdin) { const bytes = Buffer.from(chunk); if ((size += bytes.length) > exchangeLimits.expanded) throw new Error("Incoming SSH message exceeds its bounded limit."); chunks.push(bytes); }
@@ -260,7 +274,9 @@ Outputs never replace existing files. Keep snapshots private; these are not coll
   }
   if (command === "conflict") return detailResult(await syncExactConflict(flags.workspace, flags.project, flags.plan, flags.conflict), flags.output);
   if (command === "file") {
-    const record = await syncExactFile(flags.workspace, flags.project, flags.plan, flags.path, flags.side), bytes = Buffer.from(record.data, "base64");
+    const record = await syncExactFile(flags.workspace, flags.project, flags.plan, flags.path, flags.side);
+    if(record.external){if(!flags.output)throw new Error('Streamed evidence needs --output NEW_FILE for exact bytes.');await pipeline(createReadStream(await verifyBlob(flags.workspace,record)),createWriteStream(path.resolve(flags.output),{flags:'wx'}));return {path:record.path,sha256:record.sha256,bytes:record.bytes,output:path.resolve(flags.output),complete:true,liveImport:false};}
+    const bytes = Buffer.from(record.data, "base64");
     if (flags.output) return { path: record.path, sha256: record.sha256, bytes: bytes.length, output: await writeNew(flags.output, bytes), complete: true, liveImport: false };
     let text: string;
     try { text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes); if (/[\x00-\x08\x0b\x0c\x0e-\x1f]/.test(text)) throw new Error("Binary"); }
@@ -292,4 +308,4 @@ Outputs never replace existing files. Keep snapshots private; these are not coll
   catch (error) { throw new Error(`${output ? `Preview preserved at ${output}. ` : ""}Brief was not saved: ${(error as Error).message}`); }
   return { ...plan.summary, projectId: plan.projectId, planId: staged?.id, historyChecked: staged?.historyChecked ?? false, applySupported: false, output, brief, conflicts: plan.conflicts.map(({ path: file, field, reason }) => ({ path: file, field, reason })) };
 }
-if (process.argv[1] && path.resolve(process.argv[1]).toLowerCase() === fileURLToPath(import.meta.url).toLowerCase()) syncCommand(process.argv.slice(2)).then(result => console.log("help" in result ? result.help : JSON.stringify(result, null, 2))).catch(error => { console.error(error.message); process.exitCode = 1; });
+if (process.argv[1] && path.resolve(process.argv[1]).toLowerCase() === fileURLToPath(import.meta.url).toLowerCase()) syncCommand(process.argv.slice(2)).then(result => {if(!('streamClosed' in result))console.log("help" in result ? result.help : JSON.stringify(result, null, 2));}).catch(error => { console.error(error.message); process.exitCode = 1; });

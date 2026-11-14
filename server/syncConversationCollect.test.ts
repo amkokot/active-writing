@@ -10,7 +10,7 @@ import { checkCollectionFootprint } from "./syncCollect.ts";
 import { createPaperProject } from "./projectFiles.ts";
 import { getProject } from "./projects.ts";
 import { readNotebook, writeNotebook } from "./notebookStore.ts";
-import { readExperiments, writeExperiments } from "./experiments.ts";
+import { readExperiments, writeExperiments, serializeExperimentNotebook } from "./experiments.ts";
 import { readWorkbench, writeWorkbench } from "./workbenchStore.ts";
 import { emptyWorkbench } from "../src/workbench.ts";
 import { newExperimentNotebook } from "../src/experiments.ts";
@@ -160,6 +160,17 @@ test("collection footprint budgets hold oversize projects before any live copyin
   const before = { records: [{ path: "source/big.bin", bytes: syncLimits.totalBytes - 1 }] } as unknown as SyncSnapshot;
   assert.throws(() => checkCollectionFootprint(before, [{ path: "data/notebook.json", bytes: 2 }]), /payload limit/);
   assert.throws(() => checkCollectionFootprint({ records: [] } as unknown as SyncSnapshot, [{ path: "data/experiments/new/notebook.ipynb", bytes: 5_000_001 }]), /saved-record size limit/);
+});
+
+test('sync budgets and revisions use the exact compact notebook saver bytes', async () => {
+  const f = await fixture(), nb = newExperimentNotebook();
+  nb.metadata = { ...nb.metadata, legacyRows: Array.from({ length: 130000 }, () => [1, 2, 3]) };
+  assert.ok(Buffer.byteLength(JSON.stringify(nb, null, 2)) > 5_000_000);
+  const text = serializeExperimentNotebook(nb);
+  checkCollectionFootprint({ records: [] } as unknown as SyncSnapshot, [{ path: 'data/experiments/compact/notebook.ipynb', bytes: Buffer.byteLength(text) }]);
+  const saved = await writeExperiments(f.workspace, f.projectId, 'compact', '', nb);
+  assert.equal(saved.revision, syncHash(text));
+  assert.equal(await readFile(saved.path, 'utf8'), text);
 });
 test("the same collect/status commands support entries but refuse ambiguous mixed scope", async () => {
   const f = await fixture(); assert.throws(() => syncOptions(["collect", ...f.scope, "--path", "data/experiments/new/notebook.ipynb"]), /collection needs/);

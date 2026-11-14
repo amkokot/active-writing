@@ -26,6 +26,19 @@ optional features, install your own Python interpreter, TeX distribution and/or
 Ollama model. Aw does not buy credits, send questions to a cloud model, or download
 model weights during setup. See [the walkthrough](docs/GETTING_STARTED.md).
 
+## Choose what to add
+
+One computer is enough. Editing, comments, the priority queue, notebook and offline
+agent tools are included in the normal setup. Python experiments, a local helper,
+two-computer sync, the online reader and automated maintenance are optional;
+none is installed or activated as a background service by setup.
+
+Two-computer controls are hidden in a fresh workspace. Show them from
+**Workspace folders → Optional tools** if needed. The
+[module guide](docs/MODULES.md) lists the requirements and entry points. Optional
+code ships in this repository, so it is available later without rebuilding your
+workflow; there are no separate plugin packages to manage.
+
 ## Try it
 
 The welcome project covers focused editing, comments, references, an appendix
@@ -40,6 +53,12 @@ copied to any chat and answers pasted back when useful.
 Research notes can be written freely within your instructions. Publication drafts
 use small proposals, human review and wording locks. The
 [writing guide](docs/PRESENTATION_REVISION_NOTES.md) explains the intended style.
+The current toolset also includes pinned Overview/Research notes documents,
+version-linked notebooks, grouped comment replies, incremental writing proposals,
+linked interactive plots, saved parameter frames and 2D/3D geometry. Authors can
+keep ordinary source, use a focused window, or compile the real LaTeX PDF. A
+research-directory project's Show / hide choice applies to its PDF and sharing
+exports without removing its master source.
 
 ## Keep your work private
 
@@ -59,8 +78,10 @@ welcome project somewhere else before replacing app files. Do not overwrite a
 live data folder or restart experiments to update the UI.
 
 `npm ci` installs dependencies; `npm run build` checks types and builds the app.
-`npm run check:full` runs the regression suite (some tests need Python and its
-scientific libraries). Developers can use `npm run dev`; everyday use should use
+For a small change, use `npm run check -- --test server/FEATURE.test.ts --match
+'regression'` with an actual test filename/name. `npm run check:full` is for a
+release or broad investigation (some tests need Python and scientific libraries).
+Developers can use `npm run dev`; everyday use should use
 the built app. App code and research-data folders can be separate.
 
 MIT licensed. Dependencies retain their own licenses. This repository contains

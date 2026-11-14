@@ -19,6 +19,11 @@ export function readingAnchorAdjustment(previousOffset: number, currentOffset: n
   return Number.isFinite(previousOffset) && Number.isFinite(currentOffset) ? currentOffset - previousOffset : 0;
 }
 
+/** display:none geometry is not a reading position. */
+export function readingPaneVisible(pane: Pick<HTMLElement, "clientWidth" | "clientHeight" | "getClientRects">) {
+  return pane.clientWidth > 0 && pane.clientHeight > 0 && pane.getClientRects().length > 0;
+}
+
 /** Viewport geometry -> native layout coordinates of a passage's toolbar host. */
 export function blockActionsBottom(bottom: number, hostTop: number, renderedWidth: number, layoutWidth: number) {
   const scale = renderedWidth > 0 && layoutWidth > 0 ? renderedWidth / layoutWidth : 1;
@@ -37,4 +42,24 @@ export function arrowBlockDirection(key:string,offset:number,length:number,first
   if(key==="ArrowLeft" && offset===0 || key==="ArrowUp" && firstLine)return -1;
   if(key==="ArrowRight" && offset===length || key==="ArrowDown" && lastLine)return 1;
   return 0;
+}
+/** Coalesce gutter work without postponing it indefinitely during typing. */
+export function layoutSchedule(run: () => void, delay = 100) {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  return {
+    request() {
+      if (timer !== undefined) return;
+      timer = setTimeout(() => { timer = undefined; run(); }, delay);
+    },
+    cancel() { if (timer !== undefined) clearTimeout(timer); timer = undefined; },
+  };
+}
+
+/** A new global map must not repaint unrelated source blocks. */
+export function sameBlockAnnotations(ids: readonly string[], beforeCounts: Record<string, number> | undefined, afterCounts: Record<string, number> | undefined,
+  beforeMarkers: Record<string, {taskId:string;label:string;locked:boolean}> | undefined, afterMarkers: Record<string, {taskId:string;label:string;locked:boolean}> | undefined) {
+  return ids.every(id => {
+    const before=beforeMarkers?.[id],after=afterMarkers?.[id];
+    return (beforeCounts?.[id] ?? 0)===(afterCounts?.[id] ?? 0) && before?.taskId===after?.taskId && before?.label===after?.label && before?.locked===after?.locked;
+  });
 }

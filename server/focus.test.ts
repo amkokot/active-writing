@@ -111,6 +111,27 @@ test("macros are not emitted twice and bibliography setup is retained when no fu
   assert.ok(source.includes("\\bibliographystyle{plain}"));
 });
 
+test("an empty section heading does not duplicate prose or bibliography that follows its theorem and proof", () => {
+  const parsed = fixture();
+  const tail = "Later discussion.\n\\bibliographystyle{plain}\n\\bibliography{refs}";
+  parsed.paragraphs = [
+    { id: "statement", nodeId: "claim", file: "main.tex", text: "A statement." },
+    { id: "argument", nodeId: "proof", file: "main.tex", text: "An argument." },
+    { id: "tail", nodeId: "section", file: "main.tex", text: tail },
+  ];
+  parsed.nodes.find(n => n.id === "claim")!.paragraphIds = ["statement"];
+  parsed.nodes.find(n => n.id === "proof")!.paragraphIds = ["argument"];
+  parsed.nodes.find(n => n.id === "section")!.paragraphIds = ["tail"];
+  parsed.nodeBodies.section = "\\section{Theory}\n" + tail;
+  parsed.nodeBodies.claim = "\\begin{claim}\nA statement.\n\\end{claim}";
+  parsed.nodeBodies.proof = "\\begin{proof}\nAn argument.\n\\end{proof}";
+  const source = focusedDocument(parsed, { focusNodeId: "section", synchronize: true });
+  assert.equal(source.split("Later discussion.").length - 1, 1);
+  assert.equal(source.split("\\bibliography{refs}").length - 1, 1);
+  assert.ok(source.indexOf("\\section{Theory}") < source.indexOf("A statement."));
+  assert.ok(source.indexOf("An argument.") < source.indexOf("Later discussion."));
+});
+
 test("block-window PDFs typeset only selected paragraphs while keeping environment wrappers and original source", () => {
   const parsed = fixture();
   parsed.paragraphs = [

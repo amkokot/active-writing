@@ -32,6 +32,7 @@ async function fixture() {
   await writeFile(path.join(root, "project.json"), JSON.stringify({ name: "Ordinary source config, not Aw ownership" }));
   const registered = await registry(workspace), original = registered.projects.find(item => item.id === project.id)!;
   Object.assign(original, { manuscriptPurposes: { "main.tex": "publication", "overview.tex": "overview" },
+    manuscriptPins: { overview: "overview.tex", publication: "main.tex" },
     manuscriptOverviewTargets: { "overview.tex": "main.tex" }, manuscriptVersions: [{ file: "main.tex", family: "notes-family", number: 1, createdAt: stamp, notebook: "continue" }] });
   await saveRegistry(workspace, registered);
   await writeNotebook(workspace, project.id, 0, [note()]);
@@ -67,6 +68,7 @@ test("first copy keeps source structure, IDs, policy, locks, output and historic
   assert.equal(copied.alreadyComplete, false); assert.notEqual(copied.deviceId, f.snapshot.device.id);
   const { project, root } = await getProject(copied.workspace, f.projectId);
   assert.equal(project.folder, "paper"); assert.deepEqual(project.manuscriptPurposes, preview.project.manuscriptPurposes);
+  assert.deepEqual(project.manuscriptPins, { overview: "overview.tex", publication: "main.tex" });
   assert.deepEqual(project.manuscriptVersions, preview.project.manuscriptVersions); assert.deepEqual(project.manuscriptOverviewTargets, preview.project.manuscriptOverviewTargets);
   assert.equal((await registry(copied.workspace)).projects.length, 1); assert.equal((await parseProject(copied.workspace, f.projectId)).paragraphs[0].text, "A stable passage.");
   assert.deepEqual(await readNotebook(copied.workspace, f.projectId), await readNotebook(f.workspace, f.projectId));

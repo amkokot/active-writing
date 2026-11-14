@@ -1,9 +1,16 @@
-import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { Plugin } from "vite";
 import { appCodeRoot } from "./appPaths.ts";
+import {readOptionalTools,saveOptionalTools} from './optionalTools.ts';
+import { withRecordLock } from "./recordLock.ts";
+import { sectionPdfGroups, sectionPageCount } from "./sectionPdf.ts";
+import {pairedSetupBrief} from './syncSetupBrief.ts';
+import {autoSyncStatus,withSyncCycle} from './syncAuto.ts';
+import {listReadingSourceReviews,readReadingSourceReview,chooseReadingSource} from './syncReadingSource.ts';
+import {bulkEnabled} from './syncBulkCapture.ts';
 import { run } from "./commands.ts";
 import { checked } from "./commands.ts";
 import { editableProject, getProject, hash, inside, parseProject, publicDocument, readSourceFile, registerProject, registry, saveEdits } from "./projects.ts";
@@ -12,8 +19,9 @@ import { joinParagraphs, undoParagraphJoin } from "./paragraphEditing.ts";
 import { createSectionFile, undoSectionFile } from "./sectionFiles.ts";
 import { createManuscriptVersion } from "./manuscriptVersions.ts";
 import { transferNotebook } from "./notebookTransfer.ts";
-import { setManuscriptPurpose } from "./manuscriptPurpose.ts";
+import { setManuscriptPurpose, setManuscriptPin } from "./manuscriptPurpose.ts";
 import { addProjectFiles, createPaperProject, projectFileContent, projectFilePreview } from "./projectFiles.ts";
+import {desktopFiles,fetchDesktopFile} from './syncColdStore.ts';
 import { sourceZip } from "./sourceZip.ts";
 import { portableZip } from "./portableExport.ts";
 import { initializeSyncDevice, syncStatus } from "./deviceSync.ts";
@@ -23,11 +31,13 @@ import { previewResearchMerge, commitResearchMerge, researchMergeFile } from "./
 import { listSshPeers, previewSshPeer, commitSshPeer, reconnectSshPeer } from "./syncSsh.ts";
 import { previewPairedSync, commitPairedSync, pendingPairedSyncs } from "./syncPaired.ts";
 import { collaboratorExport } from "./collaboratorExport.ts";
+import {readCorpus,saveCorpus,corpusCompileSource} from './researchCorpus.ts';
 import { checkedBuildFile, prepareBuildFolders, projectBuildFolder } from "./projectStorage.ts";
-import type { CompileResult } from "../src/types.ts";
+import type { CompileResult, SectionPdfPart } from "../src/types.ts";
+import type { ParsedProject } from "./projects.ts";
 import { visiblePreviewNodes } from "../src/workspaceTools.ts";
-import { buildDependencies, dependenciesUnchanged, focusedJobName, type BuildDependency } from "./buildCache.ts";
-import { compiledSourceRanges, pagesForSource, querySync, sourceLine, sourcePath, type CompiledSourceRange } from "./sourceSync.ts";
+import { buildDependencies, dependenciesUnchanged, focusedJobName, seedFocusedBuild, compilationCommand, type BuildDependency } from "./buildCache.ts";
+import { compiledSourceRanges, correspondingRange, pagesForSource, querySync, sourceLine, sourcePath, type CompiledSourceRange } from "./sourceSync.ts";
 import { cloneRepository, connectRemote, fullVerified, githubAccount, githubLoginStatus, githubRepositories, publishGithub, repoStatus, selectProject, startGithubLogin, syncRepository } from "./repositories.ts";
 import { focusedDocument, focusedSourceSnippets, writeFocusedSource } from "./focus.ts";
 import { missingPdfDestinations } from "../src/pdfLinks.ts";
@@ -40,6 +50,7 @@ import { createHandoff, readHandoff, readHandoffTicket } from "./handoffs.ts";
 import { finishResearch } from "./researchFinish.ts";
 import { researchReadiness } from "./researchReadiness.ts";
 import { activityOrderedProjects } from "./projectActivity.ts";
+import {linkedWorkspaces,openLinkedWorkspace} from './linkedWorkspaces.ts';
 import { readProjectQueue } from "./projectQueue.ts";
 import { readEvidenceFile, saveEvidenceSnapshot } from "./experimentEvidence.ts";
 import { exportReview, annotateCompletedReview } from "./reviewExport.ts";
@@ -61,9 +72,13 @@ interface CompileRequest {
   paragraphIds?: string[];
   originalPages?: boolean;
   force?: boolean;
+  draft?: boolean;
+  sectionPdf?: boolean;
+  sectionPages?: boolean;
+  sectionReference?: string;
 }
 
-interface BuildRecord extends CompileResult { cacheVersion?: number; inputHash?: string; dependencies?: BuildDependency[]; sourceRanges?: CompiledSourceRange[] }
+interface BuildRecord extends CompileResult { cacheVersion?: number; inputHash?: string; dependencies?: BuildDependency[]; sourceRanges?: CompiledSourceRange[]; workingKey?: string }
 
 async function originalPageResult(result: CompileResult, parsed: Awaited<ReturnType<typeof parseProject>>, root: string, request: CompileRequest, buildRoot: string) {
   if (!request.originalPages || !result.success) return result;
@@ -255,19 +270,102 @@ export function focusedCacheDiagnostics(diagnostics: LatexDiagnostic[], cleanCur
 }
 
 
+const compilingRequests = new Map<string, Promise<CompileResult>>();
 export async function compile(workspaceRoot: string, request: CompileRequest): Promise<CompileResult> {
+  const key = JSON.stringify([path.resolve(workspaceRoot), request]);
+  const existing = compilingRequests.get(key); if (existing) return existing;
+  const pending = (async () => {
+    const build = await projectBuildFolder(workspaceRoot, request.projectId);
+    // Other services/tools must not write the same persistent compiler state.
+    return withRecordLock(await checkedBuildFile(build, "compiler"), () => compileUnlocked(workspaceRoot, request));
+  })();
+  compilingRequests.set(key, pending);
+  try { return await pending; } finally { if (compilingRequests.get(key) === pending) compilingRequests.delete(key); }
+}
+
+async function compileSectionPdf(workspace: string, request: CompileRequest, parsed: ParsedProject, build: string): Promise<CompileResult> {
+  const started = performance.now(), groups = sectionPdfGroups(parsed, request);
+  let sectionReference: string | undefined;
+  // Reuse a full build's reference table, or create one ordinary view baseline
+  // once. Local wording edits do not regenerate this global reference table.
+  let fullReferences = false;
+  try {
+    const r = JSON.parse(await readFile(path.join(build, "full-compile.json"), "utf8"));
+    const folder = await projectBuildFolder(workspace, parsed.project.id, "full", undefined, false);
+    fullReferences = r.success && r.mainFile === parsed.project.mainFile && r.engine === parsed.project.engine
+      && (await stat(await checkedBuildFile(folder, path.basename(parsed.project.mainFile, ".tex") + ".aux"))).isFile();
+  } catch { /* first build or removed reference artifacts */ }
+  if (!fullReferences) {
+    const pointer = await checkedBuildFile(build, `section-reference-${hash(JSON.stringify([parsed.project.mainFile, parsed.project.engine])).slice(0, 16)}.json`);
+    try {
+      const saved = JSON.parse(await readFile(pointer, "utf8"));
+      if (/^[a-f0-9]{16}$/.test(saved.artifactKey)) {
+        const folder = await projectBuildFolder(workspace, parsed.project.id, "focus", saved.artifactKey, false);
+        const record = JSON.parse(await readFile(path.join(folder, "compile.json"), "utf8"));
+        if (record.success && record.mainFile === parsed.project.mainFile && record.engine === parsed.project.engine && !record.sectionParts) {
+          await stat(await checkedBuildFile(folder, `${focusedJobName(folder)}.aux`)); sectionReference = saved.artifactKey;
+        }
+      }
+    } catch { /* create a baseline below */ }
+    if (!sectionReference) {
+      const baseline = await compileUnlocked(workspace, { projectId: parsed.project.id, mode: "focus", revision: parsed.revision }, parsed);
+      if (!baseline.success) return baseline;
+      sectionReference = baseline.artifactKey;
+      await writeFile(pointer, JSON.stringify({ artifactKey: sectionReference }), "utf8");
+    }
+  }
+  const parts: SectionPdfPart[] = [], diagnostics: NonNullable<CompileResult["diagnostics"]> = []; let offset = 0;
+  for (const group of groups) {
+    const result = await compileUnlocked(workspace, { projectId: parsed.project.id, mode: "focus", revision: parsed.revision,
+      lens: "paper", paragraphIds: group.paragraphIds, sectionPages: true, sectionReference, draft: request.draft, force: request.force }, parsed);
+    if (!result.success || !result.artifactKey || !result.pdfUrl) return result;
+    diagnostics.push(...(result.diagnostics ?? []).map(d => ({ ...d, id: `${group.nodeId}:${d.id}`, title: `${group.title}: ${d.title}` })));
+    const output = await projectBuildFolder(workspace, parsed.project.id, "focus", result.artifactKey, false);
+    const pageCount = await sectionPageCount(path.join(output, `${focusedJobName(output)}.synctex.gz`));
+    parts.push({ ...group, artifactKey: result.artifactKey, pdfUrl: result.pdfUrl, compiledAt: result.compiledAt,
+      pageCount, pageOffset: offset, cacheHit: Boolean(result.cacheHit), unavailablePdfDestinations: result.unavailablePdfDestinations });
+    offset += pageCount;
+  }
+  const artifactKey = hash(JSON.stringify(["section-pdf-v1", parsed.project.mainFile, parsed.project.engine, parts.map(p => [p.nodeId, p.artifactKey, p.compiledAt, p.pageCount])])).slice(0, 16);
+  const output = await projectBuildFolder(workspace, parsed.project.id, "focus", artifactKey);
+  const recordFile = await checkedBuildFile(output, "compile.json");
+  let compiledAt = new Date().toISOString();
+  try { const saved = JSON.parse(await readFile(recordFile, "utf8")); if (saved.success && saved.sectionParts) compiledAt = saved.compiledAt; } catch { /* first manifest */ }
+  const reused = parts.filter(p => p.cacheHit).length;
+  const result: CompileResult = { mode: "focus", success: true, pdfUrl: `/api/paperfocus/section-pdf?projectId=${parsed.project.id}&build=${artifactKey}`, artifactKey,
+    sectionParts: parts, mainFile: parsed.project.mainFile, engine: parsed.project.engine, sourceRevision: parsed.revision, compiledAt,
+    durationMs: Math.round(performance.now() - started), cacheHit: reused === parts.length, draft: request.draft,
+    requestedAt: new Date().toISOString(),
+    scope: { focusNodeId: request.focusNodeId, lens: request.lens, hiddenNodeIds: request.hiddenNodeIds ?? [], paragraphIds: request.paragraphIds, sectionPdf: true },
+    log: `${parts.length} sections · ${reused} reused · ${parts.length - reused} rebuilt.`,
+    viewNote: `Section layout · ${reused}/${parts.length} sections reused. Each section starts on its own page with local page numbers. Reference numbers use the last reference baseline; Full PDF refreshes them and checks continuous layout. Shared source files are unchanged.`, diagnostics: diagnostics.slice(0, 100) };
+  const ids = new Set(parts.flatMap(p => p.paragraphIds));
+  await writeFile(recordFile, JSON.stringify({ ...result, sourceRanges: compiledSourceRanges(parsed).filter(r => ids.has(r.paragraphId)) }), "utf8");
+  for (const name of ["last-compile.json", "focus-compile.json"]) await writeFile(path.join(build, name), JSON.stringify(result), "utf8");
+  return result;
+}
+
+async function compileUnlocked(workspaceRoot: string, request: CompileRequest, snapshot?: ParsedProject): Promise<CompileResult> {
   const started = performance.now();
   const { project, root: projectRoot } = await getProject(workspaceRoot, request.projectId);
-  const mode: CompileMode = request.originalPages || request.mode === "full" ? "full" : "focus";
+  const corpus = await readCorpus(workspaceRoot, project.id);
+  // A research directory is a sharing preview, including its normal download.
+  // Compile the untouched master through a private audience-specific entry file.
+  const corpusSource = corpus && project.mainFile === corpus.corpus.mainFile
+    ? corpusCompileSource(corpus.corpus, path.join(projectRoot, project.mainFile)) : undefined;
+  const mode: CompileMode = corpusSource || request.originalPages || request.mode === "full" ? "full" : "focus";
+  const draft = mode === "focus" && request.draft === true;
   const buildRoot = await projectBuildFolder(workspaceRoot, project.id);
   let outputRoot = await projectBuildFolder(workspaceRoot, project.id, mode);
   if (Object.keys(request.paragraphEdits ?? {}).length) {
     await saveEdits(workspaceRoot, project.id, request.paragraphEdits ?? {}, request.revision);
   }
-  const parsed = await parseProject(workspaceRoot, project.id, mode === "focus");
+  const parsed = snapshot ?? await parseProject(workspaceRoot, project.id, mode === "focus");
+  if (parsed.project.id !== project.id || parsed.project.mainFile !== project.mainFile || parsed.project.engine !== project.engine) throw new Error("The compilation manuscript changed.");
   if (request.revision && request.revision !== parsed.revision && !Object.keys(request.paragraphEdits ?? {}).length) {
     throw new Error("The project changed on disk. Reload it before compiling or publishing.");
   }
+  if (mode === "focus" && request.sectionPdf) return compileSectionPdf(workspaceRoot, request, parsed, buildRoot);
   const sourceSnippets = mode === "focus" ? focusedSourceSnippets(parsed, request) : [];
 
   let input =
@@ -277,8 +375,16 @@ export async function compile(workspaceRoot: string, request: CompileRequest): P
   let cachedReferences = false;
   let cachedAuxFolder: string | undefined;
   let cleanCurrentFullCache = false;
-  let shadow: string | undefined;
+  let shadow: string | undefined = corpusSource;
+  if (corpusSource) {
+    input = await checkedBuildFile(outputRoot, path.basename(project.mainFile));
+    await writeFocusedSource(input, corpusSource);
+  }
   let artifactKey: string | undefined;
+  let warmRecord: string | undefined;
+  let workingKey: string | undefined;
+  let workingOutput: string | undefined;
+  let reusedAuxiliaries = 0;
   if (mode === "focus") {
     let cachedAux: string | undefined;
     try {
@@ -295,20 +401,37 @@ export async function compile(workspaceRoot: string, request: CompileRequest): P
       }
     } catch { /* A first focus build can use the project's normal bibliography instead. */ }
     cachedReferences = Boolean(cachedAux);
+    if (request.sectionReference) {
+      if (!/^[a-f0-9]{16}$/.test(request.sectionReference)) throw new Error("Invalid section reference baseline.");
+      const reference = await projectBuildFolder(workspaceRoot, project.id, "focus", request.sectionReference, false);
+      const record = JSON.parse(await readFile(path.join(reference, "compile.json"), "utf8"));
+      if (!record.success || record.mainFile !== project.mainFile || record.engine !== project.engine || record.sectionParts) throw new Error("The section reference baseline belongs to another document.");
+      cachedAux = (await checkedBuildFile(reference, `${focusedJobName(reference)}.aux`)).replaceAll("\\", "/");
+      cachedAuxFolder = reference; cachedReferences = true;
+    }
     shadow = focusedDocument(parsed, { ...request, cachedAux, synchronize: true });
-    artifactKey = hash(shadow).slice(0, 16);
+    artifactKey = hash((draft ? "draft\0" : "") + shadow).slice(0, 16);
     outputRoot = await projectBuildFolder(workspaceRoot, project.id, "focus", artifactKey);
     input = path.join(outputRoot, `${focusedJobName(outputRoot)}.tex`);
     await checkedBuildFile(outputRoot, `${focusedJobName(outputRoot)}.tex`);
     await writeFocusedSource(input, shadow);
+    const warmScope: unknown[] = [project.mainFile, project.engine, parsed.preamble, request.focusNodeId, request.lens, request.hiddenNodeIds, request.paragraphIds];
+    if (request.sectionPages) warmScope.push("section-pages");
+    const warmKey = hash(JSON.stringify(warmScope)).slice(0, 16);
+    workingKey = hash(`compiler-work-v1:${warmKey}:${draft}`).slice(0, 16);
+    workingOutput = await projectBuildFolder(workspaceRoot, project.id, "focus", workingKey);
+    warmRecord = await checkedBuildFile(buildRoot, `focus-warm-${warmKey}.json`);
   }
   const inputHash = hash(shadow ?? parsed.sources[project.mainFile]);
   const recordFile = mode === "full" ? path.join(buildRoot, "full-compile.json") : path.join(outputRoot, "compile.json");
   try {
     const record = JSON.parse(await readFile(recordFile, "utf8")) as BuildRecord;
-    if (!request.force && record.cacheVersion === 1 && record.success && record.inputHash === inputHash && record.mainFile === project.mainFile && record.engine === project.engine
+    const dependencyMetadata = JSON.stringify(record.dependencies);
+    if (!request.force && record.cacheVersion === 1 && record.success && Boolean(record.draft) === draft && record.inputHash === inputHash && record.mainFile === project.mainFile && record.engine === project.engine
+      && record.corpusRevision === corpus?.revision
       && (mode === "focus" || record.sourceRevision === parsed.revision) && await dependenciesUnchanged(record.dependencies)) {
-      const { dependencies: _dependencies, sourceRanges: _ranges, ...publicRecord } = record;
+      if (dependencyMetadata !== JSON.stringify(record.dependencies)) await writeFile(recordFile, JSON.stringify(record, null, 2), "utf8");
+      const { dependencies: _dependencies, sourceRanges: _ranges, workingKey: _working, ...publicRecord } = record;
       const cached = { ...publicRecord, cacheHit: true, requestedAt: new Date().toISOString(), sourceRevision: parsed.revision, durationMs: Math.round(performance.now() - started) };
       const presentation = await originalPageResult(cached, parsed, projectRoot, request, buildRoot);
       await writeFile(path.join(buildRoot, "last-compile.json"), JSON.stringify(presentation, null, 2), "utf8");
@@ -316,35 +439,43 @@ export async function compile(workspaceRoot: string, request: CompileRequest): P
     }
   } catch { /* Missing or invalid caches always fall back to the compiler. */ }
   const jobName = mode === "full" ? path.basename(project.mainFile, ".tex") : focusedJobName(outputRoot);
+  const engineOutput = workingOutput ?? outputRoot;
+  if (workingOutput) {
+    if (focusedJobName(workingOutput) !== jobName) throw new Error("Focused build paths have incompatible job names.");
+    input = await checkedBuildFile(workingOutput, `${jobName}.tex`);
+    await writeFocusedSource(input, shadow!);
+    try {
+      const previous = JSON.parse(await readFile(warmRecord!, "utf8"));
+      if (/^[a-f0-9]{16}$/.test(previous.artifactKey)) {
+        await seedFocusedBuild(await projectBuildFolder(workspaceRoot, project.id, "focus", previous.artifactKey, false), workingOutput);
+      }
+    } catch { /* Retained working state or a cold build is safe without a seed. */ }
+    for (const ext of ["aux", "toc", "out", "lof", "lot", "bbl"]) {
+      try { if ((await stat(await checkedBuildFile(workingOutput, `${jobName}.${ext}`))).isFile()) reusedAuxiliaries++; } catch { /* optional */ }
+    }
+  }
   if (mode === "full") await prepareBuildFolders(outputRoot, parsed.files);
-  for (const extension of ["pdf", "log", "aux", "fls", "fdb_latexmk", "synctex.gz", "toc", "bbl", "blg"]) await checkedBuildFile(outputRoot, `${jobName}.${extension}`);
+  for (const extension of ["pdf", "log", "aux", "fls", "fdb_latexmk", "synctex.gz", "toc", "bbl", "blg", "out", "lof", "lot", "bcf", "run.xml"]) {
+    await checkedBuildFile(outputRoot, `${jobName}.${extension}`);
+    await checkedBuildFile(engineOutput, `${jobName}.${extension}`);
+  }
   let needsSyncMap = false;
-  try { await stat(path.join(outputRoot, `${jobName}.synctex.gz`)); } catch { needsSyncMap = true; }
-  const args = [
-    "-norc",
-    project.engine === "xelatex" ? "-xelatex" : project.engine === "lualatex" ? "-lualatex" : "-pdf",
-    "-latexoption=-no-shell-escape",
-    "-file-line-error",
-    "-interaction=nonstopmode",
-    "-halt-on-error",
-    "-synctex=1",
-    "-recorder",
-    ...(request.force || needsSyncMap ? ["-g"] : []),
-    `-outdir=${outputRoot}`,
-    input,
-  ];
+  try { await stat(path.join(engineOutput, `${jobName}.synctex.gz`)); } catch {
+    try { await stat(path.join(engineOutput, `${jobName}.fdb_latexmk`)); needsSyncMap = true; } catch { /* A cold build already runs TeX. */ }
+  }
+  const command = compilationCommand(project.engine, input, engineOutput, draft, Boolean(request.force || needsSyncMap));
 
   try {
     // Cached main.aux may reference \include child auxiliaries. Search the full
     // build folder as well, never write them back into the manuscript checkout.
     const env = cachedAuxFolder ? { TEXINPUTS: [".", cachedAuxFolder.replaceAll("\\", "/") + "/", process.env.TEXINPUTS ?? ""].join(path.delimiter) } : undefined;
-    const result = await run("latexmk", args, projectRoot, { env });
+    const result = await run(command.command, command.args, projectRoot, { env });
     const pdfName = `${jobName}.pdf`;
     const logName = `${jobName}.log`;
-    const pdfPath = path.join(outputRoot, pdfName);
+    const pdfPath = path.join(engineOutput, pdfName);
     let engineLog = result.output;
     try {
-      engineLog = await readFile(path.join(outputRoot, logName), "utf8");
+      engineLog = await readFile(path.join(engineOutput, logName), "utf8");
     } catch {
       // latexmk output is still useful when TeX stopped before creating a log.
     }
@@ -355,7 +486,18 @@ export async function compile(workspaceRoot: string, request: CompileRequest): P
       pdfExists = false;
     }
     const success = result.code === 0 && pdfExists;
+    if (success && workingOutput) {
+      // Publish snapshots only after TeX succeeds; subsequent local edits reuse
+      // the private working database without changing these PDF/map bytes.
+      for (const extension of ["pdf", "synctex.gz", "aux", "log", "toc", "out", "lof", "lot", "bbl"]) {
+        const source = await checkedBuildFile(engineOutput, `${jobName}.${extension}`);
+        const target = await checkedBuildFile(outputRoot, `${jobName}.${extension}`);
+        try { await copyFile(source, target); } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT" || ["pdf", "synctex.gz"].includes(extension)) throw error; }
+      }
+    }
+    if (corpus && (await readCorpus(workspaceRoot, project.id))?.revision !== corpus.revision) throw new Error("The Show / hide selection changed. Compile again before sharing.");
     const compileResult: CompileResult = {
+      corpusRevision: corpus?.revision,
       mode,
       success,
       pdfUrl: success ? `/api/paperfocus/pdf/${mode}?projectId=${project.id}${artifactKey ? `&build=${artifactKey}` : ""}&v=${Date.now()}` : undefined,
@@ -368,14 +510,16 @@ export async function compile(workspaceRoot: string, request: CompileRequest): P
       mainFile: project.mainFile,
       engine: project.engine,
       artifactKey,
+      draft,
+      reusedAuxiliaries,
       scope: mode === "focus" ? { focusNodeId: request.focusNodeId, lens: request.lens, hiddenNodeIds: request.hiddenNodeIds ?? [], paragraphIds: request.paragraphIds } : undefined,
-      viewNote: [mode === "focus" && request.paragraphIds ? `Block window PDF: ${request.paragraphIds.length} selected blocks. Statements and proofs may be excerpts, not complete arguments.` : "", sourceSnippets.length ? `${sourceSnippets.length} ${sourceSnippets.length === 1 ? "snippet has a placeholder" : "snippets have placeholders"}. See source in Quick reading; the shared paper is unchanged.` : "", cachedReferences ? "Reference numbers use the last full build. Omitted PDF targets cannot be followed here; use source links or Full. Recompile Full after changing labels or citations." : ""].filter(Boolean).join(" ") || undefined,
+      viewNote: [draft ? "One-pass draft: references, contents and bibliography may need Compile view or Full to settle." : "", reusedAuxiliaries ? "Reused auxiliary files from the previous view build." : "", mode === "focus" && request.paragraphIds ? `Block window PDF: ${request.paragraphIds.length} selected blocks. Statements and proofs may be excerpts, not complete arguments.` : "", sourceSnippets.length ? `${sourceSnippets.length} ${sourceSnippets.length === 1 ? "snippet has a placeholder" : "snippets have placeholders"}. See source in Quick reading; the shared paper is unchanged.` : "", cachedReferences ? "Reference numbers use the last full build. Omitted PDF targets cannot be followed here; use source links or Full. Recompile Full after changing labels or citations." : ""].filter(Boolean).join(" ") || undefined,
     };
-    const sourceRanges = compiledSourceRanges(parsed, shadow);
+    const sourceRanges = compiledSourceRanges(parsed, corpusSource ? undefined : shadow);
     let dependencies: BuildDependency[] | undefined;
     // BibTeX/Biber inputs are not necessarily listed by TeX's recorder.
-    if (success) try { dependencies = await buildDependencies(projectRoot, outputRoot, jobName, parsed.files.filter(file => /\.(bib|bst)$/i.test(file))); } catch { /* Without a complete recorder, do not skip future builds. */ }
-    const record: BuildRecord = { ...compileResult, cacheVersion: 1, inputHash, dependencies, sourceRanges };
+    if (success) try { dependencies = await buildDependencies(projectRoot, engineOutput, jobName, parsed.files.filter(file => /\.(bib|bst)$/i.test(file)), outputRoot); } catch { /* Without a complete recorder, do not skip future builds. */ }
+    const record: BuildRecord = { ...compileResult, cacheVersion: 1, inputHash, dependencies, sourceRanges, workingKey };
     const presentation = await originalPageResult(compileResult, parsed, projectRoot, request, buildRoot);
     await writeFile(
       path.join(buildRoot, "last-compile.json"),
@@ -388,6 +532,7 @@ export async function compile(workspaceRoot: string, request: CompileRequest): P
       "utf8",
     );
     await writeFile(recordFile, JSON.stringify(record, null, 2), "utf8");
+    if (success && warmRecord) await writeFile(warmRecord, JSON.stringify({ artifactKey }), "utf8");
     return presentation;
   } catch (error) {
     const compileResult = {
@@ -432,6 +577,17 @@ json(res, 200, { app: "active-writing", workspaceRoot: path.resolve(workspaceRoo
       json(res, 410, { error: "Direct subscription integration was removed. Use an installed local model; saved request history remains intact." });
       return;
     }
+    if(url.pathname==='/api/paperfocus/optional-tools'){
+      try{
+        if(req.method==='GET')json(res,200,await readOptionalTools(workspaceRoot));
+        else if(req.method==='POST'){
+          if(req.headers.origin!==`http://${req.headers.host}`)throw Error('Change optional tools from this editor.');
+          const request=JSON.parse(await requestBody(req));
+          json(res,200,await saveOptionalTools(workspaceRoot,request.revision,request.sync));
+        }else json(res,405,{error:'Use GET or POST.'});
+      }catch(error){json(res,400,{error:(error as Error).message});}
+      return;
+    }
     if (url.pathname === "/api/paperfocus/research/preflight") {
       if (req.method !== "POST") { json(res, 405, { error: "Run the setup check explicitly from this editor." }); return; }
       if (req.headers.origin !== `http://${req.headers.host}`) { json(res, 403, { error: "Check setup from this editor's local origin." }); return; }
@@ -466,6 +622,26 @@ json(res, 200, { app: "active-writing", workspaceRoot: path.resolve(workspaceRoo
       } catch (error) { json(res, 400, { error: error instanceof Error ? error.message : String(error) }); }
       return;
     }
+    if(url.pathname==='/api/paperfocus/desktop-files'||url.pathname==='/api/paperfocus/desktop-files/fetch'){
+      try{if(req.method==='GET'&&url.pathname.endsWith('desktop-files')){json(res,200,await desktopFiles(workspaceRoot,url.searchParams.get('projectId')??''));}
+      else if(req.method==='POST'&&url.pathname.endsWith('/fetch')&&req.headers.origin===`http://${req.headers.host}`){const r=JSON.parse(await requestBody(req,4000));json(res,200,await fetchDesktopFile(workspaceRoot,r.projectId,r.path));}
+      else json(res,405,{error:'Use this editor to fetch an exact desktop file.'});}catch(e){json(res,400,{error:(e as Error).message});}return;
+    }
+    if(url.pathname==='/api/paperfocus/device-sync/attention'){
+      if(req.method!=='GET'){json(res,405,{error:'Read saved sync status only.'});return;}
+      try{const projectId=(await getProject(workspaceRoot,url.searchParams.get('projectId')??'')).project.id;
+        const automatic=await autoSyncStatus(workspaceRoot,projectId);
+        const pendingSyncs=automatic.locks.project.status==='active'?[]:await pendingPairedSyncs(workspaceRoot,projectId);
+        json(res,200,{automatic,pendingSyncs,sourceReviews:await listReadingSourceReviews(workspaceRoot,projectId)});
+      }catch(error){json(res,400,{error:(error as Error).message});}return;
+    }
+    if(url.pathname==='/api/paperfocus/device-sync/source-review'){
+      try{
+        if(req.method==='GET'){const projectId=url.searchParams.get('projectId')??'',reviewId=url.searchParams.get('reviewId');json(res,200,reviewId?await readReadingSourceReview(workspaceRoot,projectId,reviewId):await listReadingSourceReviews(workspaceRoot,projectId));}
+        else if(req.method==='POST'&&req.headers.origin===`http://${req.headers.host}`){const value=JSON.parse(await requestBody(req,4000));json(res,200,await chooseReadingSource(workspaceRoot,value.projectId,value.reviewId,value.choice));}
+        else json(res,405,{error:'Choose a saved source version from this editor.'});
+      }catch(error){json(res,400,{error:(error as Error).message});}return;
+    }
     if (url.pathname === "/api/paperfocus/device-sync") {
       if (req.method !== "GET" && req.method !== "POST") { json(res, 405, { error: "Use device preparation; live synchronization is not implemented." }); return; }
       if (req.method === "POST" && req.headers.origin !== `http://${req.headers.host}`) { json(res, 403, { error: "Name this installation from its local editor." }); return; }
@@ -477,7 +653,10 @@ json(res, 200, { app: "active-writing", workspaceRoot: path.resolve(workspaceRoo
         const exchange = projectId && status.device ? await exchangeStatus(workspaceRoot, projectId) : undefined;
         const peers = projectId && status.device ? await listSshPeers(workspaceRoot, projectId) : undefined;
         const pendingSyncs = projectId && status.device ? await pendingPairedSyncs(workspaceRoot,projectId) : undefined;
-        const { folder: _folder, ...publicStatus } = status; json(res, 200, { ...publicStatus, stagingSupported: true, exchangeSupported: true, mergeSupported: true, projectId: projectId ?? undefined, snapshots, exchange, peers, pendingSyncs });
+        const automatic=projectId&&status.device?await autoSyncStatus(workspaceRoot,projectId):undefined;
+        const setupInstructions=projectId?pairedSetupBrief(appCodeRoot,workspaceRoot,(await getProject(workspaceRoot,projectId)).project.id):undefined;
+        const bulk=projectId?await bulkEnabled(workspaceRoot,projectId):false;
+        const { folder: _folder, ...publicStatus } = status; json(res, 200, { ...publicStatus, stagingSupported: true, exchangeSupported: true, mergeSupported: true, projectId: projectId ?? undefined, snapshots, exchange, peers, pendingSyncs,automatic,setupInstructions,bulk });
       } catch (error) { json(res, 400, { error: error instanceof Error ? error.message : String(error) }); }
       return;
     }
@@ -505,15 +684,16 @@ json(res, 200, { app: "active-writing", workspaceRoot: path.resolve(workspaceRoo
         const request = JSON.parse(await requestBody(req, url.pathname.endsWith("/receive") ? 24 * 1024 * 1024 : 6000)), action = url.pathname.split("/").at(-1);
         if (action === "export") {
           const checkpoint = await syncWorkingCheckpoint(workspaceRoot, request.projectId, request.parent || undefined), result = await exportExchangeForPeer(workspaceRoot, request.projectId, checkpoint.id, request.peerDevice || undefined);
+          if(result.externalBlobs.length)throw new Error('This project has separately streamed evidence. Use its SSH connection or awPair setup, not a partial download.');
           res.statusCode = 200; res.setHeader("Content-Type", "application/gzip"); res.setHeader("Content-Disposition", `attachment; filename="aw-exchange-${request.projectId}.aw-sync"`);
           res.setHeader("Cache-Control", "no-store"); res.setHeader("X-Content-Type-Options", "nosniff"); res.setHeader("X-Aw-Head", checkpoint.id); res.end(result.bytes);
         } else if (action === "receive") {
           if (typeof request.bytes !== "string" || request.bytes.length > Math.ceil(16 * 1024 * 1024 / 3) * 4) throw new Error("Use the offline receive tool for exchanges above 16 MB.");
           const bytes = Buffer.from(request.bytes, "base64"); if (bytes.toString("base64") !== request.bytes) throw new Error("Invalid exchange encoding."); json(res, 200, await receiveSyncExchange(workspaceRoot, request.projectId, bytes));
-        } else if (action === "sync-preview") json(res, 200, await previewPairedSync(workspaceRoot, request.projectId, request.peerId));
+        } else if (action === "sync-preview") json(res, 200, await withSyncCycle(workspaceRoot,request.projectId,()=>previewPairedSync(workspaceRoot, request.projectId, request.peerId),2000));
         else if (action === "sync-commit") {
           if (request.draftsSaved !== true) throw new Error("Save open drafts on both copies before this two-copy collection.");
-          json(res, 200, await commitPairedSync(workspaceRoot, request.projectId, request.reviewId));
+          json(res, 200, await withSyncCycle(workspaceRoot,request.projectId,()=>commitPairedSync(workspaceRoot, request.projectId, request.reviewId),2000));
         } else if (action === "merge-file") json(res, 200, await researchMergeFile(workspaceRoot, request.projectId, request.planId, request.path));
         else if (action === "merge") {
           if (request.draftsSaved !== true) throw new Error("Save open editor drafts before collecting; source is never replaced behind an unsaved draft.");
@@ -539,6 +719,13 @@ json(res, 200, { app: "active-writing", workspaceRoot: path.resolve(workspaceRoo
       finally { exportingSource = false; }
       return;
     }
+    if(url.pathname==='/api/paperfocus/corpus'){
+      try{
+        if(req.method==='GET')json(res,200,await readCorpus(workspaceRoot,url.searchParams.get('projectId')??'')??null);
+        else if(req.method==='POST' && req.headers.origin===`http://${req.headers.host}`){const r=JSON.parse(await requestBody(req,12000));json(res,200,await saveCorpus(workspaceRoot,r.projectId,r.revision,r.change));}
+        else json(res,405,{error:'Change the research list from this editor.'});
+      }catch(e){json(res,400,{error:(e as Error).message});}return;
+    }
     if (url.pathname === "/api/paperfocus/share.zip" && req.method === "POST") {
       if (req.headers.origin !== `http://${req.headers.host}`) { json(res, 403, { error: "Prepare a sharing copy from this editor." }); return; }
       if (exportingSource) { json(res, 409, { error: "Another download is being prepared. Try again shortly." }); return; }
@@ -560,6 +747,13 @@ json(res, 200, { app: "active-writing", workspaceRoot: path.resolve(workspaceRoo
       } catch (error) { json(res, 400, { error: error instanceof Error ? error.message : String(error) }); }
       finally { exportingSource = false; }
       return;
+    }
+    if(url.pathname==='/api/paperfocus/linked-workspaces'){
+      try{
+        if(req.method==='GET'){json(res,200,{links:await linkedWorkspaces(workspaceRoot)});return;}
+        if(req.method==='POST'&&req.headers.origin===`http://${req.headers.host}`){const request=JSON.parse(await requestBody(req,2000));json(res,200,await openLinkedWorkspace(workspaceRoot,request.projectId));return;}
+        json(res,405,{error:'Choose a linked workspace.'});
+      }catch(error){json(res,400,{error:error instanceof Error?error.message:String(error)});}return;
     }
     if (url.pathname === "/api/paperfocus/projects") {
       try {
@@ -583,6 +777,13 @@ json(res, 200, { app: "active-writing", workspaceRoot: path.resolve(workspaceRoo
           json(res, 200, { success: true, document }); return;
         }
       } catch (error) { json(res, 400, { error: error instanceof Error ? error.message : String(error) }); return; }
+    }
+    if (url.pathname === "/api/paperfocus/manuscripts/pin") {
+      if (req.method !== "POST") { json(res, 405, { error: "Use POST to pin a manuscript." }); return; }
+      if (req.headers.origin !== `http://${req.headers.host}`) { json(res, 403, { error: "Pin from this editor's local origin." }); return; }
+      try { const request = JSON.parse(await requestBody(req)); json(res, 200, await serialize(() => setManuscriptPin(workspaceRoot, request))); }
+      catch (error) { json(res, 409, { error: error instanceof Error ? error.message : String(error) }); }
+      return;
     }
     if (url.pathname === "/api/paperfocus/manuscripts/purpose") {
       if (req.method !== "POST") { json(res, 405, { error: "Use POST to change manuscript purpose." }); return; }
@@ -785,23 +986,40 @@ json(res, 200, { app: "active-writing", workspaceRoot: path.resolve(workspaceRoo
           const mode = request.mode === "focus" ? "focus" : "full";
           if (request.artifactKey && !/^[a-f0-9]{16}$/.test(request.artifactKey)) throw new Error("Invalid build link.");
           const build = await projectBuildFolder(workspaceRoot, project.id, undefined, undefined, false);
-          const output = await projectBuildFolder(workspaceRoot, project.id, mode, mode === "focus" ? request.artifactKey : undefined, false);
+          let output = await projectBuildFolder(workspaceRoot, project.id, mode, mode === "focus" ? request.artifactKey : undefined, false);
           const recordPath = mode === "focus" && request.artifactKey ? path.join(output, "compile.json") : path.join(build, `${mode}-compile.json`);
-          const record = JSON.parse(await readFile(recordPath, "utf8")) as BuildRecord;
+          let record = JSON.parse(await readFile(recordPath, "utf8")) as BuildRecord;
           const parsed = await parseProject(workspaceRoot, project.id, true);
           if (!record.success || record.mainFile !== project.mainFile || record.engine !== project.engine || !record.sourceRanges
-            || request.revision !== parsed.revision || mode === "full" && record.sourceRevision !== parsed.revision || !await dependenciesUnchanged(record.dependencies)) {
-            throw new Error("Compile this view again to link its current source and PDF.");
+            || request.compiledAt && request.compiledAt !== record.compiledAt) {
+            throw new Error("This PDF was replaced or belongs to another manuscript. Reopen its current PDF before linking.");
           }
+          const currentRanges = compiledSourceRanges(parsed);
+          const approximate = request.hasDrafts || record.sourceRevision !== parsed.revision;
+          let pageOffset = 0;
+          if (record.sectionParts) {
+            const oldRange = request.direction === "forward" && correspondingRange(request.paragraphId, currentRanges, record.sourceRanges);
+            const part = request.direction === "forward" ? record.sectionParts.find(p => oldRange && p.paragraphIds.includes(oldRange.paragraphId))
+              : record.sectionParts.find(p => Number.isInteger(request.page) && request.page > p.pageOffset && request.page <= p.pageOffset + p.pageCount);
+            if (!part || !/^[a-f0-9]{16}$/.test(part.artifactKey) || !Number.isSafeInteger(part.pageOffset) || part.pageOffset < 0) throw new Error("No section PDF matches this position.");
+            pageOffset = part.pageOffset;
+            if (request.direction === "inverse") request.page -= pageOffset;
+            output = await projectBuildFolder(workspaceRoot, project.id, "focus", part.artifactKey, false);
+            record = JSON.parse(await readFile(await checkedBuildFile(output, "compile.json"), "utf8"));
+            if (!record.success || record.sectionParts || record.mainFile !== project.mainFile || record.engine !== project.engine || !record.sourceRanges) throw new Error("This section build is no longer available.");
+          }
+          if (record.workingKey && !/^[a-f0-9]{16}$/.test(record.workingKey)) throw new Error("Invalid compiler source identity.");
+          const syncOutput = mode === "focus" && record.workingKey
+            ? await projectBuildFolder(workspaceRoot, project.id, "focus", record.workingKey, false) : output;
           const pdf = path.join(output, `${mode === "full" ? path.basename(project.mainFile, ".tex") : focusedJobName(output)}.pdf`);
           if (request.direction === "forward") {
-            const range = record.sourceRanges.find(item => item.paragraphId === request.paragraphId);
-            if (!range) throw new Error("This passage is not in this PDF. Compile its section or the full paper.");
-            const file = mode === "focus" ? path.join(output, `${focusedJobName(output)}.tex`) : path.resolve(root, range.file);
+            const range = correspondingRange(request.paragraphId, currentRanges, record.sourceRanges);
+            if (!range) throw new Error("This source file is not in this PDF. Open a PDF containing it first.");
+            const file = mode === "focus" ? path.join(syncOutput, `${focusedJobName(syncOutput)}.tex`) : path.resolve(root, range.file);
             const results = await querySync(root, "view", `${range.startLine}:0:${file.replaceAll("\\", "/")}`, pdf);
             const target = results.find(item => Number(item.Page) >= 1 && Number.isFinite(Number(item.x)) && Number.isFinite(Number(item.y)));
             if (!target) throw new Error("LaTeX supplied no position for this passage.");
-            return { page: Number(target.Page), x: Number(target.x), y: Number(target.y) };
+            return { page: Number(target.Page) + pageOffset, x: Number(target.x), y: Number(target.y), approximate };
           }
           if (request.direction !== "inverse" || !Number.isInteger(request.page) || request.page < 1 || request.page > 100000
             || !Number.isFinite(request.x) || !Number.isFinite(request.y) || Math.abs(request.x) > 10000 || Math.abs(request.y) > 10000) throw new Error("Invalid PDF position.");
@@ -810,13 +1028,14 @@ json(res, 200, { app: "active-writing", workspaceRoot: path.resolve(workspaceRoo
             if (!target.Input || !Number.isInteger(Number(target.Line))) continue;
             const file = path.resolve(root, target.Input);
             if (mode === "full" && !inside(root, file)) continue;
-            if (mode === "focus" && sourcePath(file) !== sourcePath(path.resolve(output, `${focusedJobName(output)}.tex`))) continue;
+            if (mode === "focus" && sourcePath(file) !== sourcePath(path.resolve(syncOutput, `${focusedJobName(syncOutput)}.tex`))) continue;
             const candidates = record.sourceRanges.filter(range => mode === "focus" || sourcePath(path.resolve(root, range.file)) === sourcePath(file));
             const line = Number(target.Line);
             const distance = (range: CompiledSourceRange) => Math.max(range.startLine - line, line - range.endLine, 0);
             const range = candidates.sort((a, b) => distance(a) - distance(b))[0];
-            const paragraph = range && parsed.paragraphs.find(item => item.id === range.paragraphId);
-            if (paragraph) return { paragraphId: paragraph.id, nodeId: paragraph.nodeId };
+            const currentRange = range && correspondingRange(range.paragraphId, record.sourceRanges, currentRanges);
+            const paragraph = currentRange && parsed.paragraphs.find(item => item.id === currentRange.paragraphId);
+            if (paragraph) return { paragraphId: paragraph.id, nodeId: paragraph.nodeId, approximate };
           }
           throw new Error("No editable passage was found at this PDF position.");
         });
@@ -992,6 +1211,7 @@ json(res, 200, { app: "active-writing", workspaceRoot: path.resolve(workspaceRoo
           mainFile?: string;
           engine?: string;
           artifactKey?: string;
+          sectionParts?: SectionPdfPart[];
           dependencies?: unknown;
           sourceRanges?: unknown;
         };
@@ -1005,7 +1225,7 @@ json(res, 200, { app: "active-writing", workspaceRoot: path.resolve(workspaceRoo
         }
         const parsed = await editableProject(workspaceRoot, project.id);
         const statusStale = status.sourceRevision !== parsed.revision || status.mainFile !== project.mainFile || status.engine !== project.engine;
-        if (status.success) status.pdfUrl = `/api/paperfocus/pdf/${status.mode}?projectId=${project.id}${status.artifactKey ? `&build=${status.artifactKey}` : ""}&v=${Date.parse(status.compiledAt)}`;
+        if (status.success) status.pdfUrl = status.sectionParts ? `/api/paperfocus/section-pdf?projectId=${project.id}&build=${status.artifactKey}` : `/api/paperfocus/pdf/${status.mode}?projectId=${project.id}${status.artifactKey ? `&build=${status.artifactKey}` : ""}&v=${Date.parse(status.compiledAt)}`;
         delete status.dependencies; delete status.sourceRanges;
         if (fullCompile) { delete fullCompile.dependencies; delete fullCompile.sourceRanges; }
         json(res, 200, {
@@ -1021,6 +1241,18 @@ json(res, 200, { app: "active-writing", workspaceRoot: path.resolve(workspaceRoo
       return;
     }
 
+    if (req.method === "GET" && url.pathname === "/api/paperfocus/section-pdf") {
+      try {
+        const { project } = await getProject(workspaceRoot, url.searchParams.get("projectId") ?? undefined);
+        const key = url.searchParams.get("build") ?? ""; if (!/^[a-f0-9]{16}$/.test(key)) throw new Error("Invalid section PDF identity.");
+        const folder = await projectBuildFolder(workspaceRoot, project.id, "focus", key, false);
+        const record = JSON.parse(await readFile(await checkedBuildFile(folder, "compile.json"), "utf8"));
+        if (!record.success || !record.sectionParts || record.mainFile !== project.mainFile || record.engine !== project.engine) throw new Error("Section PDF unavailable for this manuscript.");
+        const { sourceRanges: _ranges, dependencies: _deps, workingKey: _working, ...publicRecord } = record;
+        json(res, 200, publicRecord);
+      } catch (error) { json(res, 404, { error: error instanceof Error ? error.message : String(error) }); }
+      return;
+    }
     const match = url.pathname.match(/^\/api\/paperfocus\/pdf\/(focus|full)$/);
     if (req.method === "GET" && match) {
       const mode = match[1] as CompileMode;
@@ -1029,6 +1261,12 @@ json(res, 200, { app: "active-writing", workspaceRoot: path.resolve(workspaceRoo
         const key = mode === "focus" ? url.searchParams.get("build") : undefined;
         if (key && !/^[a-f0-9]{16}$/.test(key)) throw new Error("Invalid build link.");
         const output = await projectBuildFolder(workspaceRoot, project.id, mode, key ?? undefined, false);
+        const corpus = await readCorpus(workspaceRoot, project.id);
+        if (corpus) {
+          const root = await projectBuildFolder(workspaceRoot, project.id);
+          const record = JSON.parse(await readFile(mode === 'full' ? path.join(root, 'full-compile.json') : path.join(output, 'compile.json'), 'utf8'));
+          if (record.corpusRevision !== corpus.revision) throw Error('Compile the current Show / hide selection first.');
+        }
         const filename = mode === "full" ? `${path.basename(project.mainFile, ".tex")}.pdf` : `${focusedJobName(output)}.pdf`;
         const pdfPath = await checkedBuildFile(output, filename);
         const pdf = await readFile(pdfPath);

@@ -4,7 +4,9 @@ import path from "node:path";
 import { captureSyncSnapshot, privateSyncPath, readSyncBytes, syncStatus } from "./deviceSync.ts";
 import { getProject, inside } from "./projects.ts";
 import { withRecordLock } from "./recordLock.ts";
+import {verifyExternalAvailability,verifyExternalRecord} from './syncStructuredBlobs.ts';
 import { validateWorkbench } from "./workbenchStore.ts";
+import {boundedSyncReads} from './syncReads.ts';
 import { canonical, previewSync, safeSyncId, safeSyncPath, syncHash, syncLimits, validateDevice, validateSnapshot, validateSyncJson, validSyncReference, type SyncPlan, type SyncRecord, type SyncSnapshot } from "./syncProtocol.ts";
 
 const digest = /^[a-f0-9]{64}$/;
@@ -26,14 +28,15 @@ function manifestFor(snapshot: SyncSnapshot): Manifest {
 function validateManifest(value: unknown): asserts value is Manifest {
   validateSyncJson(value);
   const manifest = value as Manifest, m = manifest?.metadata;
-  if (!manifest || manifest.format !== "aw-staged-snapshot" || manifest.version !== 1 || !m || m.format !== "aw-device-snapshot" || m.version !== 1) throw new Error("Unsupported staged snapshot format.");
+  if (!manifest || manifest.format !== "aw-staged-snapshot" || manifest.version !== 1 || !m || m.format !== "aw-device-snapshot" || ![1,2].includes(m.version)) throw new Error("Unsupported staged snapshot format.");
   validateDevice(m.device); ids(m.projectId, m.id);
   if (typeof m.createdAt !== "string" || !Number.isFinite(Date.parse(m.createdAt)) || Object.keys(m).some(key => !["format", "version", "id", "projectId", "device", "createdAt", "parents", "ancestors", "tombstones"].includes(key))) throw new Error("Invalid staged metadata.");
-  if (!Array.isArray(m.parents) || m.parents.length > 2 || !Array.isArray(m.ancestors) || m.ancestors.length > syncLimits.ancestors || !Array.isArray(m.tombstones) || m.tombstones.length > syncLimits.records || !Array.isArray(manifest.references) || manifest.references.length > syncLimits.records || !digest.test(manifest.referenceHash)) throw new Error("Invalid staged snapshot header.");
+  const countLimit=m.version===2?50000:syncLimits.records;
+  if (!Array.isArray(m.parents) || m.parents.length > 2 || !Array.isArray(m.ancestors) || m.ancestors.length > syncLimits.ancestors || !Array.isArray(m.tombstones) || m.tombstones.length > countLimit || !Array.isArray(manifest.references) || manifest.references.length > countLimit || !digest.test(manifest.referenceHash)) throw new Error("Invalid staged snapshot header.");
   if ([...m.parents, ...m.ancestors].some(id => !digest.test(id) || id === m.id) || new Set(m.parents).size !== m.parents.length || new Set(m.ancestors).size !== m.ancestors.length || m.parents.some(id => !m.ancestors.includes(id))) throw new Error("Invalid staged ancestry.");
   const paths = new Set<string>(); let total = 0;
   for (const r of manifest.references) {
-    if (!validSyncReference(r) || paths.has(r.path.toLowerCase()) || (total += r.bytes) > syncLimits.totalBytes) throw new Error("Invalid staged file reference.");
+    if (!validSyncReference(r) || r.external&&m.version!==2 || paths.has(r.path.toLowerCase()) || (total += r.external?0:r.bytes) > syncLimits.totalBytes) throw new Error("Invalid staged file reference.");
     paths.add(r.path.toLowerCase());
   }
   for (const t of m.tombstones) { if (!safeSyncPath(t.path) || paths.has(t.path.toLowerCase()) || !digest.test(t.previousHash)) throw new Error("Invalid staged deletion history."); paths.add(t.path.toLowerCase()); }
@@ -64,10 +67,10 @@ async function immutable(target: string, bytes: Buffer, maximum: number) {
   });
 }
 export const saveImmutableSyncArtifact = immutable;
-async function stagedManifest(workspace: string, projectId: string, id: string) {
+export async function stagedManifest(workspace: string, projectId: string, id: string) {
   ids(projectId, id);
   const file = await privateSyncPath(workspace, `staged/${projectId}/${id}.json`);
-  const manifest = JSON.parse((await readSyncBytes(file, 4 * 1024 * 1024)).toString()); validateManifest(manifest);
+  const manifest = JSON.parse((await readSyncBytes(file, 16 * 1024 * 1024)).toString()); validateManifest(manifest);
   if (manifest.metadata.id !== id || manifest.metadata.projectId !== projectId) throw new Error("Staged snapshot belongs to another identity/project.");
   return manifest;
 }
@@ -78,18 +81,20 @@ async function blob(workspace: string, reference: Reference) {
   return bytes;
 }
 export async function hydrateStagedSnapshot(workspace: string, projectId: string, id: string) {
-  const manifest = await stagedManifest(workspace, projectId, id), records: SyncRecord[] = [];
-  for (const reference of manifest.references) records.push({ ...reference, data: (await blob(workspace, reference)).toString("base64") });
+  const manifest = await stagedManifest(workspace, projectId, id);
+  const records:SyncRecord[]=await boundedSyncReads(manifest.references,async reference=>{if(reference.external){await verifyExternalAvailability(workspace,{...reference,data:''},projectId);return {...reference,data:''};}return {...reference,data:(await blob(workspace,reference)).toString('base64')};});
   const snapshot = { ...manifest.metadata, records }; validateSnapshot(snapshot); return snapshot;
 }
 export async function stageSyncSnapshot(workspace: string, projectId: string, snapshot: SyncSnapshot, options: { afterBlob?: (count: number) => void | Promise<void> } = {}) {
   ids(projectId); await getProject(workspace, projectId); validateSnapshot(snapshot);
   if (snapshot.projectId !== projectId) throw new Error("Snapshot belongs to another project. No files staged.");
   const manifest = manifestFor(snapshot), target = await privateSyncPath(workspace, `staged/${projectId}/${snapshot.id}.json`, true);
-  await immutable(target, Buffer.from(JSON.stringify(manifest) + "\n"), 4 * 1024 * 1024);
+  await immutable(target, Buffer.from(JSON.stringify(manifest) + "\n"), 16 * 1024 * 1024);
   let createdBlobs = 0, reusedBlobs = 0, count = 0;
   const unique = new Map(snapshot.records.map(record => [record.sha256, record]));
+  await boundedSyncReads([...unique.values()].filter(r=>r.external),async record=>{await verifyExternalAvailability(workspace,record,projectId);});
   for (const record of unique.values()) {
+    if(record.external){reusedBlobs++;await options.afterBlob?.(++count);continue;}
     const filename = await privateSyncPath(workspace, `blobs/${record.sha256}.blob`, true);
     if (await immutable(filename, Buffer.from(record.data, "base64"), syncLimits.fileBytes)) createdBlobs++; else reusedBlobs++;
     await options.afterBlob?.(++count);
@@ -169,7 +174,12 @@ export async function previewStagedSync(workspace: string, projectId: string, lo
   const base = requestedBase ?? (best.length === 1 ? best[0] : undefined);
   if (!base || !common.includes(base)) throw new Error(best.length > 1 ? "Several shared baselines exist. Choose an exact --base ID for review." : "No staged shared baseline. Never guess from timestamps.");
   const inputs = await Promise.all([base, localId, remoteId].map(id => hydrateStagedSnapshot(workspace, projectId, id)));
-  const plan = previewSync(inputs[0], inputs[1], inputs[2]);
+  const lazyText=(r:SyncRecord)=>/^data\/research\/.+\.(?:md|txt|tex)$/.test(r.path)&&r.bytes<=512*1024;
+  const resolved=new Map<string,SyncRecord>(),names=new Set(inputs.flatMap(s=>s.records.filter(r=>r.kind==='experiment'||lazyText(r)).map(r=>r.path)));let loaded=0;
+  for(const name of names){const records=inputs.map(s=>s.records.find(r=>r.path===name));if(new Set(records.map(r=>r?.sha256)).size<=1)continue;
+    for(const record of records){if(!record?.external||resolved.has(record.sha256))continue;if((loaded+=record.bytes)>syncLimits.totalBytes)throw new Error('Changed notebook evidence exceeds its bounded merge window. Use a smaller collection.');const bytes=await readSyncBytes(await verifyExternalRecord(workspace,record),syncLimits.fileBytes);resolved.set(record.sha256,{path:record.path,kind:record.kind,sha256:record.sha256,bytes:record.bytes,data:bytes.toString('base64')});}
+  }
+  const plan = previewSync(inputs[0], inputs[1], inputs[2],record=>{const value=resolved.get(record.sha256);return value?{...value,path:record.path,kind:record.kind}:record;});
   const id = syncHash(canonical(plan));
   const body = { format: "aw-staged-plan" as const, version: 1 as const, id, projectId, base, local: localId, remote: remoteId, summary: plan.summary };
   const saved: PlanRecord = { ...body, recordHash: syncHash(canonical(body)) };
@@ -217,6 +227,7 @@ export async function checkSyncLocalState(workspace: string, projectId: string, 
 }
 export async function prepareSyncReview(workspace: string, projectId: string, planId: string) {
   const { plan } = await stagedPlan(workspace, projectId, planId), current = await checkSyncLocalState(workspace, projectId, plan.local);
+  if(plan.records.some(r=>r.external))throw new Error('Streamed evidence stays in its immutable cache. Use exact file --output or guarded merge; a full detached bulk copy is not prepared.');
   const directory = path.dirname(await privateSyncPath(workspace, `prepared/${projectId}/${planId}/review.json`, true));
   // Detached candidates are deliberately not a registered project or executable
   // import. Conflicting files are omitted, with full variants in review.json.
@@ -229,7 +240,7 @@ export async function prepareSyncReview(workspace: string, projectId: string, pl
     summary: plan.summary, conflicts: plan.conflicts, deletions: plan.deletions, candidateFiles: plan.records.map(({ path: name, sha256 }) => ({ path: name, sha256 })) };
   const reviewFile = await privateSyncPath(workspace, `prepared/${projectId}/${planId}/review.json`);
   await immutable(reviewFile, Buffer.from(JSON.stringify(review, null, 2) + "\n"), syncLimits.packetBytes * 3);
-  if (syncStateHash(await captureSyncSnapshot(workspace, projectId)) !== syncStateHash(current)) throw new Error(`Local work changed during preparation. Detached drafts kept at ${directory}; no live records changed.`);
+  if (syncStateHash(await captureSyncSnapshot(workspace, projectId,undefined,{forceFull:true})) !== syncStateHash(current)) throw new Error(`Local work changed during preparation. Detached drafts kept at ${directory}; no live records changed.`);
   const ready = await privateSyncPath(workspace, `prepared/${projectId}/${planId}/ready.json`);
   await immutable(ready, Buffer.from(JSON.stringify({ version: 1, projectId, planId, stateHash: syncStateHash(current), liveImport: false }) + "\n"), 2000);
   return { projectId, planId, folder: directory, conflicts: plan.conflicts.length, candidateFiles: plan.records.length, prepared: true, liveImport: false, applySupported: false };

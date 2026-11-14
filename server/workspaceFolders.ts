@@ -15,7 +15,7 @@ export async function workspaceFolders(workspace: string, projectId?: string): P
     home: { path: home, link: pathToFileURL(home + path.sep).href },
     code: { path: appCodeRoot, link: pathToFileURL(appCodeRoot + path.sep).href },
     ...(selected ? { paper: { id: selected.project.id, name: selected.project.name,
-      path: selected.root, link: pathToFileURL(selected.root + path.sep).href, mainFile: selected.project.mainFile, manuscriptPurposes: selected.project.manuscriptPurposes, manuscriptOverviewTargets: selected.project.manuscriptOverviewTargets } } : {}),
+      path: selected.root, link: pathToFileURL(selected.root + path.sep).href, mainFile: selected.project.mainFile, manuscriptPurposes: selected.project.manuscriptPurposes, manuscriptOverviewTargets: selected.project.manuscriptOverviewTargets, manuscriptPins: selected.project.manuscriptPins } } : {}),
     ...(data ? { data: { path: data, link: pathToFileURL(data + path.sep).href } } : {}),
     guidePath: path.join(appCodeRoot, "docs", "RESEARCH_WORKFLOW.md"),
     canOpen: process.platform === "win32",

@@ -1,10 +1,85 @@
 # Working with Aw as a folder-aware agent
 
+For an optional outside review, see [OUTSIDE_REVIEW.md](OUTSIDE_REVIEW.md).
+No external reviewer or permission to send research is configured by default.
+
+## Preferred reading copies
+
+For a directory of short research summaries with per-collaborator inclusion,
+see [Research overview and audiences](RESEARCH_CORPUS.md). `awCorpus.ts` provides
+offline list/show/hide/audience/export commands. Share list exports omit hidden
+entries server-side; the master source ZIP retains all entries. Never publish
+the master and rely on client-side hiding, or invent missing private URLs.
+
+The manuscript dropdown starts with three document roles: **Overview** (a short
+collaborator introduction), **Research notes** (the detailed evolving account),
+and **Publication draft** (the manuscript intended for publication). Each may
+point to one preferred independent TeX root. Use `project.manuscriptPins`, not a
+filename guess or the last root someone opened, to find explicitly chosen copies.
+If a role has exactly one eligible root, the menu shows it automatically; several
+unselected notes require a choice rather than a guess. Missing publication drafts
+are normal. Do not create or relabel one merely to fill its slot.
+
+Offline `awResearch.ts inspect --offline` reports saved `pinnedDocuments` for the
+owning project. It does not expand the request's writing scope. For a deliberate
+pin change with the service available, `awVersions.ts inspect` reports explicit
+`pins`, effective `pinnedDocuments`, roots and the current source revision. Use
+`awVersions.ts pin --workspace AW_HOME --project ID --root SELECTED.tex
+--revision HASH --purpose overview|notes|publication --file TARGET.tex
+--expected-file PREVIOUS.tex|none` to preview, then repeat with `--commit`.
+`--file none` returns that role to unambiguous automatic selection. A pin never
+changes purpose, source, notebook ownership, review decisions or selected root.
+New versions do not silently displace a preferred copy; choose the new copy when
+it is the one the human should read. Keep working supplements separate.
+
+Pins are Aw-only project metadata outside the checkout. First-copy export retains
+them. With the negotiated reading-pin sync capability on both devices, ordinary
+Overview/Research notes pins, their purpose tags and the pinned overview link
+follow the reading lane automatically. New source arrives before its pin can be
+applied. Independent role choices combine; competing choices for one role stay
+held. Publication metadata and unrelated policy retain protected sync review.
+Never copy a whole registry to transfer a pin. Do not overwrite a desktop's newer registry to
+make pins match. A changed purpose invalidates that file's old-role pin.
+
+**Copy link** beside a preferred document creates a local Aw navigation link,
+not a public URL or access grant. For collaborators use Compile → Share manuscript
+& notebook (PDF/curated private-reader bundle) or Download source ZIP for Overleaf.
+Overview sharing prefers the pinned overview. Review selected contents before
+sharing; pinning never publishes or uploads anything, and ordinary TeX stays
+usable without Aw. Do not claim a localhost link works on someone else's machine.
+
 Aw is a local research record and LaTeX editor, not an autonomous worker scheduler. Use this short map first, then [RESEARCH_WORKFLOW.md](RESEARCH_WORKFLOW.md) for the guarded notebook commands and execution rules. Follow `AGENTS.md` and the user's narrower request. Advice or a research question is not permission to restructure source.
 
 ## Start or resume a project
 
+For review/revision requests, use [Remote review](REMOTE_REVIEW.md): the offline
+`awReview.ts list/inspect/reply` commands read synced comments and append threaded
+replies without opening Aw. Check current source/policy; comments alone are not
+execution permission. Leave closure to the human in this workflow.
+
 ### Default: work in Aw without opening its UI
+
+In a paired desktop setup, do substantial research/experiments in the project's
+desktop data home. Keep the laptop's source, explanations, notebook displays and
+human notes useful offline; raw arrays/archives may be desktop-backed. Use
+`awStore.ts status` to distinguish that from deletion and explicit `fetch` for one
+requested local input. Never create placeholder data, silently fetch whole archives,
+reset sync history or rerun an experiment to fill a missing local file. Save compact
+notes/plots with exact evidence links; keep raw datasets out of manuscript prose.
+Read REMOTE_RESEARCH.md's everyday workflow for chat/folder selection and VPN gates.
+
+For configured desktop work, follow [Desktop assistance](DESKTOP_ASSISTANCE.md):
+one scoped local helper can replace a long routine extraction/test-planning pass,
+not every trivial prompt or proof-critical judgment. It also gives aggregate
+simulation budgets and the distinction between durable results and limited scratch.
+
+For a human-authorized laptop/desktop first copy, use `scripts/awPair.ts prepare`
+and its exact-plan `commit`, not an ad hoc folder/registry copy. `new` can scaffold
+a research-notes project first. Read DEVICE_SYNC.md: streaming version 2 keeps bulk
+archives out of in-memory packets and sends missing hashes only. Keep the returned
+desktop home separate, and use the receipt's laptop project link for human viewing.
+No server, experiment replay or new Codex chat is required. This setup does not
+enlarge source/compute permissions or resolve conflicting/protected research.
 
 Aw remains the working harness, not just a viewer for files produced elsewhere. Keep the owning project, conversation, notebook, evidence links and request status connected through the scoped tools. Save authorized readable TeX notes alongside that project's source and link them from the owning notebook when available. Do not skip notebook storage or task completion merely to avoid visiting the app. Opening Aw and inspecting its renderer are for preparing the human's review, explicit display/UI work, or publication presentation checks—not routine exploration. Data access through CLI/files is not a visual app visit.
 
@@ -45,6 +120,15 @@ both copies first; new work stops unsafe retries. No app server, model/API, job 
 public listener or automatic host-key acceptance is involved. See DEVICE_SYNC.md for
 the full scope/budgets and the distinction between receipt, collection and agreement.
 
+When the human has explicitly enabled automatic saved-work synchronization,
+`scripts/awSyncWatch.ts status` reads local worker settings/results without a
+connection. Do not start a competing coordinator or force an interrupted pair.
+It merges only complete agreeing research proposals; conflicts/protected decisions
+wait for review. Desktop Codex/experiments must run on the desktop itself, in a
+disconnect-tested persistent session for unattended work. The laptop chat connection,
+Aw service and saved-work synchronization are three separate lifecycles. See
+REMOTE_RESEARCH.md before configuring any host or executing remote code.
+
 Exploration needs only a brief markup/readability check of changed passages. When the human wants a readable note, do one focused check with an already available local renderer/compiler if useful; do not launch the Aw UI/server solely for that check, install dependencies, or run a whole-document polishing ceremony. If the necessary renderer is unavailable, say what was not checked and keep the source deliverable.
 
 Use `awResearch.ts COMMAND --offline` for discover/bind/inspect/cell/output/inputs/manifest/put/batch/organize/finish. It accesses the same validated disk stores without HTTP, a listener or an automatic server fallback. Ownership, revisions, saved tickets and human decisions still apply. Bindings retain identity, not transport: keep `--offline` when using `--scope`. With the human's compute permission, `run --offline --allow-python` runs a saved code cell in fresh Python, waits for collection and returns its new revision and immutable run path. Text, tables, plots, sweeps, heatmaps and Matplotlib figures go straight into the same notebook; no manual import or server is needed. `job --offline` reads a saved run without executing it. Shared sessions, live waiting/model jobs, preflight, evidence snapshots, phase rollover and publication/versioning tools still need their live protocols. See the research workflow's [offline Python loop](RESEARCH_WORKFLOW.md#server-independent-records-and-python).
@@ -74,9 +158,15 @@ The research lab record belongs in the owning `.ipynb`, under Aw home's returned
 
 If the human makes clear that the current version is intended to be read, that is enough to request a focused readability/rendering pass—no formal QA phrase is needed. A digest, walkthrough or note prepared for their reading should be coherent and readable, with the relevant display checked proportionately. Do not confuse this with publication status, word-by-word approval, mathematical validation, or permission for exhaustive page-by-page trials. Otherwise keep working notes lightweight.
 
-For drafting or revising reader-facing prose, reuse the general principles in [Writing overviews and research notes in Aw](PRESENTATION_REVISION_NOTES.md). They apply across subjects and document purposes; publication review guardrails still apply separately. Manuscript prose must stand alone: never refer to chats, conversations or prompts, including saying that the reader need not have followed them. Explain the work directly. The reading preview displays literal project-local PNG/JPEG/GIF/WebP `\includegraphics` references, readable captions and simple widths without changing source. PDF figures have an open link; custom graphics macros, `\graphicspath`, SVG/EPS and exact float layout require the compiled PDF. Prefer explicit project-relative paths and check the reader's chosen view when a figure is reported broken.
+For drafting or revising reader-facing prose, reuse the general principles in [Writing overviews and research notes in Aw](PRESENTATION_REVISION_NOTES.md). They apply across subjects and document purposes; publication review guardrails still apply separately. For mathematical exposition, follow [Write proofs for the declared reader](PRESENTATION_REVISION_NOTES.md#write-proofs-for-the-declared-reader): give complex arguments an advance roadmap, split overloaded results into bounded supporting claims, keep notation consistent by role, cite established inputs, and show the specific algebra or conditional step needed for their application. Reader comments about compressed steps should guide analogous proof revisions elsewhere, not just local answers. Manuscript prose must stand alone: never refer to chats, conversations or prompts, including saying that the reader need not have followed them. Explain the work directly. The reading preview displays literal project-local PNG/JPEG/GIF/WebP `\includegraphics` references, readable captions and simple widths without changing source. PDF figures have an open link; custom graphics macros, `\graphicspath`, SVG/EPS and exact float layout require the compiled PDF. Prefer explicit project-relative paths and check the reader's chosen view when a figure is reported broken.
 
-The compiled manuscript PDF scrolls continuously through all included pages. Page number and Previous/Next controls are visible above the PDF for direct jumps; the current page follows scrolling. Only nearby pages render canvases, while offscreen page slots retain their layout. Double-click locates the source passage without narrowing All sections to This section; section view keeps its containing section and block-window view keeps its radius. Search, zoom and build details remain in LaTeX options. Reference/file PDF readers retain their own page controls. Check later pages before treating a floated figure as missing; focused compilation can change pagination relative to the full document.
+The compiled manuscript PDF scrolls continuously through all included pages. A small page counter in the upper-right corner follows scrolling without reserving a toolbar row. Click it to reveal page entry, Previous/Next and location-back controls; click outside or press Escape to close them. These controls do not require the LaTeX options menu. Only nearby pages render canvases, while offscreen page slots retain their layout. Double-click locates the source passage without narrowing All sections to This section; section view keeps its containing section and block-window view keeps its radius. Search, zoom and build details remain in LaTeX options. Reference/file PDF readers retain their own page controls. Check later pages before treating a floated figure as missing; focused compilation can change pagination relative to the full document.
+
+Source/PDF jumps use the displayed build's saved paragraph text and SyncTeX map. They do not save, compile or require a current source revision. Unique unchanged paragraphs anchor the alignment after insertions; edited or new paragraphs use nearby order-based matches. These are navigation hints, not exact source anchors for comments or edits. Another root/engine or a replaced full PDF still requires opening the appropriate PDF. An initial compile is needed to create a PDF and its map.
+
+**Compile** builds one continuous PDF from the original source. Unchanged inputs reuse the saved PDF; local edits retain the normal `latexmk` database, bibliography and auxiliaries. Opening a manuscript and optional idle compilation use this same path. Moving between sections keeps a current full PDF rather than building each section. **Compile → Compile view** remains an explicit excerpt option, and **Quick draft** makes one TeX pass with potentially unsettled references. The separate Section PDF option is retired: its reference baseline and per-section TeX jobs could make long manuscripts slower. Existing section PDFs and their source maps remain readable for compatibility. No page breaks are added to manuscript source. Do not split source files, remove build caches or force a clean build for ordinary wording edits.
+
+The Compile menu offers **Quick draft** (one engine pass over the visible section or blocks), **Compile view** (latexmk settles the visible excerpt), and the existing full/original-page builds. Normal Compile uses this view path in All sections too. Each compatible view keeps a working folder with latexmk's dependency database, bibliography and auxiliaries; successful builds publish separate PDF/map snapshots. Local wording edits can therefore avoid unnecessary bibliography/reference passes while older PDFs keep their navigation maps. A preamble/root/engine/scope change starts a different working folder. Identical simultaneous requests share one build; a project compiler lock protects the working files across services. As with other guarded stores, inspect a lock left by a crashed compiler before explicit recovery rather than deleting an active lock. Cache checks hash small text inputs and accept byte-identical timestamp changes from sync, while real input or output changes invalidate reuse. For a smaller local check, choose This section or Block window; All sections still typesets the visible whole paper. Drafts may have unsettled references, contents or bibliography; use Compile view or Full to settle them. Original pages retain complete full-document layout and can therefore require a full rebuild after an edit. None of these temporary builds modifies shared TeX or requires collaborators to use Aw.
 
 Opening a manuscript in a visible LaTeX PDF pane restores its own current build, or automatically requests a focused compile after checking saved status. This opening behavior is separate from the optional idle-compilation preference for ongoing edits. Source conflicts and unsettled navigation stop it; failures do not retry in a loop. The current window keeps bounded metadata for up to twelve immutable focused PDFs, keyed by project/root/engine and scope and validated against the source revision. Returning to an unchanged view reuses its PDF without running TeX. On a cache miss, the service's existing dependency-checked focused-build cache can still avoid another TeX run. No PDF/draft payload is added to browser recovery storage. Late results from a root the user has left cannot replace the current preview; another root's project-wide last build is never shown as the selected manuscript.
 
@@ -278,10 +368,40 @@ Heading and environment-command editors have a compact comment icon that appears
 
 **Show in preview** is a visible manuscript-toolbar action for the current source passage; highlighted text and individual block controls offer it too. It opens Split and safely saves source before using a current/cached PDF source map or the rendered-text anchor. A failed save/build leaves diagnostics instead of guessing a PDF position. Inverse navigation from an outdated PDF still asks for a current build. Double-clicking the PDF or rendered passage scrolls to source and flashes that passage for about 650 milliseconds without changing its text, selection or manuscript scope. Rebuilding a PDF in the same manuscript/scope retains its page and within-page reading offset; a different root/scope does not borrow that position. Pagination changes can shift the surrounding text, so the retained page/offset is a reading-position fallback, not an exact semantic relocation after arbitrary rewrites.
 
-For app implementation, preserve user work, add a direct regression, follow the full checkpoint rules in `AGENTS.md`, and trial editing only on a separate origin/workspace. Backend features need one safe Aw restart after drafts/runs settle; a browser refresh alone does not reload the backend. Do not restart the user's service merely for QA.
+For app implementation, preserve user work and run a few directly relevant regression/guard tests, with incremental typechecking. Use `npm run check -- --test server/FEATURE.test.ts --match 'regression|related guard'`; optional `--sample` broadens coverage deliberately. Follow the proportional verification rules in `AGENTS.md`; a small source/storage/sync change is not by itself a reason for hundreds of tests. Full sweeps are for releases, major refactors, explicit requests or evidence of a wider failure. Trial editing only on a separate origin/workspace. Backend features need one safe Aw restart after drafts/runs settle; a browser refresh alone does not reload the backend. Do not restart the user's service merely for QA.
 
 ### Browser recovery capacity
 
 Shared recovery copies now use IndexedDB when available, rather than Web Storage's small per-origin quota. Aw waits for its recovery mirror before opening the editor, keeps existing Web Storage copies as read fallback, and never clears them merely to obtain space. Immediate tab-local copies still use session storage. Cross-window recovery updates and ownership leases are synchronized; failed transactions retain pending bytes and display a warning until retried successfully. The recovery chooser reads both the larger store and old copies. If IndexedDB or cross-window messaging is unavailable, the original bounded cache and diagnostics remain available.
 
 This increases shared recovery capacity, not a fixed guaranteed allocation. Browser-managed IndexedDB quotas, eviction and available disk space still apply. No persistence permission is requested automatically. The manuscript, notebook and assistance stores remain independent authoritative disk records. A session-cache warning is a separate issue from shared-cache capacity. Save pending work before reloading into new client code, and never discard a browser recovery to silence a warning.
+
+
+Research graphics: [Research visuals](RESEARCH_VISUALS.md) covers `display_explorer` (linked scatter, histograms, parallel coordinates and exact rows), uncertainty bands, grids/sweeps, ID-linked 2D/3D trajectories, animations and isolated HTML. `awResearch.ts visuals [--recipe NAME]` is an offline, scope-free catalogue with small runnable examples; `visual --offline` attaches saved artifacts without executing Python. When the human is carefully reviewing the notebook, consider a richer view that answers a concrete question and explain what to try. Routine exploration stays lightweight: no presentation-only reruns, dashboards or UI visits. Reuse saved evidence, preserve provenance and make projections, missing data and sampling explicit. Selections and simulations are not new independent evidence or proofs.
+
+## Writing preference examples
+
+During requested editing, cache useful explicit preferences in small batches
+using [Writing preferences](WRITING_PREFERENCES.md). Store exact labelled or
+unlabelled excerpts with feedback references in private project research records,
+and link from the owning notebook. Do not launch collection-only reviews, infer
+labels from silence, or train a model automatically.
+
+
+When preparing notes or an overview the user has requested for reading, designate
+and pin the intended reading copies with guarded `awVersions.ts purpose/pin`
+(or the equivalent app controls). Prefer the short overview and current coherent
+research note over a historical running scratch log. Preserve explicit human
+choices and publication purpose; do not repin every scratch file. Confirm both
+files and role settings are visible on the paired reading copy.
+
+
+For server-independent agents, ordinary reading roles can also be saved offline:
+use `getProject` to confirm the owning workspace/project, then import
+`readingPins` and `applyReadingPins` from `server/syncDocumentPins.ts`.
+Read the current snapshot, compute `syncHash(canonical(snapshot))`, and pass that
+expected digest plus the explicitly intended overview/notes/overviewTarget to
+`applyReadingPins`. It validates existing roots, fences registry bytes and keeps
+main-file selection, publication settings and saved research records intact.
+Do not start Aw or hand-edit registry JSON merely to designate reading copies.
+The human's requested reading package supplies the scope; the helper does not.

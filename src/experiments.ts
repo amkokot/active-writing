@@ -1,3 +1,5 @@
+import { geometryVisual, imageAnimation, htmlVisual, geometryMime, animationMime, htmlMime, visualSummary } from "./experimentVisual.ts";
+import { explorerMime, explorerVisual } from "./experimentExplorer.ts";
 export interface ExperimentOutput {
   output_type: string; name?: string; text?: string | string[];
   data?: Record<string, unknown>; metadata?: Record<string, unknown>;
@@ -31,7 +33,7 @@ export interface ExperimentCell {
 export interface ExperimentNotebook { nbformat: 4; nbformat_minor: number; metadata: Record<string, unknown>; cells: ExperimentCell[] }
 export interface ExperimentStore { notebook: ExperimentNotebook; revision: string; path: string }
 export interface ExperimentJob { id: string; cellId: string; status: "working" | "ready" | "failed" | "cancelled"; error?: string; durationMs?: number; execution?: ExperimentExecution; startedAt?: string }
-export interface ExperimentPlot { title: string; xLabel: string; yLabel: string; xScale?: "linear" | "log"; yScale?: "linear" | "log"; series: Array<{ name: string; points: number[][] }> }
+export interface ExperimentPlot { title: string; xLabel: string; yLabel: string; xScale?: "linear" | "log"; yScale?: "linear" | "log"; series: Array<{ name: string; points: number[][]; band?: { lower: number[]; upper: number[]; label: string } }> }
 export const cellText = (cell: Pick<ExperimentCell, "source">) => Array.isArray(cell.source) ? cell.source.join("") : cell.source;
 export const mimeText = (value: unknown) => typeof value === "string" ? value : Array.isArray(value) && value.every((part) => typeof part === "string") ? value.join("") : undefined;
 export const outputText = (output: ExperimentOutput) => mimeText(output.text) ?? mimeText(output.data?.["text/plain"]) ?? (output.ename ? `${output.ename}: ${output.evalue ?? ""}\n${output.traceback?.join("\n") ?? ""}` : "");
@@ -64,6 +66,10 @@ export function validateExperimentNotebook(value: unknown): asserts value is Exp
     if (cell.cell_type === "code" && (!Array.isArray(cell.outputs) || cell.outputs.length > 30 || !(cell.execution_count === null || Number.isInteger(cell.execution_count) && cell.execution_count! >= 0))) throw new Error("Invalid code-cell outputs/count.");
     for (const output of cell.outputs ?? []) {
       if (!output || !["stream", "display_data", "execute_result", "error"].includes(output.output_type) || output.text !== undefined && !(typeof output.text === "string" || Array.isArray(output.text) && output.text.every((part) => typeof part === "string")) || output.data !== undefined && (!output.data || typeof output.data !== "object" || Array.isArray(output.data)) || output.traceback !== undefined && (!Array.isArray(output.traceback) || output.traceback.some((line) => typeof line !== "string"))) throw new Error("Invalid experiment output.");
+      if (output.data?.[explorerMime] !== undefined && !explorerVisual(output.data[explorerMime])) throw new Error("Invalid data explorer output.");
+      if (output.data?.[geometryMime] !== undefined && !geometryVisual(output.data[geometryMime])) throw new Error("Invalid geometry visual output.");
+      if (output.data?.[animationMime] !== undefined && !imageAnimation(output.data[animationMime])) throw new Error("Invalid animation visual output.");
+      if (output.data?.[htmlMime] !== undefined && !htmlVisual(output.data[htmlMime])) throw new Error("Invalid HTML visual output.");
       const value = output.data?.["image/png"], png = mimeText(value);
       if (value !== undefined && (!png || png.length > 1_500_000 || !/^[A-Za-z0-9+/=\r\n]+$/.test(png))) throw new Error("Invalid or oversized PNG output.");
     }
@@ -135,6 +141,8 @@ export function experimentContext(nb: ExperimentNotebook, notebookId: string, sc
     const stale = experimentStaleness(cell, nb);
     const findings = (cell.outputs ?? []).map((output) => {
       const text = mimeText(output.data?.["text/markdown"]) ?? outputText(output);
+      const visual = visualSummary(output.data);
+      if (visual) return visual;
       const grid = experimentHeatmap(output.data?.[heatmapMime]);
       if (grid) return heatmapSummary(grid);
       const sweep = experimentSweep(output.data?.[sweepMime]);
@@ -142,7 +150,7 @@ export function experimentContext(nb: ExperimentNotebook, notebookId: string, sc
       if (output.data?.["application/json"] !== undefined) return `${text}\n${JSON.stringify(output.data["application/json"]).slice(0, 800)}`;
       const plot = experimentPlot(output.data?.["application/vnd.paperfocus.plot+json"]);
       // Plain fallbacks used to hide plot numbers from agents entirely.
-      return plot ? `Plot: ${plot.title}; axes ${plot.xLabel} (${plot.xScale ?? "linear"}), ${plot.yLabel} (${plot.yScale ?? "linear"}); ${plot.series.map((s) => `${s.name} (${s.points.length} points, first=${JSON.stringify(s.points[0])}, last=${JSON.stringify(s.points.at(-1))})`).join("; ")}` : text;
+      return plot ? `Plot: ${plot.title}; axes ${plot.xLabel} (${plot.xScale ?? "linear"}), ${plot.yLabel} (${plot.yScale ?? "linear"}); ${plot.series.map((s) => `${s.name} (${s.points.length} points, first=${JSON.stringify(s.points[0])}, last=${JSON.stringify(s.points.at(-1))}${s.band ? `; band: ${s.band.label}, exact lower/upper retained` : ""})`).join("; ")}` : text;
     }).join("\n");
     const failed = (cell.outputs ?? []).some((output) => output.output_type === "error");
     const label = `## Cell ${metadata?.highlighted ? "Highlighted · " : ""}${(metadata?.title || cell.id).slice(0, 100)} [${cell.id}]: ${cell.cell_type}${metadata?.folder ? ` · ${metadata.folder.slice(0, 60)}` : ""}\nState: ${cell.cell_type !== "code" ? "research note; not mathematical verification" : stale ? `output from earlier code; do not treat as current (${stale})` : failed ? "failed run; not successful evidence" : metadata?.lastRunAt ? "saved run" : "unrun / imported output; not independently verified"}${stale && failed ? "; failed run" : ""}${metadata?.runId ? `; run=${metadata.runId.slice(0, 64)}` : ""}${metadata?.execution?.mode === "session" ? `; shared session ${metadata.execution.sessionId}, step ${metadata.execution.sequence}; execution history matters` : ""}${metadata?.imagesCleared ? "; PNG images removed from this notebook; inspect the original saved run if needed" : ""}`;
@@ -158,6 +166,12 @@ export function experimentPlot(value: unknown): ExperimentPlot | undefined {
   const plot = value as ExperimentPlot;
   if (!plot || ![plot.title, plot.xLabel, plot.yLabel].every((v) => typeof v === "string") || !Array.isArray(plot.series) || !plot.series.length || plot.series.length > 8 || plot.series.some((s) => !s || typeof s.name !== "string" || !Array.isArray(s.points) || s.points.length > 2000 || s.points.some((p) => !Array.isArray(p) || p.length !== 2 || p.some((n) => typeof n !== "number" || !Number.isFinite(n))))) return undefined;
   if ([plot.xScale, plot.yScale].some((scale) => scale !== undefined && scale !== "linear" && scale !== "log") || plot.series.some((series) => series.points.some(([x, y]) => plot.xScale === "log" && x <= 0 || plot.yScale === "log" && y <= 0))) return undefined;
+  for (const series of plot.series) if (series.band !== undefined) {
+    const b = series.band;
+    if (!b || typeof b.label !== "string" || !b.label.trim() || b.label.length > 300 || !Array.isArray(b.lower) || !Array.isArray(b.upper) || b.lower.length !== series.points.length || b.upper.length !== series.points.length
+      || b.lower.some((v, i) => typeof v !== "number" || !Number.isFinite(v) || typeof b.upper[i] !== "number" || !Number.isFinite(b.upper[i]) || v > b.upper[i] || plot.yScale === "log" && v <= 0)
+      || series.points.some((p, i) => i > 0 && p[0] <= series.points[i - 1][0])) return undefined;
+  }
   return plot;
 }
 
@@ -167,7 +181,7 @@ export function plotCoordinates(plot: ExperimentPlot) {
   if (!points.length) return undefined;
   const tx = (n: number) => plot.xScale === "log" ? Math.log10(n) : n;
   const ty = (n: number) => plot.yScale === "log" ? Math.log10(n) : n;
-  const xs = points.map((p) => p[0]), ys = points.map((p) => p[1]);
+  const xs = points.map((p) => p[0]), ys = [...points.map((p) => p[1]), ...plot.series.flatMap(s => s.band ? [...s.band.lower, ...s.band.upper] : [])];
   const xmin = Math.min(...xs), xmax = Math.max(...xs), ymin = Math.min(...ys), ymax = Math.max(...ys);
   const fraction = (n: number, min: number, max: number, transform: (n: number) => number) => {
     const a = transform(min), b = transform(max), v = transform(n), span = b - a;

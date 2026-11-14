@@ -4,7 +4,7 @@ import { mkdir, mkdtemp, readFile, writeFile, cp, symlink, stat } from "node:fs/
 import path from "node:path";
 import { createServer } from "node:http";
 import { makeSnapshot, previewSync, syncRecord, validateSnapshot, type SyncDevice, type SyncRecord } from "./syncProtocol.ts";
-import { captureSyncSnapshot, initializeSyncDevice, readSyncSnapshot, saveSyncSnapshot, syncStatus } from "./deviceSync.ts";
+import { captureSyncSnapshot, initializeSyncDevice, readSyncSnapshot, saveSyncSnapshot, syncStatus, privateSyncPath } from "./deviceSync.ts";
 import { createPaperProject } from "./projectFiles.ts";
 import { getProject, registry, saveRegistry } from "./projects.ts";
 import { writeNotebook } from "./notebookStore.ts";
@@ -15,6 +15,16 @@ import { latexMiddleware } from "./latexPlugin.ts";
 import type { NotebookEntry } from "../src/types.ts";
 
 const laptop: SyncDevice = { version: 1, id: "laptop-device", label: "Laptop" }, desktop: SyncDevice = { version: 1, id: "desktop-device", label: "Desktop" };
+test('private sync paths check every parent, including missing children beneath junctions', async () => {
+  const parent = path.join(process.cwd(), '.paperfocus/trials'); await mkdir(parent, {recursive:true});
+  const home = await mkdtemp(path.join(parent, 'sync-path-')), outside = await mkdtemp(path.join(parent, 'sync-outside-'));
+  const file = await privateSyncPath(home, 'nested/ordinary/file.json', true);
+  await writeFile(file, '{}'); assert.equal(await privateSyncPath(home, 'nested/ordinary/file.json'), file);
+  await symlink(outside, path.join(home, '.paperfocus/device-sync/junction'), process.platform==='win32'?'junction':'dir');
+  await assert.rejects(privateSyncPath(home,'junction/missing/child.json',true), /follow links/);
+  await assert.rejects(privateSyncPath(home,'nested/ordinary/../../../outside.json'), /Invalid sync storage path/);
+  await assert.rejects(stat(path.join(outside,'missing')), /ENOENT/);
+});
 const text = (name: string, value: string) => syncRecord(`source/${name}`, "source", Buffer.from(value));
 const json = (name: string, kind: SyncRecord["kind"], value: unknown) => syncRecord(name, kind, Buffer.from(JSON.stringify(value)));
 const decoded = (record: SyncRecord) => JSON.parse(Buffer.from(record.data, "base64").toString());
@@ -57,7 +67,7 @@ test("baseline, device, project, checksum, size, casing and schema gates reject 
   const f = branch([text("a.tex", "a")]), left = f.local([text("a.tex", "L")]), right = f.remote([text("a.tex", "R")]);
   const corrupt = structuredClone(left); corrupt.records[0].data = Buffer.from("bad").toString("base64"); assert.throws(() => validateSnapshot(corrupt), /Invalid|checksum/);
   const traversal = structuredClone(left); traversal.records[0].path = "source/../auth.json"; assert.throws(() => validateSnapshot(traversal), /Invalid/);
-  const newer = structuredClone(left) as any; newer.version = 2; assert.throws(() => validateSnapshot(newer), /Unsupported/);
+  const newer = structuredClone(left) as any; newer.version = 3; assert.throws(() => validateSnapshot(newer), /Unsupported/);
   const oversized = structuredClone(left); oversized.records[0].bytes = 25 * 1024 * 1024; assert.throws(() => validateSnapshot(oversized), /oversized/);
   assert.throws(() => previewSync(f.base, left, f.local([text("a.tex", "R")])), /same device ID/);
   assert.throws(() => previewSync(f.base, left, makeSnapshot("other-project", desktop, [])), /different projects/);
@@ -97,7 +107,7 @@ test("endpoint never connects, requires origin for naming, and reads do not init
   const server = createServer((req, res) => { void middleware(req, res, () => { res.writeHead(404); res.end(); }); });
   await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve)); const origin = `http://127.0.0.1:${(server.address() as { port: number }).port}`, url = `${origin}/api/paperfocus/device-sync`;
   try {
-    const status = await (await fetch(url)).json(); assert.equal(status.device, undefined); assert.equal(status.folder, undefined); assert.equal(status.connected, false); assert.equal(status.capabilities.reviewedTwoCopySync,true); assert.equal(status.capabilities.automaticSync,false); assert.equal(status.capabilities.remoteCompute,false);
+    const status = await (await fetch(url)).json(); assert.equal(status.device, undefined); assert.equal(status.folder, undefined); assert.equal(status.connected, false); assert.equal(status.capabilities.reviewedTwoCopySync,true); assert.equal(status.capabilities.automaticSync,true); assert.equal(status.capabilities.automaticSyncControl,"cli"); assert.equal(status.capabilities.remoteCompute,false);
     assert.equal((await fetch(url, { method: "POST", body: "{}" })).status, 403); assert.equal((await fetch(url, { method: "POST", headers: { Origin: "https://foreign.example" }, body: "{}" })).status, 403);
     const saved = await fetch(url, { method: "POST", headers: { Origin: origin, "Content-Type": "application/json" }, body: JSON.stringify({ label: "Laptop" }) }); assert.equal(saved.status, 200); assert.equal((await saved.json()).device.label, "Laptop");
     assert.equal((await fetch(url, { method: "DELETE", headers: { Origin: origin } })).status, 405);

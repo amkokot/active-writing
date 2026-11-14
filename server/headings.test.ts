@@ -6,6 +6,7 @@ import { manuscriptHeadingTag, sectionHeadingLevel } from "../src/headingHierarc
 import { outlineRows, sourceOrderedBlocks } from "../src/workspaceTools.ts";
 import { parseProject, registerProject, saveEdits } from "./projects.ts";
 import { focusedDocument } from "./focus.ts";
+import { collaborationPages } from "./collaboratorExport.ts";
 import type { ManuscriptNode } from "../src/types.ts";
 
 test("heading controls do not move later section prose ahead of a newly wrapped theorem",()=>{
@@ -17,6 +18,114 @@ test("heading controls do not move later section prose ahead of a newly wrapped 
   assert.deepEqual(startsWithTheorem.map(b=>b.id),["s","t","s","e"]);
   const placeholder=sourceOrderedBlocks(nodes,[{id:"statement",nodeId:"t",text:"Statement"},{id:"empty",nodeId:"s",text:"",emptySource:true}]);
   assert.deepEqual(placeholder.map(b=>[b.id,b.paragraphIds]),[["s",["empty"]],["t",["statement"]],["e",[]]]);
+});
+
+test("focused LaTeX interleaves section transitions with statements and proofs in source order", async () => {
+  const workspace = await mkdtemp(path.join(process.cwd(), ".paperfocus/trials/proof-order-"));
+  const root = path.join(workspace, "paper"); await mkdir(root);
+  await writeFile(path.join(root, "main.tex"), String.raw`\documentclass{article}
+\usepackage{amsthm}
+\newtheorem{lemma}{Lemma}
+\newtheorem{proposition}[lemma]{Proposition}
+\begin{document}
+\section{Argument}
+Before the first claim.
+\begin{lemma}
+First claim.
+\end{lemma}
+\begin{proof}
+First proof.
+\end{proof}
+After the first proof.
+\begin{proposition}
+Second claim.
+\end{proposition}
+\begin{proof}
+Second proof.
+\end{proof}
+After the second proof.
+\end{document}`);
+  const project = await registerProject(workspace, root);
+  const parsed = await parseProject(workspace, project.id);
+  const section = parsed.nodes.find(n => n.title === "Argument")!;
+  const expected = ["Before the first claim.", "First claim.", "First proof.", "After the first proof.", "Second claim.", "Second proof.", "After the second proof."];
+  for (const options of [{}, { focusNodeId: section.id }, { focusNodeId: section.id, synchronize: true }]) {
+    const focused = focusedDocument(parsed, options);
+    const positions = expected.map(text => focused.indexOf(text));
+    assert.ok(positions.every((at, i) => at >= 0 && (!i || at > positions[i - 1])), "a transition must not leap ahead of its preceding proof");
+    for (const text of expected) assert.equal(focused.split(text).length - 1, 1);
+    assert.equal((focused.match(/\\section\{Argument\}/g) ?? []).length, 1, "resuming prose does not repeat its heading");
+  }
+});
+
+test("focused headings preserve numbered and starred source syntax and restore reference counters", async () => {
+  const workspace = await mkdtemp(path.join(process.cwd(), ".paperfocus/trials/heading-references-"));
+  const root = path.join(workspace, "paper"); await mkdir(root);
+  await writeFile(path.join(root, "main.tex"), String.raw`\documentclass{article}
+\begin{document}
+\section{First}\label{sec:first}
+First text.
+\section*{Interlude}
+Unnumbered text.
+\section[Short]{Second}\label{sec:second}
+Second text refers to \ref{sec:first}.
+\subsection{Details}\label{sec:details}
+Detail text refers to \ref{sec:second}.
+\end{document}`);
+  const project = await registerProject(workspace, root);
+  const parsed = await parseProject(workspace, project.id);
+  const second = parsed.nodes.find(n => n.title === "Second")!;
+  const all = focusedDocument(parsed, {});
+  assert.ok(all.includes(String.raw`\section{First}`));
+  assert.ok(all.includes(String.raw`\section*{Interlude}`));
+  assert.ok(all.includes(String.raw`\section[Short]{Second}`), "retain the literal heading, including its short title");
+  assert.equal(all.split(String.raw`\label{sec:second}`).length - 1, 1);
+  const focused = focusedDocument(parsed, { focusNodeId: second.id });
+  assert.match(focused, /\\setcounter\{section\}\{1\}[\s\S]*?\\section\[Short\]\{Second\}/,
+    "the second section must increment from one to two, not from two to three");
+  assert.match(focused, /\\setcounter\{section\}\{2\}[\s\S]*?\\setcounter\{subsection\}\{0\}[\s\S]*?\\subsection\{Details\}/);
+  assert.ok(!focused.includes("First text."));
+  assert.ok(!focused.includes(String.raw`\section*{Second}`), "a starred substitute would give the label an empty or stale number");
+});
+
+test("an internal stable marker never removes preceding proof text from the reader or edit span", async () => {
+  const workspace = await mkdtemp(path.join(process.cwd(), ".paperfocus/trials/proof-marker-"));
+  const root = path.join(workspace, "paper"); await mkdir(root);
+  const source = String.raw`\documentclass{article}
+\usepackage{amsthm}
+\newtheorem{lemma}{Lemma}
+\begin{document}
+\section{Argument}
+\begin{lemma}
+A claim.
+\end{lemma}
+\begin{proof}
+First proof step.
+
+% paperfocus:paragraph=retained-proof
+Second proof step.
+
+% paperfocus:paragraph=last-step
+Third proof step.
+\end{proof}
+\end{document}`;
+  await writeFile(path.join(root, "main.tex"), source);
+  const project = await registerProject(workspace, root);
+  const parsed = await parseProject(workspace, project.id);
+  const proof = parsed.paragraphs.find(p => p.id === "retained-proof")!;
+  assert.ok(proof.text.includes("First proof step."), "internal metadata is not permission to hide earlier mathematical content");
+  assert.ok(proof.text.includes("Second proof step."));
+  assert.ok(proof.text.includes("Third proof step."));
+  assert.equal(parsed.spans.find(span => span.id === proof.id)?.text, proof.text);
+  const shared = collaborationPages(parsed, [], new Map(), false, "test").body;
+  for (const text of ["First proof step.", "Second proof step.", "Third proof step."]) assert.ok(shared.includes(text));
+  const focused = focusedDocument(parsed, { synchronize: true });
+  assert.equal(focused.split("First proof step.").length - 1, 1);
+  await saveEdits(workspace, project.id, { [proof.id]: proof.text.replace("Second proof step.", "Clarified second step.") }, parsed.revision);
+  const saved = await readFile(path.join(root, "main.tex"), "utf8");
+  assert.ok(saved.includes("First proof step."));
+  assert.ok(saved.includes("Clarified second step."));
+  assert.ok(saved.includes("Third proof step."));
 });
 
 test("heading tags distinguish five section levels without mistaking proofs for subsections", () => {
@@ -111,7 +220,7 @@ A proof.
   const folded = outlineRows(parsed.nodes, "paper", [headings[1].id]);
   assert.deepEqual(folded.map(({ node }) => node.title), ["Approach", "The setup", "Discussion"]);
   const focused = focusedDocument(parsed, { focusNodeId: headings[3].id });
-  assert.match(focused, /\\paragraph\*\{A condition\}/);
+  assert.match(focused, /\\paragraph\{A condition\}/);
   assert.match(focused, /\\subparagraph\*\{An exception\}/);
   assert.ok(!focused.includes("Main text."));
   const paragraph = parsed.paragraphs.find(p => p.text === "Condition text.")!;

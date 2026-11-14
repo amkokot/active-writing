@@ -61,3 +61,21 @@ Optional setup: Python is needed to run cells; NumPy/SciPy/Matplotlib and relate
 libraries are listed in `scripts/research-requirements.txt`. PDF compilation needs
 a TeX installation. Ollama and model weights are separate downloads. Nothing
 automatically installs these or sends your manuscript elsewhere.
+
+## Add capabilities later
+
+Use only what you need; [MODULES.md](MODULES.md) is the setup map. Two-computer
+tools are off in a new workspace. **Workspace folders → Optional tools** shows
+them without pairing a machine or installing any watcher. A local-only workflow
+requires no SSH account, remote server or maintenance model.
+
+For a reading package, pin its short Overview and current Research notes from
+the manuscript menu. Versions retain their own linked notebook; guarded notebook
+transfer can copy or move selected entries between existing versions. Comments
+and replies stay anchored, and the queue can return to the relevant passage or
+notebook entry. No response automatically approves publication wording.
+
+The notebook can display linked scatter plots, exact rows, uncertainty bands,
+matrix grids, parameter frames, 2D/3D trajectories and saved animations. Ask an
+agent to read `RESEARCH_VISUALS.md` when these would help explain results. Use
+saved evidence during exploration instead of rerunning it for presentation.

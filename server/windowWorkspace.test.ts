@@ -530,6 +530,7 @@ test("shared-store conditional reads return no body when unchanged and detect ac
 test("background synchronization cannot compile or start agents and stale snapshots retain their original revision", async () => {
   const files = await Promise.all(["src/useSharedStorePoll.ts", "src/useNotebookPersistence.ts", "src/useWorkbenchPersistence.ts", "src/useSourceMonitor.ts"].map(file => readFile(file, "utf8")));
   for (const file of files) { assert.equal(file.includes("/compile"), false); assert.equal(file.includes("local-rewrite/start"), false); }
+  assert.match(files[0], /kind === "workbench" \? 2_000 : 12_000/);
   for (const hook of files.slice(1, 3)) { assert.match(hook, /revision.current !== expectedRevision/); assert.match(hook, /saved.current !== expectedBaseline/); assert.match(hook, /revision: expectedRevision/); assert.match(hook, /If-None-Match/); }
 });
 
@@ -543,4 +544,32 @@ test("source changes refresh automatically and overlapping chunk/raw edits show 
   assert.match(raw, /aria-label="Incoming LaTeX source" readOnly/);
   assert.match(panel, /Your unfinished edit/); assert.match(panel, /New text at the old position/);
   assert.match(app, /setCompileStale\(true\)/); // Incoming source marks the PDF stale, never requests a new compilation.
+});
+import {createStateRecoveryPacker} from '../src/windowWorkspace.ts';
+
+test('typing reuses packed history while every keystroke remains a complete independent recovery',()=>{
+ const history=[{id:'old',notes:'Long unchanged research history. '.repeat(10000)}] as unknown as AppState['notebookEntries'];
+ const inputs:string[]=[];
+ const pack=createStateRecoveryPacker(value=>{inputs.push(value);return packBrowserRecovery(value);});
+ const first={...state(),notebookEntries:history,paragraphEdits:{p:'First'}};
+ const before=pack(first);assert.equal(unpackBrowserRecovery(before),JSON.stringify(first));
+ assert.equal(unpackBrowserRecovery(packBrowserRecovery(before)),JSON.stringify(first),'An older client may pack the new complete envelope');
+ inputs.length=0;
+ const next={...first,paragraphEdits:{p:'First!'},draftRevision:'r1'};
+ const after=pack(next);
+ assert.ok(inputs.every(value=>value.length<100), 'Typing must not recompress notebook/comment history');
+ assert.equal(unpackBrowserRecovery(after),JSON.stringify(next));
+ assert.equal(unpackBrowserRecovery(before),JSON.stringify(first),'Prior recovery remains self-contained');
+ const local=new MemoryStorage(),session=new MemoryStorage(),cache=createWindowStateCache(local,session,'typing');
+ cache.write('paper',first,JSON.stringify(first));cache.write('paper',next,JSON.stringify(next));cache.release();
+ assert.equal(createWindowStateCache(local,new MemoryStorage(),'reopened').read('paper'),JSON.stringify(next));
+});
+
+test('field recoveries retain exact strings, omit removed fields, and reject malformed frames',()=>{
+ const pack=createStateRecoveryPacker();
+ const first={...state(),paragraphEdits:{p:'quotes " \\ newline\n 😀\u0000'},draftRevision:'r'};
+ assert.equal(unpackBrowserRecovery(pack(first)),JSON.stringify(first));
+ const {draftRevision:_,...next}=first;
+ assert.equal(unpackBrowserRecovery(pack(next)),JSON.stringify(next));
+ for(const raw of ['\u0001AWFIELDS1:[]\nextra','\u0001AWFIELDS1:[["x",-1]]\n','\u0001AWFIELDS1:[["x",4],["x",4]]\nnullnull','\u0001AWFIELDS1:[["x",4]]\nnullX'])assert.throws(()=>unpackBrowserRecovery(raw),/Invalid/);
 });

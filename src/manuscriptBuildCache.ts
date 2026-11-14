@@ -4,7 +4,7 @@ export function manuscriptBuildIdentity(document: ProjectDocument) {
   return JSON.stringify([document.project.id, document.project.mainFile, document.project.engine]);
 }
 export function manuscriptBuildScope(scope: NonNullable<CompileResult["scope"]>) {
-  return JSON.stringify([scope.focusNodeId, scope.lens ?? "paper", [...(scope.hiddenNodeIds ?? [])].sort(), scope.paragraphIds]);
+  return JSON.stringify([scope.focusNodeId, scope.lens ?? "paper", [...(scope.hiddenNodeIds ?? [])].sort(), scope.paragraphIds, Boolean(scope.sectionPdf)]);
 }
 export function matchingManuscriptBuild(result: CompileResult | undefined, document: ProjectDocument) {
   return Boolean(result?.success && result.pdfUrl && result.mainFile === document.project.mainFile

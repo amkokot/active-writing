@@ -11,6 +11,7 @@ import type { ExperimentJob, ExperimentNotebook, ExperimentOutput, ExperimentSto
 import { pythonEnvironment, pythonSessionStatus, resetPythonSession, runInPythonSession, invalidatePythonSession } from "./pythonSessions.ts";
 import { experimentRunBudget, experimentRunBudgets, experimentBudgetLabel, experimentConcurrencyLimit } from "../src/experimentLimits.ts";
 import { captureExperimentInputs, checkExperimentInputs } from "./experimentInputs.ts";
+import {readSyncBytes} from './deviceSync.ts';
 
 const idPattern = /^[A-Za-z0-9_-]{1,64}$/;
 const hash = (text: string) => createHash("sha256").update(text).digest("hex");
@@ -33,8 +34,9 @@ export const experimentEtag = (revision: string) => `"${revision || "missing"}"`
 export async function readExperimentsIfChanged(workspace: string, projectId: string, notebookId: string, ifNoneMatch?: string): Promise<ExperimentStore | undefined> {
   const { target } = await storage(workspace, projectId, notebookId);
   try {
-    if ((await lstat(target)).size > 5_000_000) throw new Error("Notebook exceeds 5 MB; preserved on disk.");
-    const text = await readFile(target, "utf8"), revision = hash(text);
+    // Legacy pretty-printing can expand a valid <4 MB logical notebook past
+    // 5 MB. Read it within a bounded 24 MB window; do not rewrite on viewing.
+    const text = new TextDecoder('utf8',{fatal:true}).decode(await readSyncBytes(target,24*1024**2)), revision = hash(text);
     if (ifNoneMatch === experimentEtag(revision)) return undefined;
     const notebook = JSON.parse(text);
     validateExperimentNotebook(notebook);
@@ -53,6 +55,13 @@ function serialize<T>(key: string, action: () => Promise<T>): Promise<T> {
   writes.set(key, tail); void tail.then(() => { if (writes.get(key) === tail) writes.delete(key); }); return result;
 }
 const keyFor = (workspace: string, projectId: string, notebookId: string) => `${path.resolve(workspace)}:${projectId}:${notebookId}`;
+/** Exact persisted bytes, shared with sync planning and revision guards. */
+export function serializeExperimentNotebook(notebook: unknown): string {
+  const pretty = JSON.stringify(notebook, null, 2);
+  const text = Buffer.byteLength(pretty) <= 5_000_000 ? pretty : JSON.stringify(notebook);
+  if (Buffer.byteLength(text) > 5_000_000) throw new Error('Notebook is full; start a linked research phase before adding more evidence. Original data preserved.');
+  return text;
+}
 async function writeNow(workspace: string, projectId: string, notebookId: string, revision: string, notebook: unknown): Promise<ExperimentStore> {
   validateExperimentNotebook(notebook);
   const { folder, target } = await storage(workspace, projectId, notebookId);
@@ -60,9 +69,10 @@ async function writeNow(workspace: string, projectId: string, notebookId: string
   return withRecordLock(target, async () => {
   const previous = await readExperiments(workspace, projectId, notebookId);
   if (previous.revision !== revision) throw new ExperimentConflict("Experiments changed in another editor. Reload before saving.");
+  const text = serializeExperimentNotebook(notebook);
   await mkdir(folder, { recursive: true });
   if (previous.revision) await writeFile(path.join(folder, "notebook.previous.ipynb"), JSON.stringify(previous.notebook, null, 2), "utf8");
-  const text = JSON.stringify(notebook, null, 2), temp = path.join(folder, `notebook-${randomUUID()}.tmp`);
+  const temp = path.join(folder, `notebook-${randomUUID()}.tmp`);
   await writeFile(temp, text, { encoding: "utf8", flag: "wx" });
   // Recheck external edits immediately before replacement. Agents should also use atomic writes.
   if ((await readExperiments(workspace, projectId, notebookId)).revision !== revision) throw new ExperimentConflict("An external editor changed the experiment file during saving; draft preserved.");

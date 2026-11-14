@@ -16,6 +16,7 @@ import { newExperimentCell, newExperimentNotebook } from "../src/experiments.ts"
 import { createHandoff, readHandoff, readHandoffTicket } from "./handoffs.ts";
 import { storeReference, readReferencePdf } from "./referenceLibrary.ts";
 import { compile, latexPlugin } from "./latexPlugin.ts";
+import { focusedJobName } from "./buildCache.ts";
 
 async function fixture(minWorkspaceLength = 0) {
   const base = path.resolve(".paperfocus/trials"); await mkdir(base, { recursive: true });
@@ -163,12 +164,16 @@ test("full and focused LaTeX builds, cached references and source links work wit
   await writeFile(path.join(f.root, "sections/result.tex"), "\\section{Result}\nA source-linked paragraph.\n\n\\begin{theorem}\\label{result}\nFor every real $x$, $x^2 \\geq 0$.\n\\end{theorem}\n");
   await writeFile(path.join(f.root, "sections/context.tex"), "\\section{Context}\nTheorem~\\ref{result} is useful here.\n");
   const before = await parseProject(f.workspace, f.project.id);
-  const full = await compile(f.workspace, { projectId: f.project.id, mode: "full", revision: before.revision });
+  const fullRequest = { projectId: f.project.id, mode: "full" as const, revision: before.revision };
+  const [full, duplicate] = await Promise.all([compile(f.workspace, fullRequest), compile(f.workspace, fullRequest)]);
+  assert.equal(duplicate.compiledAt, full.compiledAt, "identical simultaneous requests share one build");
   assert.equal(full.success, true, full.log);
   assert.equal((await compile(f.workspace, { projectId: f.project.id, mode: "full", revision: before.revision })).cacheHit, true);
   const section = before.nodes.find(node => node.title === "Context")!;
   const request = { projectId: f.project.id, mode: "focus" as const, revision: before.revision, focusNodeId: section.id, lens: "paper" as const };
   const focused = await compile(f.workspace, request); assert.equal(focused.success, true, focused.log);
+  const oldRecord = JSON.parse(await readFile(path.join(await projectBuildFolder(f.workspace, f.project.id, "focus", focused.artifactKey), "compile.json"), "utf8"));
+  assert.match(oldRecord.workingKey, /^[a-f0-9]{16}$/);
   assert.match(focused.viewNote!, /last full build/);
   assert.doesNotMatch(focused.log, /Reference [`']result'[^\n]*undefined/);
   assert.equal((await compile(f.workspace, request)).cacheHit, true);
@@ -192,4 +197,28 @@ test("full and focused LaTeX builds, cached references and source links work wit
   assert.deepEqual((await readdir(path.join(f.root, "sections"))).sort(), ["context.tex", "result.tex"]);
   assert.equal((await parseProject(f.workspace, f.project.id)).revision, before.revision);
   assert.equal((await getProject(f.workspace, f.project.id)).root, f.root);
+  // Shift IDs and lines after the PDF was built; navigation must be read-only
+  // and continue using that PDF's old SyncTeX positions.
+  await writeFile(path.join(f.root, "sections/context.tex"), "\\section{Context}\nNew paragraph before the old one.\n\nTheorem~\\ref{result} is useful here, with an edit.\n");
+  const edited = await parseProject(f.workspace, f.project.id);
+  const revised = edited.paragraphs.find(p => p.text.startsWith("Theorem~"))!;
+  const oldPdfInfo = await stat(path.join(await projectBuildFolder(f.workspace, f.project.id, "focus", focused.artifactKey), `${focusedJobName(await projectBuildFolder(f.workspace, f.project.id, "focus", focused.artifactKey))}.pdf`));
+  const staleForward = await invoke({ projectId: f.project.id, mode: "focus", artifactKey: focused.artifactKey, compiledAt: focused.compiledAt, revision: edited.revision, direction: "forward", paragraphId: revised.id });
+  assert.ok(staleForward.page >= 1); assert.equal(staleForward.approximate, true);
+  const staleInverse = await invoke({ projectId: f.project.id, mode: "focus", artifactKey: focused.artifactKey, revision: edited.revision, direction: "inverse", ...staleForward });
+  assert.ok(edited.paragraphs.some(p => p.id === staleInverse.paragraphId));
+  const next = await compile(f.workspace, { ...request, revision: edited.revision });
+  assert.equal(next.success, true, next.log); assert.ok((next.reusedAuxiliaries ?? 0) > 0);
+  const newRecord = JSON.parse(await readFile(path.join(await projectBuildFolder(f.workspace, f.project.id, "focus", next.artifactKey), "compile.json"), "utf8"));
+  assert.equal(newRecord.workingKey, oldRecord.workingKey, "local edits retain the latexmk working database");
+  const work = await projectBuildFolder(f.workspace, f.project.id, "focus", newRecord.workingKey);
+  assert.ok((await stat(path.join(work, `${focusedJobName(work)}.fdb_latexmk`))).size > 0);
+  const oldForwardAfterRebuild = await invoke({ projectId: f.project.id, mode: "focus", artifactKey: focused.artifactKey, compiledAt: focused.compiledAt, direction: "forward", paragraphId: revised.id });
+  assert.equal(oldForwardAfterRebuild.page, staleForward.page, "old PDF still uses its saved map after the working source changes");
+  const oldInverseAfterRebuild = await invoke({ projectId: f.project.id, mode: "focus", artifactKey: focused.artifactKey, direction: "inverse", ...oldForwardAfterRebuild });
+  assert.ok(edited.paragraphs.some(p => p.id === oldInverseAfterRebuild.paragraphId));
+  const draft = await compile(f.workspace, { ...request, revision: edited.revision, draft: true });
+  assert.equal(draft.success, true, draft.log); assert.equal(draft.draft, true); assert.notEqual(draft.artifactKey, next.artifactKey);
+  assert.match(draft.viewNote!, /One-pass draft/);
+  assert.equal((await stat(path.join(await projectBuildFolder(f.workspace, f.project.id, "focus", focused.artifactKey), `${focusedJobName(await projectBuildFolder(f.workspace, f.project.id, "focus", focused.artifactKey))}.pdf`))).mtimeMs, oldPdfInfo.mtimeMs, "new builds do not replace an older focused PDF");
 });

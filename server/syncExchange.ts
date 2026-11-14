@@ -4,14 +4,17 @@ import { lstat } from "node:fs/promises";
 import path from "node:path";
 import { gzipSync, gunzipSync } from "node:zlib";
 import { captureSyncSnapshot, privateSyncPath, readSyncBytes, saveSyncSnapshot, syncStatus } from "./deviceSync.ts";
-import { hydrateStagedSnapshot, saveImmutableSyncArtifact, stageSyncSnapshot, stagedHistory, stagedSnapshots, syncStateHash } from "./syncStaging.ts";
+import { hydrateStagedSnapshot, saveImmutableSyncArtifact, stageSyncSnapshot, stagedHistory, stagedSnapshots, stagedManifest, syncStateHash } from "./syncStaging.ts";
 import { canonical, safeSyncId, syncHash, syncLimits, validateDevice, validateSnapshot, validateSyncJson, validSyncReference, type SyncDevice, type SyncRecord, type SyncSnapshot } from "./syncProtocol.ts";
 import { validateNotebookEntries } from "./notebookStore.ts";
 import { validateWorkbench } from "./workbenchStore.ts";
 import { emptyWorkbench } from "../src/workbench.ts";
+import { normalizedReviewContent } from "./syncComments.ts";
 import { validateExperimentNotebook } from "../src/experiments.ts";
 import { saveGuardedFile } from "./guardedFile.ts";
 import { getProject } from "./projects.ts";
+import {verifyBlob,verifyStoredBlob} from './syncBlobs.ts';
+import {boundedSyncReads} from './syncReads.ts';
 
 const digest = /^[a-f0-9]{64}$/;
 export const exchangeLimits = { compressed: 64 * 1024 * 1024, expanded: 192 * 1024 * 1024, blobs: 128 * 1024 * 1024, references: 50000 };
@@ -32,10 +35,10 @@ export async function createSyncInventory(workspace: string, projectId: string):
   const ready = (await stagedSnapshots(workspace, projectId)).filter(item => item.ready), references = new Map<string, Reference>();
   const history = await stagedHistory(workspace, projectId, ready.map(item => item.id));
   if (history.missing.length || history.pending.length) throw new Error("Complete staged parent history before creating an inventory.");
-  for (const saved of history.graph.values()) saved.references.forEach(record => references.set(record.sha256, record));
+  for (const saved of history.graph.values()) saved.references.forEach(record => {if(!references.get(record.sha256)?.external||record.external)references.set(record.sha256, record);});
   if (references.size > exchangeLimits.references) throw new Error("Inventory exceeds its bounded window; archive explicitly, never discard sync history automatically.");
   // Each content hash is read once, not once for every historical snapshot.
-  for (const ref of references.values()) { const data = await readSyncBytes(await privateSyncPath(workspace, `blobs/${ref.sha256}.blob`), syncLimits.fileBytes); if (data.length !== ref.bytes || syncHash(data) !== ref.sha256) throw new Error("Inventory blob changed; receive it again, never claim it is available."); }
+  await boundedSyncReads([...references.values()],async ref=>{if(ref.external){await verifyStoredBlob(workspace,ref,projectId);return;} const data = await readSyncBytes(await privateSyncPath(workspace, `blobs/${ref.sha256}.blob`), syncLimits.fileBytes); if (data.length !== ref.bytes || syncHash(data) !== ref.sha256) throw new Error("Inventory blob changed; receive it again, never claim it is available.");});
   const body = { format: "aw-sync-inventory" as const, version: 1 as const, projectId, device: status.device, snapshots: ready.map(item => item.id).sort(), blobs: [...references.keys()].sort() };
   const result = { ...body, id: syncHash(canonical(body)) }; validateSyncInventory(result); return result;
 }
@@ -62,7 +65,7 @@ export async function exchangeStatus(workspace: string, projectId: string) {
 }
 export async function rememberSyncHead(workspace: string, projectId: string, headId: string) {
   const saved = await readLedger(workspace, projectId), head = await hydrateStagedSnapshot(workspace, projectId, headId), status = await syncStatus(workspace);
-  if (head.device.id !== status.device!.id || syncStateHash(head) !== syncStateHash(await captureSyncSnapshot(workspace, projectId))) throw new Error("Only an exact current local checkpoint can become the working head.");
+  if (head.device.id !== status.device!.id || syncStateHash(head) !== syncStateHash(await captureSyncSnapshot(workspace, projectId,undefined,{forceFull:true}))) throw new Error("Only an exact current local checkpoint can become the working head.");
   if (saved.state.localHead && saved.state.localHead !== headId && !head.ancestors.includes(saved.state.localHead)) throw new Error("A different local branch is already remembered; inspect it rather than choosing by date.");
   if (saved.state.localHead !== headId) await writeLedger(workspace, saved, { ...saved.state, localHead: headId }); return { projectId, head: headId, remembered: true, liveImport: false };
 }
@@ -73,14 +76,14 @@ export function semanticReviewContent(record?: SyncRecord) {
   if (record.path !== "data/workbench.json" || record.kind !== "review") throw new Error("Use the exact review record.");
   const data=JSON.parse(Buffer.from(record.data,"base64").toString()); validateSyncJson(data);
   if (data.version !== 1 || !Number.isSafeInteger(data.revision) || data.revision < 0) throw new Error("Unknown review schema cannot be acknowledged."); validateWorkbench(data);
-  delete (data as any).revision; delete data.queueLastActiveAt;
-  const content=canonical(data); return content===canonical({ version:1,...emptyWorkbench() }) ? undefined : content;
+  const content=canonical(normalizedReviewContent(data)); return content===canonical({ version:1,...emptyWorkbench() }) ? undefined : content;
 }
 export function semanticSyncHash(snapshot: SyncSnapshot) {
   return syncHash(canonical(snapshot.records.flatMap<Pick<SyncRecord,"path" | "kind" | "sha256">>(record => {
     let hash = record.sha256;
     if (record.kind === "review") { const content=semanticReviewContent(record); if (content===undefined) return []; return [{ path:record.path,kind:record.kind,sha256:syncHash(content) }]; }
     if (["catalogue", "experiment", "review", "policy"].includes(record.kind)) {
+      if(record.external&&record.kind==='experiment')return [{path:record.path,kind:record.kind,sha256:record.semanticHash!}];
       const data = JSON.parse(Buffer.from(record.data, "base64").toString()); validateSyncJson(data);
       if (record.kind === "catalogue") { if (data.version !== 1 || !Number.isSafeInteger(data.revision) || data.revision < 0) throw new Error("Invalid catalogue counters cannot be acknowledged."); validateNotebookEntries(data.entries); delete data.revision; }
       if (record.kind === "experiment") validateExperimentNotebook(data);
@@ -92,7 +95,7 @@ export function semanticSyncHash(snapshot: SyncSnapshot) {
 export async function acknowledgeSyncHead(workspace: string, projectId: string, headId: string) {
   const saved = await readLedger(workspace, projectId), head = await hydrateStagedSnapshot(workspace, projectId, headId), history = await stagedHistory(workspace, projectId, [headId]);
   if (history.missing.length || history.pending.length) throw new Error("Complete the checked head history before acknowledging.");
-  const current = await captureSyncSnapshot(workspace, projectId);
+  const current = await captureSyncSnapshot(workspace, projectId,undefined,{forceFull:true});
   if (head.device.id === current.device.id || semanticSyncHash(current) !== semanticSyncHash(head)) throw new Error("Copies do not yet agree. Collect/review their differences first; receipt is not acceptance.");
   if (saved.state.localHead && head.id !== saved.state.localHead && !head.ancestors.includes(saved.state.localHead)) throw new Error("Incoming head does not include the remembered local branch.");
   const state = { ...saved.state, commonHead: headId, acknowledged: { ...saved.state.acknowledged, [head.device.id]: headId } };
@@ -110,7 +113,8 @@ export async function syncWorkingCheckpoint(workspace: string, projectId: string
   if (!explicitParent && local && (!saved.state.commonHead || local.id === saved.state.commonHead || local.ancestors.includes(saved.state.commonHead))) parentId = local.id;
   const parent = parentId ? parentId === local?.id ? local : await hydrateStagedSnapshot(workspace, projectId, parentId) : undefined, snapshot = await captureSyncSnapshot(workspace, projectId, parent);
   const noAuthoredChanges = Boolean(local && semanticSyncHash(local) === semanticSyncHash(snapshot));
-  if (local && noAuthoredChanges && syncStateHash(local) === syncStateHash(snapshot)
+  const sameStorage=local&&local.version===snapshot.version&&canonical(local.records.map(r=>[r.path,!!r.external]))===canonical(snapshot.records.map(r=>[r.path,!!r.external]));
+  if (local && sameStorage && noAuthoredChanges && syncStateHash(local) === syncStateHash(snapshot)
     && (!parent || local.id === parent.id || local.ancestors.includes(parent.id) || !explicitParent && parent.ancestors.includes(local.id) && semanticSyncHash(parent) === semanticSyncHash(snapshot))) return { ...(await saveSyncSnapshot(workspace, local)), ...(await stageSyncSnapshot(workspace, projectId, local)), reused: true, noAuthoredChanges: true };
   const result = await saveSyncSnapshot(workspace, snapshot), staged = await stageSyncSnapshot(workspace, projectId, snapshot);
   try { await rememberSyncHead(workspace, projectId, snapshot.id); } catch (error) { throw new Error(`Checkpoint preserved at ${result.path}; head not advanced: ${(error as Error).message}`); }
@@ -123,15 +127,15 @@ export async function exportSyncExchange(workspace: string, projectId: string, h
   const manifests: Manifest[] = [], wanted = new Map<string, Reference>(), knownSnapshots = new Set(recipient?.snapshots), knownBlobs = new Set(recipient?.blobs);
   let count = 0;
   for (const saved of history.graph.values()) {
-    if ((count += saved.references.length) > exchangeLimits.references) throw new Error("Exchange history reference limit reached; use explicit archival planning.");
-    if (!knownSnapshots.has(saved.metadata.id)) manifests.push({ ...saved.metadata, references: saved.references });
-    for (const reference of saved.references) if (!knownBlobs.has(reference.sha256)) wanted.set(reference.sha256, reference);
+    if (!knownSnapshots.has(saved.metadata.id)) { if ((count += saved.references.length) > exchangeLimits.references) throw new Error("Exchange history reference limit reached; use explicit archival planning."); manifests.push({ ...saved.metadata, references: saved.references }); }
+    for (const reference of saved.references) if (!knownBlobs.has(reference.sha256)&&(!wanted.get(reference.sha256)?.external||reference.external)) wanted.set(reference.sha256, reference);
   }
   const blobs: Exchange["blobs"] = []; let total = 0;
-  for (const reference of wanted.values()) { const bytes = await readSyncBytes(await privateSyncPath(workspace, `blobs/${reference.sha256}.blob`), syncLimits.fileBytes); if (syncHash(bytes) !== reference.sha256 || bytes.length !== reference.bytes) throw new Error("Changed staged blob; export stopped."); if ((total += bytes.length) > exchangeLimits.blobs) throw new Error("Exchange exceeds 128 MB of unique data; supply the recipient's inventory."); blobs.push({ sha256: reference.sha256, bytes: reference.bytes, data: bytes.toString("base64") }); }
+  const externalBlobs: Array<{sha256:string;bytes:number}>=[];
+  for (const reference of wanted.values()) { if(reference.external){await verifyBlob(workspace,reference);externalBlobs.push({sha256:reference.sha256,bytes:reference.bytes});continue;} const bytes = await readSyncBytes(await privateSyncPath(workspace, `blobs/${reference.sha256}.blob`), syncLimits.fileBytes); if (syncHash(bytes) !== reference.sha256 || bytes.length !== reference.bytes) throw new Error("Changed staged blob; export stopped."); if ((total += bytes.length) > exchangeLimits.blobs) throw new Error("Exchange exceeds 128 MB of unique data; supply the recipient's inventory."); blobs.push({ sha256: reference.sha256, bytes: reference.bytes, data: bytes.toString("base64") }); }
   const inventory = await createSyncInventory(workspace, projectId), body = { format: "aw-sync-exchange" as const, version: 1 as const, projectId, sender: status.device, head: headId, inventory, manifests, blobs }, packet: Exchange = { ...body, id: syncHash(canonical(body)) };
   const raw = Buffer.from(JSON.stringify(packet)); if (raw.length > exchangeLimits.expanded) throw new Error("Exchange exceeds expanded transfer limit."); const bytes = gzipSync(raw, { level: 6 }); if (bytes.length > exchangeLimits.compressed) throw new Error("Exchange exceeds 64 MB compressed; use a recipient inventory.");
-  return { bytes, id: packet.id, head: headId, manifests: manifests.length, blobCount: blobs.length, dataBytes: total, compressedBytes: bytes.length, historyChecked: true, liveImport: false };
+  return { bytes, externalBlobs, id: packet.id, head: headId, manifests: manifests.length, blobCount: blobs.length, dataBytes: total, compressedBytes: bytes.length, historyChecked: true, liveImport: false };
 }
 export async function exportExchangeForPeer(workspace: string, projectId: string, headId: string, peerId?: string) {
   const saved = await readLedger(workspace, projectId), known = peerId ? saved.state.received[peerId] : undefined;
@@ -153,8 +157,7 @@ export async function receiveSyncExchange(workspace: string, projectId: string, 
   for (const manifest of packet.manifests) {
     const { references: refs, ...metadata } = manifest;
     if (!Array.isArray(refs) || (references += refs.length) > exchangeLimits.references || refs.some(item => !validSyncReference(item)) || snapshots.has(metadata.id)) throw new Error("Invalid/duplicate exchange manifest.");
-    const records: SyncRecord[] = [];
-    for (const ref of refs) { const data = blobs.get(ref.sha256) ?? await readSyncBytes(await privateSyncPath(workspace, `blobs/${ref.sha256}.blob`), syncLimits.fileBytes); records.push({ ...ref, data: data.toString("base64") }); }
+    const records:SyncRecord[]=await boundedSyncReads(refs,async ref=>{if(ref.external){await verifyStoredBlob(workspace,ref,projectId);return {...ref,data:''};}const data=blobs.get(ref.sha256)??await readSyncBytes(await privateSyncPath(workspace,`blobs/${ref.sha256}.blob`),syncLimits.fileBytes);return {...ref,data:data.toString('base64')};});
     const snapshot = { ...metadata, records }; validateSnapshot(snapshot); if (snapshot.projectId !== projectId) throw new Error("Manifest belongs to another project."); snapshots.set(snapshot.id, snapshot);
   }
   // Prevalidate the complete graph before publishing even a staging manifest.
@@ -162,7 +165,7 @@ export async function receiveSyncExchange(workspace: string, projectId: string, 
   const ordered: SyncSnapshot[] = [];
   async function visit(head: string, depth = 0) {
     if (visiting.has(head) || depth > syncLimits.ancestors || available.size > syncLimits.ancestors + 3) throw new Error("Cyclic/excessive exchange history."); if (done.has(head)) return;
-    let snapshot = available.get(head); if (!snapshot) { if (!readyIds.has(head)) throw new Error("Omitted exchange parent is missing or not ready; receive the full exchange first."); snapshot = await hydrateStagedSnapshot(workspace, projectId, head); available.set(head, snapshot); }
+    let snapshot = available.get(head); if (!snapshot) { if (!readyIds.has(head)) throw new Error("Omitted exchange parent is missing or not ready; receive the full exchange first."); const known=await stagedManifest(workspace,projectId,head);snapshot={...known.metadata,records:known.references.map(ref=>({...ref,data:''}))}; available.set(head, snapshot); }
     visiting.add(head); for (const parent of snapshot.parents) await visit(parent, depth + 1); visiting.delete(head);
     const ancestors = [...new Set(snapshot.parents.flatMap(parent => [parent, ...available.get(parent)!.ancestors]))].sort();
     if (canonical(ancestors) !== canonical([...snapshot.ancestors].sort())) throw new Error("Exchange ancestry is not its actual checked graph.");

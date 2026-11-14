@@ -21,18 +21,20 @@ export function testFiles(scripts) {
   return [...result].sort();
 }
 
-export function checkPlan({ areas = [], full = false, cursor = 0, tests = [], changed = [] }) {
-  if (!full && !areas.length) throw new Error("Choose --area ui, queue, presentation or desktop; use --full for a checkpoint.");
+export function checkPlan({ areas = [], full = false, cursor = 0, tests = [], changed = [], only = [], sample = false }) {
+  if (!full && !areas.length && !only.length) throw new Error("Choose --test FILE or a small --area; use --full only for a deliberate checkpoint.");
   for (const area of areas) if (!Object.hasOwn(checkAreas, area)) throw new Error(`Unknown check area: ${area}`);
   // Unclassified source/backend/config edits are deliberately conservative.
   const routine = /^(?:src\/(?:components\/|styles\.css$|attention\.ts$|queueEntries\.ts$|chromePreferences\.ts$|hoverIntent\.ts$|paneZoom\.ts$|editorGeometry\.ts$|headingHierarchy\.ts$|turbo\.ts$)|scripts\/(?:checkChanges|checkPlan|desktopLauncher|desktopServer)\.(?:mjs|test\.mjs)$)/;
   const sensitive = changed.some(file => !routine.test(file.replaceAll("\\", "/")) && !/\.test\.(?:mjs|ts)$|\.md$/.test(file));
-  const broad = full || sensitive || areas.some(area => checkAreas[area] === null);
-  const targeted = new Set(broad ? tests : areas.flatMap(area => checkAreas[area]));
+  if (full && only.length) throw new Error("Do not combine --full with --test.");
+  if (!full && !only.length && (sensitive || areas.some(area => checkAreas[area] === null))) throw new Error("Choose explicit --test files for this change, or deliberately request --full. No broad suite starts automatically.");
+  const broad = full;
+  const targeted = new Set(broad ? tests : only.length ? only : areas.flatMap(area => checkAreas[area]));
   for (const file of changed.filter(file => /\.test\.(?:mjs|ts)$/.test(file))) targeted.add(file.replaceAll("\\", "/"));
   for (const file of targeted) if (!tests.includes(file)) throw new Error(`Test is not in package.json: ${file}`);
   const pool = tests.filter(file => !targeted.has(file));
   const round = Number.isSafeInteger(cursor) && cursor >= 0 ? cursor : 0;
-  const sampled = broad ? [] : Array.from({ length: Math.min(2, pool.length) }, (_, index) => pool[(round * 2 + index) % pool.length]);
+  const sampled = broad || !sample ? [] : Array.from({ length: Math.min(2, pool.length) }, (_, index) => pool[(round * 2 + index) % pool.length]);
   return { broad, targeted: [...targeted].sort(), sampled, files: [...targeted, ...sampled].sort(), nextCursor: round + 1 };
 }

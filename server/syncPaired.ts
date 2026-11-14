@@ -6,10 +6,12 @@ import { lstat, readdir } from "node:fs/promises";
 import { privateSyncPath, readSyncBytes, syncStatus } from "./deviceSync.ts";
 import { canonical, syncHash, validateSyncJson } from "./syncProtocol.ts";
 import { exportExchangeForPeer, createSyncInventory, receiveSyncExchange, acknowledgeSyncHead, semanticSyncHash } from "./syncExchange.ts";
-import { saveImmutableSyncArtifact, previewStagedSync, hydrateStagedSnapshot, stagedPlan } from "./syncStaging.ts";
+import { saveImmutableSyncArtifact, previewStagedSync, hydrateStagedSnapshot, stagedPlan,stagedHistory } from "./syncStaging.ts";
 import { commitResearchMerge, previewResearchMerge, researchMergeStatus } from "./syncResearchMerge.ts";
 import { readSshPeer, reconnectSshPeer, sshPeerCommand, runSshMessage, type SshRunner } from "./syncSsh.ts";
 import { withRecordLock } from "./recordLock.ts";
+import {transferSshBlobs} from './syncBlobSsh.ts';
+import {deferIncomingArtifacts} from './syncColdStore.ts';
 
 const digest = /^[a-f0-9]{64}$/;
 interface Plan { format: "aw-paired-sync"; version: 1; projectId: string; peerId: string; localDeviceId: string; localHead: string; remoteHead: string; localPlan: string; remotePlan: string;
@@ -61,9 +63,27 @@ export async function pendingPairedSyncs(workspace: string, projectId: string) {
     const started = await privateSyncPath(workspace, `paired/${projectId}/${entry.name}/started.json`);
     if (!await exists(started)) continue; const marker = JSON.parse((await readSyncBytes(started,2000)).toString()); validateSyncJson(marker);
     if (marker.version !== 1 || marker.syncId !== entry.name || marker.projectId !== projectId || !Number.isFinite(Date.parse(marker.startedAt))) throw new Error("Interrupted-sync marker changed; inspect its exact ID.");
-    const status = await pairedSyncStatus(workspace,projectId,entry.name); if (!status.completed) { const plan = await readPlan(workspace,projectId,entry.name); pending.push({ id:entry.name,peerId:plan.peerId,startedAt:marker.startedAt }); }
+    const status = await pairedSyncStatus(workspace,projectId,entry.name); if (!status.completed) {
+      const superseded=await privateSyncPath(workspace,`paired/${projectId}/${entry.name}/superseded.json`);
+      if(await exists(superseded)){const record=JSON.parse((await readSyncBytes(superseded,4000)).toString());await validateSupersession(workspace,projectId,entry.name,record);continue;}
+      const plan = await readPlan(workspace,projectId,entry.name); pending.push({ id:entry.name,peerId:plan.peerId,startedAt:marker.startedAt }); }
   }
   return pending;
+}
+async function validateSupersession(workspace:string,projectId:string,oldId:string,record:any){
+ validateSyncJson(record);const {hash,...body}=record;
+ if(body.version!==1||body.projectId!==projectId||body.oldId!==oldId||!digest.test(body.replacement)||body.replacement===oldId||hash!==syncHash(canonical(body)))throw Error('Invalid sync supersession; history retained.');
+ const old=await readPlan(workspace,projectId,oldId),replacement=await readPlan(workspace,projectId,body.replacement),status=await pairedSyncStatus(workspace,projectId,body.replacement);
+ if(old.peerId!==replacement.peerId||!status.completed||!('head' in status)||body.head!==status.head)throw Error('Replacement sync is not completed for this peer.');
+ const history=await stagedHistory(workspace,projectId,[body.head]);
+ if(history.missing.length||history.pending.length||![old.localHead,old.remoteHead].every(id=>history.graph.has(id)))throw Error('Replacement does not preserve both original branches.');
+}
+/** Explicit recovery only: acknowledge a newer verified join, never forge an old completion. */
+export async function supersedePairedSync(workspace:string,projectId:string,oldId:string,replacement:string){
+ const status=await pairedSyncStatus(workspace,projectId,replacement);if(!status.completed||!('head' in status))throw Error('Complete the replacement sync first.');
+ const body={version:1,projectId,oldId,replacement,head:status.head},record={...body,hash:syncHash(canonical(body))};await validateSupersession(workspace,projectId,oldId,record);
+ await saveImmutableSyncArtifact(await privateSyncPath(workspace,`paired/${projectId}/${oldId}/superseded.json`,true),Buffer.from(JSON.stringify(record)+'\n'),4000);
+ return {superseded:oldId,replacement,historyPreserved:true,liveImport:false};
 }
 export async function commitPairedSync(workspace: string, projectId: string, id: string, runtime: PairedRuntime = {}) {
   const plan = await readPlan(workspace, projectId, id), peer = await readSshPeer(workspace, projectId, plan.peerId);
@@ -79,11 +99,13 @@ export async function commitPairedSync(workspace: string, projectId: string, id:
       const local = await commitResearchMerge(workspace, projectId, plan.localPlan, plan.localReview); await runtime.afterLocal?.();
       const outgoing = await exportExchangeForPeer(workspace, projectId, local.head, peer.options.deviceId);
       if (outgoing.bytes.length > plan.maxBytes) throw new Error("Collected exchange exceeds the reviewed bandwidth budget; retained locally, no automatic larger upload.");
+      if(outgoing.externalBlobs.length)await transferSshBlobs(workspace,projectId,peer.options,outgoing.externalBlobs,'write');
       await message(workspace, projectId, plan.peerId, { action: "receive", bytes: outgoing.bytes.toString("base64") }, plan.maxBytes, plan.timeoutMs, runtime.runner);
       const remote = await message(workspace, projectId, plan.peerId, { action: "commit-merge", syncId: id, originalPlan: plan.remotePlan, originalReview: plan.remoteReview, localHead: plan.remoteHead, remoteHead: local.head, afterSemanticHash: plan.afterSemanticHash }, plan.maxBytes, plan.timeoutMs, runtime.runner); await runtime.afterRemote?.();
       if (!digest.test(remote.head) || remote.codeExecuted !== false || remote.approvalGranted !== false || remote.tasksCompleted !== false) throw new Error("Remote collection did not provide a checked completion receipt.");
       const returned = await message(workspace, projectId, plan.peerId, { action: "export", inventory: await createSyncInventory(workspace, projectId) }, plan.maxBytes, plan.timeoutMs, runtime.runner);
       if (typeof returned.bytes !== "string" || returned.bytes.length > Math.ceil(plan.maxBytes / 3) * 4) throw new Error("Collected remote exchange exceeds the reviewed budget."); const bytes = Buffer.from(returned.bytes, "base64"); if (bytes.toString("base64") !== returned.bytes || bytes.length > plan.maxBytes) throw new Error("Invalid returned exchange encoding.");
+      await transferSshBlobs(workspace,projectId,peer.options,await deferIncomingArtifacts(workspace,projectId,plan.peerId,bytes,returned.externalBlobs??[],runtime.runner),'read');
       const received = await receiveSyncExchange(workspace, projectId, bytes);
       // New desktop work can continue between messages. Do not mistake it for
       // the originally reviewed result, or force an old state over new research.

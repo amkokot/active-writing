@@ -45,6 +45,15 @@ async function fixture() {
   const project = await registerProject(workspace, "paper"); return { workspace, folder, project, notebookId: "research-one" };
 }
 
+test('legacy pretty-print expansion remains readable; guarded saves compact without discarding evidence',async()=>{
+ const f=await fixture(),initial=await writeExperiments(f.workspace,f.project.id,f.notebookId,'',notebook()),nb=notebook();
+ nb.metadata={...nb.metadata,legacyRows:Array.from({length:130000},()=>[1,2,3])};validateExperimentNotebook(nb);
+ const raw=JSON.stringify(nb,null,2);assert.ok(Buffer.byteLength(raw)>5_000_000);assert.ok(Buffer.byteLength(JSON.stringify(nb))<4_000_000);
+ await writeFile(initial.path,raw);const read=await readExperiments(f.workspace,f.project.id,f.notebookId);assert.deepEqual(read.notebook,nb);assert.equal(await readFile(initial.path,'utf8'),raw);
+ read.notebook.cells[1].source='A small reviewed clarification.';await writeExperiments(f.workspace,f.project.id,f.notebookId,read.revision,read.notebook);
+ const saved=await readFile(initial.path,'utf8');assert.ok(Buffer.byteLength(saved)<=5_000_000);assert.deepEqual(JSON.parse(saved),read.notebook);
+});
+
 test("image cleanup and catalogue order round-trip through guarded notebook storage",async()=>{
   const f=await fixture(),nb=notebook();
   nb.cells[0].outputs=[{output_type:"display_data",data:{"image/png":"YWJj","text/plain":"Retained description"}}];

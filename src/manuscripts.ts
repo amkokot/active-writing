@@ -4,6 +4,22 @@ export function manuscriptPurpose(project: PaperProject, file = project.mainFile
   const purpose = project.manuscriptPurposes?.[file];
   return purpose === "publication" || purpose === "overview" ? purpose : "notes";
 }
+export const manuscriptRoles = ["overview", "notes", "publication"] as const;
+export const manuscriptPurposeLabels = { overview: "Overview", notes: "Research notes", publication: "Publication draft" };
+/** Never guess between several notes or promote a note to a publication. */
+export function pinnedManuscripts(project: PaperProject, roots: string[]) {
+  return Object.fromEntries(manuscriptRoles.map(role => {
+    const candidates = roots.filter(file => manuscriptPurpose(project, file) === role);
+    const saved = project.manuscriptPins?.[role];
+    return [role, saved && candidates.includes(saved) ? saved : candidates.length === 1 ? candidates[0] : undefined];
+  })) as Partial<Record<ManuscriptPurpose, string>>;
+}
+export function manuscriptLink(base: string, projectId: string, file: string, revision?: string) {
+  const url = new URL(base); url.search = ""; url.hash = "";
+  url.search = new URLSearchParams({ awProject: projectId, awPanel: "paper", awRoot: file }).toString();
+  if (revision) url.searchParams.set("awRevision", revision);
+  return url.href;
+}
 export function manuscriptWritingPolicy(purpose: ManuscriptPurpose) {
   if (purpose === "overview") return "Overview (README): keep it short, clear and explanatory, usually a few paragraphs or one page rather than a full research note. Explain the aim, the main idea, current status and how to read the project; link to the designated main manuscript and exact evidence for details. Use plain language, define necessary terms, and distinguish established results from evidence and open questions. A coherent first draft is welcome when source writing is authorized; publication's incremental word-by-word review is not required. Preserve human work and existing wording locks. Do a focused readability check, not exhaustive typesetting or proof verification. Never expand this overview into the full manuscript.";
   return purpose === "notes"

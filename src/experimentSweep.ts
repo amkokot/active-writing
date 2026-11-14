@@ -22,6 +22,10 @@ export function sweepDomain(sweep: ExperimentSweep): ExperimentPlot {
   for (const frame of sweep.frames) for (const series of frame.plot.series) for (const [x, y] of series.points) {
     xmin = Math.min(xmin, x); xmax = Math.max(xmax, x); ymin = Math.min(ymin, y); ymax = Math.max(ymax, y);
   }
+  for (const frame of sweep.frames) for (const series of frame.plot.series) if (series.band) {
+    for (const value of series.band.lower) ymin = Math.min(ymin, value);
+    for (const value of series.band.upper) ymax = Math.max(ymax, value);
+  }
   return { ...sweep.frames[0].plot, series: [{ name: "Saved range", points: [[xmin, ymin], [xmax, ymax]] }] };
 }
 export function sweepSummary(sweep: ExperimentSweep) {

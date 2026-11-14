@@ -1,5 +1,12 @@
 # Research workflow for Active Writing
 
+For an optional outside review, see [OUTSIDE_REVIEW.md](OUTSIDE_REVIEW.md).
+No external reviewer or permission to send research is configured by default.
+
+For configured desktop sessions, follow [Desktop assistance](DESKTOP_ASSISTANCE.md)
+for useful bounded local delegation and aggregate simulation budgets. It does not
+change the saved request's compute scope or the notebook's 30/120/300-second caps.
+
 This is the working guide for a human researcher and Codex, or another folder-aware assistant, using Active Writing (Aw). Aw holds the current question, manuscript context, conversations, Python experiments and replies. The assistant does the requested reasoning and computing; the human controls direction, learning, acceptance and manuscript changes.
 
 Use the existing conversation and notebook as the working record. Do not make the human maintain a second task system, repeatedly approve relevance, or press Save for ordinary notes. Keep the interface quiet: one current question, folded conversations, and a small number of pinned results. Record assumptions and evidence as part of the work, not as compulsory forms.
@@ -397,7 +404,7 @@ Record seed, parameters, tolerances, algorithm version and runtime/library versi
 
 ### Display useful outputs
 
-The in-app runner supplies `display_table(rows)`, `display_plot(title, series, x_label, y_label)` and `display_data(mime_dictionary)`. Text, JSON tables, the app's numeric plot format and PNG figures render in the notebook. Numeric plots offer series toggles, click/keyboard point inspection and x-range zoom under **Inspect / zoom**. These controls change the view only: no rerun, source edit or saved-data mutation. Zoom fits retained samples, not an interpolation beyond them. Matplotlib figures are saved as PNGs if code imports pyplot; PNGs remain static. HTML, JavaScript and arbitrary widgets are not executed; unsupported rich output stays saved and should have a plain-text fallback.
+The in-app runner supplies `display_table(rows)`, `display_plot(title, series, x_label, y_label)` and `display_data(mime_dictionary)`. Text, JSON tables, the app's numeric plot format and PNG figures render in the notebook. Numeric plots offer series toggles, click/keyboard point inspection and x-range zoom under **Inspect / zoom**. These controls change the view only: no rerun, source edit or saved-data mutation. Zoom fits retained samples, not an interpolation beyond them. Matplotlib figures are saved as PNGs if code imports pyplot; PNGs remain static. Raw Jupyter HTML, JavaScript and arbitrary widgets are not executed; unsupported rich output stays saved and should have a plain-text fallback. For authored self-contained interactive visuals, `display_html` creates a separate, explicitly opened isolated viewer. `display_geometry` and `display_animation` provide native linked plots and saved-frame playback; see [Research visuals](RESEARCH_VISUALS.md).
 
 These display helpers are app-specific. Ordinary Jupyter does not define them: supply deliberate equivalents there or use standard Jupyter displays. Aw can import and export nbformat-4 Python notebooks, but it is not a complete Jupyter frontend.
 
@@ -610,3 +617,6 @@ When this guide disagrees with the code, check the current implementation and up
 Validate schema examples with `npm run test:workflow`. For app changes, use the relevant existing tests, type checking and build. Documentation checks are not a substitute for a human click-through or an actual research trial.
 
 The isolated agent-harness trial is `.paperfocus/trials/agent-harness-20261006`. Its two-dimensional quadratic study runs one bounded NumPy cell, preserving a run record, a log-scale plot, a table, rendered mathematical commentary and a separate analytic proof checkpoint. The out-of-range step grows while two stable steps contract; a small gradient in the slow direction still has distance one. A stale cell write is rejected without losing results. This is a self-piloted harness check, not a new theorem, independent usability study or formal verification. New helper/plot/instruction checks run in `npm run test:workflow`; use the full regression suite and build for implementation changes.
+
+
+Research graphics: [Research visuals](RESEARCH_VISUALS.md) covers linked data explorers, uncertainty bands, grids/sweeps, ID-linked geometry/trajectories, animations and isolated HTML. `awResearch.ts visuals [--recipe NAME]` returns catalogue/example source offline with no workspace or execution; `visual --offline` attaches existing JSON/HTML. For careful human notebook review, explore richer linked views when they illuminate a specific comparison, failure or mechanism. Routine exploration uses the smallest useful display and avoids presentation-only reruns or UI visits. Reuse saved evidence and its code/run links. Explain what to inspect, missing values, projections and sampling; selected subsets and simulations are not proofs.

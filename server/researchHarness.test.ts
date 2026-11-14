@@ -231,6 +231,11 @@ test("copied instructions bind the conversation and preserve ownership and permi
   assert.match(text, /Reuse an existing notes root/); assert.match(text, /separate from the publication manuscript/);
   assert.match(text, /Keep experimental code, outputs, execution records and short result summaries in this notebook/);
   assert.match(text, /link the exposition to exact cells or saved outputs/);
+  assert.match(text, /careful notebook review.*display_explorer/);
+  assert.match(text, /Routine exploration uses the smallest useful display/);
+  assert.match(text, /visuals \[--recipe explorer\|intervals\|trajectory\|matrix\|graph\]/);
+  assert.match(text, /without scope, writes or execution/);
+  assert.match(text, /A selected subset is not independent evidence/);
   assert.match(text, /do not open or browse Aw by default/);
   assert.match(text, /Keep this conversation, experiment owner, evidence links and saved-task completion connected/);
   assert.match(text, /Reserve opening Aw and checking its renderer for the human's review/);

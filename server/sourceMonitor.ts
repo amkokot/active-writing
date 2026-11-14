@@ -7,7 +7,7 @@ import { manuscriptPurpose } from "../src/manuscripts.ts";
 /** Stat-only between changes; periodic content verification also catches restored timestamps. */
 export function createSourceMonitor(now = Date.now) {
   const cache = new Map<string, { signature: string; revision: string; checkedAt: number }>();
-  const running = new Map<string, Promise<{ projectId: string; rootFile: string; engine: string | undefined; revision: string; purpose: string; overviewTarget: string }>>();
+  const running = new Map<string, Promise<{ projectId: string; rootFile: string; engine: string | undefined; revision: string; purpose: string; overviewTarget: string; pins: string }>>();
   return async (workspace: string, projectId: string) => {
     const key = `${workspace}\0${projectId}`;
     if (running.has(key)) return running.get(key)!;
@@ -25,7 +25,7 @@ export function createSourceMonitor(now = Date.now) {
         ? previous.revision : await projectRevision(root, files);
       cache.set(key, { signature, revision, checkedAt: previous?.signature === signature && revision === previous.revision && now() - previous.checkedAt < 60_000 ? previous.checkedAt : now() });
       if (cache.size > 20) cache.delete(cache.keys().next().value!);
-      return { projectId: project.id, rootFile: project.mainFile, engine: project.engine, revision, purpose: manuscriptPurpose(project), overviewTarget: project.manuscriptOverviewTargets?.[project.mainFile] ?? "" };
+      return { projectId: project.id, rootFile: project.mainFile, engine: project.engine, revision, purpose: manuscriptPurpose(project), overviewTarget: project.manuscriptOverviewTargets?.[project.mainFile] ?? "", pins: JSON.stringify(project.manuscriptPins ?? {}) };
     })();
     running.set(key, operation);
     try { return await operation; } finally { running.delete(key); }

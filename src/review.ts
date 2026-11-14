@@ -133,7 +133,7 @@ export function resolveReviewComment(state: AppState, id: string, resolved = tru
   const ids = resolved ? commentThreadIds(state.attentionTasks, id) : new Set([id]);
   if (!state.attentionTasks.some(t => ids.has(t.id) && t.review?.kind === "comment" && (t.status === "reviewed") !== resolved)) return state;
   const now = new Date().toISOString();
-  return { ...state, attentionTasks: state.attentionTasks.map(t => ids.has(t.id) && t.review?.kind === "comment" && (t.status === "reviewed") !== resolved ? { ...t, status: resolved ? "reviewed" : "queued", review: { ...t.review, resolvedAt: resolved ? now : undefined }, updatedAt: now } : t) };
+  return { ...state, attentionTasks: state.attentionTasks.map(t => ids.has(t.id) && t.review?.kind === "comment" && (t.status === "reviewed") !== resolved ? { ...t, status: resolved ? "reviewed" : "queued", review: { ...t.review, resolvedAt: resolved ? now : undefined, humanDecision: { action: resolved ? "resolve" : "reopen", at: now } }, updatedAt: now } : t) };
 }
 /** Explicit bulk action: only captured, still-queued comment IDs; keep all history. */
 export function resolveQueuedReviewComments(state: AppState, ids: readonly string[]): AppState {

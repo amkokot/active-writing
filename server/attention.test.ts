@@ -6,7 +6,8 @@ import { receiveHandoffReply } from "../src/handoffs.ts";
 import { handoffContinuation } from "../src/workspaceTools.ts";
 import { notebookAttentionTasks, receiveNotebook } from "../src/notebookSync.ts";
 import { studyState } from "../src/study.ts";
-import { setAsideCurrentQueue } from "../src/attention.ts";
+import { attentionThreads, setAsideCurrentQueue } from "../src/attention.ts";
+import { projectQueueTask } from "../src/projectQueue.ts";
 import { validateWorkbench } from "./workbenchStore.ts";
 import { emptyWorkbench } from "../src/workbench.ts";
 import type { AppState, AttentionTask, NotebookEntry } from "../src/types.ts";
@@ -14,6 +15,34 @@ import type { AppState, AttentionTask, NotebookEntry } from "../src/types.ts";
 function task(id: string, status: AttentionTask["status"], patch: Partial<AttentionTask> = {}): AttentionTask {
   return { id, status, title: id, route: "codex", nodeId: "section-a", paragraphId: "p-a", packet: "Saved prompt", createdAt: "2026-10-02T01:00:00Z", updatedAt: "2026-10-02T01:00:00Z", ...patch };
 }
+
+test("queue threads collapse nested replies without changing saved state or losing history", () => {
+  const comment = (id: string, replyTo?: string, status: AttentionTask["status"] = "queued") => task(id, status, { review: { kind: "comment", author: "human", body: id, quote: "x", start: 0, end: 1, ...(replyTo ? { replyTo } : {}) } });
+  const original = comment("original"), reply = comment("reply", "original"), nested = comment("nested", "reply"), prompt = task("prompt", "working");
+  const tasks = [original, reply, nested, prompt], saved = JSON.stringify(tasks);
+  const view = attentionThreads(tasks);
+  assert.deepEqual(new Set(view.queue.map(t => t.id)), new Set(["original", "prompt"]));
+  assert.deepEqual(new Set(view.replies.get("original")?.map(t => t.id)), new Set(["reply", "nested"]));
+  assert.equal(view.roots.get("nested"), original);
+  assert.equal(JSON.stringify(tasks), saved);
+  const resolved = { ...original, status: "reviewed" as const };
+  assert.deepEqual(attentionThreads([resolved, reply]).queue, [resolved], "new replies to resolved comments remain reachable");
+  const history = attentionThreads([resolved, { ...reply, status: "reviewed" as const }]);
+  assert.equal(history.queue.length, 0); assert.deepEqual(history.history, [resolved]);
+  assert.equal(history.replies.get("original")?.length, 1);
+  assert.deepEqual(attentionThreads([reply]).queue, [reply], "orphaned replies stay visible");
+  const cycle = attentionThreads([comment("a", "b"), comment("b", "a")]);
+  assert.equal(cycle.queue.length, 1); assert.equal(cycle.replies.get(cycle.queue[0].id)?.length, 1);
+});
+
+test("queue threads keep same-ID comments in different projects separate", () => {
+  const make = (projectId: string, id: string, replyTo?: string) => projectQueueTask({ id: projectId, name: projectId }, task(id, "queued", { review: { kind: "comment", author: "assistant", body: id, quote: "x", start: 0, end: 1, replyTo } }));
+  const a = make("a", "root"), b = make("b", "root"), reply = make("b", "reply", "root");
+  const view = attentionThreads([a, b, reply]);
+  assert.equal(view.queue.length, 2); assert.equal(view.roots.get(reply.id), b);
+  assert.equal(view.replies.get(a.id), undefined);
+  assert.deepEqual(view.replies.get(b.id), [reply]);
+});
 
 test("clearing a queue is reversible and never approves wording, resolves comments or changes findings", () => {
   const comment = task("comment", "queued", { review: { kind: "comment", author: "human", body: "Keep this question", start: 0, end: 1, quote: "x" } });

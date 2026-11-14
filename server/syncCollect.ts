@@ -7,18 +7,21 @@ import { saveImmutableSyncArtifact, stagedPlan, syncStateHash, checkSyncLocalSta
 import { canonical, syncHash, syncLimits, validateSnapshot, validateSyncJson, type SyncRecord, type SyncSnapshot } from "./syncProtocol.ts";
 import { acquireRecordLock, withRecordLock } from "./recordLock.ts";
 import { getProject } from "./projects.ts";
-import { readExperiments, writeExperiments } from "./experiments.ts";
+import { readExperiments, writeExperiments, serializeExperimentNotebook } from "./experiments.ts";
 import { validateNotebookEntries } from "./notebookStore.ts";
 import { validateExperimentNotebook, type ExperimentNotebook } from "../src/experiments.ts";
+import {verifyBlob} from './syncBlobs.ts';
+import {syncRecord} from './syncProtocol.ts';
+import {verifyExternalRecord} from './syncStructuredBlobs.ts';
 
 const digest = /^[a-f0-9]{64}$/;
-export function checkCollectionFootprint(before: SyncSnapshot, additions: Array<{ path: string; bytes: number }>) {
-  const files = new Map(before.records.map(record => [record.path, record.bytes]));
+export function checkCollectionFootprint(before: SyncSnapshot, additions: Array<{ path: string; bytes: number; external?:true }>) {
+  const files = new Map(before.records.map(record => [record.path, record.external?0:record.bytes]));
   for (const record of additions) {
-    if (!Number.isSafeInteger(record.bytes) || record.bytes < 0 || record.bytes > syncLimits.fileBytes || record.path.endsWith("/notebook.ipynb") && record.bytes > 5_000_000) throw new Error("Collected files would exceed their saved-record size limit. Nothing imported; choose a smaller scope.");
-    files.set(record.path, record.bytes);
+    if (!Number.isSafeInteger(record.bytes) || record.bytes < 0 || record.bytes > (before.version===2&&record.external?8*1024**3:syncLimits.fileBytes) || record.path.endsWith("/notebook.ipynb") && record.bytes > 5_000_000) throw new Error(`Collected files would exceed their saved-record size limit: ${record.path} (${record.bytes} bytes). Nothing imported; choose a smaller scope.`);
+    files.set(record.path, record.external?0:record.bytes);
   }
-  if (files.size > syncLimits.records || [...files.values()].reduce((total, bytes) => total + bytes, 0) > syncLimits.totalBytes) throw new Error("The resulting project would exceed the snapshot file/payload limit. Collect a smaller scope; no live writes made.");
+  if (files.size > (before.version===2?50000:syncLimits.records) || [...files.values()].reduce((total, bytes) => total + bytes, 0) > syncLimits.totalBytes) throw new Error("The resulting project would exceed the snapshot file/payload limit. Collect a smaller scope; no live writes made.");
 }
 export interface CollectionDescription {
   format: "aw-notebook-collection"; version: 1; projectId: string; planId: string; path: string; notebookId: string;
@@ -40,14 +43,16 @@ function owner(name: string) {
   if (!match || /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])$/i.test(match[1])) throw new Error("Collection supports one existing experiment notebook only. Source, catalogue, policy and review records stay held.");
   return match[1];
 }
-export function notebookCollectionEvidence(staged: Awaited<ReturnType<typeof stagedPlan>>, name: string) {
+export async function notebookCollectionEvidence(staged: Awaited<ReturnType<typeof stagedPlan>>, name: string, workspace:string) {
   const notebookId = owner(name);
   if (staged.plan.conflicts.some(conflict => conflict.path === name || conflict.path.startsWith(`data/experiments/${notebookId}/runs/`))
     || staged.plan.deletions.some(deletion => deletion === name || deletion.startsWith(`data/experiments/${notebookId}/runs/`))) throw new Error("This notebook/run history has unresolved changes or proposed deletions. Keep the detached variants for review.");
   const candidate = staged.plan.records.find(record => record.path === name);
   if (!candidate || candidate.kind !== "experiment") throw new Error("No complete, schema-checked notebook candidate for this exact path.");
   const notebook: ExperimentNotebook = json(candidate); validateExperimentNotebook(notebook);
-  const runs = staged.plan.records.filter(record => record.path.startsWith(`data/experiments/${notebookId}/runs/`));
+  const changed=staged.plan.records.filter(record => record.path.startsWith(`data/experiments/${notebookId}/runs/`) && (staged.inputs[1].version!==2 || record.sha256!==staged.inputs[1].records.find(r=>r.path===record.path)?.sha256));
+  if(changed.length>200||changed.reduce((n,r)=>n+r.bytes,0)>32*1024**2)throw new Error('Collect a smaller changed notebook/run set (200 records / 32 MB).');
+  const runs:SyncRecord[]=[];for(const record of changed){if(record.external){const bytes=await readSyncBytes(await verifyBlob(workspace,record),syncLimits.fileBytes);runs.push(syncRecord(record.path,record.kind,bytes));}else runs.push(record);}
   for (const record of runs) {
     const saved = json(record), filename = record.path.split("/").at(-1)!;
     if (record.kind !== "run" || typeof saved.id !== "string" || !/^[A-Za-z0-9_-]{1,64}$/.test(saved.id) || /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])$/i.test(saved.id)
@@ -61,7 +66,12 @@ export function notebookCollectionEvidence(staged: Awaited<ReturnType<typeof sta
   return { id: staged.id, projectId: staged.plan.projectId, localId: staged.plan.local, local: staged.inputs[1], heldConflicts: staged.plan.conflicts.length, notebookId, candidate, notebook, runs };
 }
 async function context(workspace: string, projectId: string, planId: string, name: string) {
-  return notebookCollectionEvidence(await stagedPlan(workspace, projectId, planId), name);
+  const ctx=await notebookCollectionEvidence(await stagedPlan(workspace, projectId, planId), name,workspace),old=ctx.local.records.find(r=>r.path===name);
+  const previousNotebook=old?old.external?JSON.parse((await readSyncBytes(await verifyExternalRecord(workspace,old),syncLimits.fileBytes)).toString()):json(old):undefined;
+  let provenanceBytes=ctx.runs.reduce((n,r)=>n+r.bytes,0);
+  for(const cell of ctx.notebook.cells){const id=cell.metadata.paperfocus?.runId;if(!id||id===previousNotebook?.cells.find((c:ExperimentNotebook['cells'][number])=>c.id===cell.id)?.metadata.paperfocus?.runId||ctx.runs.some(r=>r.path.endsWith('/'+id+'.json')))continue;const existing=ctx.local.records.find(r=>r.path===`data/experiments/${ctx.notebookId}/runs/${id}.json`);if(existing?.external){if(ctx.runs.length>=200||(provenanceBytes+=existing.bytes)>32*1024**2)throw new Error('Selected provenance exceeds its bounded window.');const bytes=await readSyncBytes(await verifyBlob(workspace,existing),syncLimits.fileBytes);ctx.runs.push(syncRecord(existing.path,existing.kind,bytes));}}
+  if(ctx.runs.length>200||ctx.runs.reduce((n,r)=>n+r.bytes,0)>32*1024**2)throw new Error('Selected output provenance exceeds the bounded collection window.');
+  return {...ctx,previousNotebook};
 }
 export async function savedCollectionKind(workspace: string, projectId: string, id: string) {
   if (!digest.test(id)) throw new Error("Use the exact collection ID.");
@@ -76,7 +86,7 @@ function describe(ctx: Awaited<ReturnType<typeof context>>, before: SyncSnapshot
   if (!previous || previous.kind !== "experiment" || !catalogue || catalogue.kind !== "catalogue") throw new Error("First collection requires an existing notebook and its owning conversation.");
   const entries = json(catalogue).entries; validateNotebookEntries(entries);
   if (!entries.some(entry => (entry.experimentNotebookId ?? entry.id) === ctx.notebookId)) throw new Error("The target notebook has no current conversation owner. Use collect --entries for distinct new conversations/owners.");
-  const old: ExperimentNotebook = json(previous); validateExperimentNotebook(old);
+  const old: ExperimentNotebook = ctx.previousNotebook; validateExperimentNotebook(old);
   for (const cell of old.cells) {
     const next = ctx.notebook.cells.find(item => item.id === cell.id);
     if (!next || cell.cell_type !== next.cell_type) throw new Error("Removed cells or changed cell kinds need a separate explicit workflow; original evidence was retained.");
@@ -94,17 +104,17 @@ function describe(ctx: Awaited<ReturnType<typeof context>>, before: SyncSnapshot
     if (prior && prior.sha256 !== record.sha256) throw new Error("Existing run history cannot be replaced.");
     return !prior;
   }).map(({ path: name, sha256, bytes }) => ({ path: name, sha256, bytes }));
-  checkCollectionFootprint(before, [{ path: ctx.candidate.path, bytes: Buffer.byteLength(JSON.stringify(ctx.notebook, null, 2)) }, ...runs]);
+  checkCollectionFootprint(before, [{ path: ctx.candidate.path, bytes: Buffer.byteLength(serializeExperimentNotebook(ctx.notebook)) }, ...runs]);
   return { format: "aw-notebook-collection", version: 1, projectId: ctx.projectId, planId: ctx.id, path: ctx.candidate.path, notebookId: ctx.notebookId,
     deviceId: before.device.id, localStateHash: syncStateHash(before), beforeRevision: previous.sha256,
-    afterRevision: syncHash(Buffer.from(JSON.stringify(ctx.notebook, null, 2))), candidateHash: ctx.candidate.sha256, selection, runs };
+    afterRevision: syncHash(Buffer.from(serializeExperimentNotebook(ctx.notebook))), candidateHash: ctx.candidate.sha256, selection, runs };
 }
 const collectionId = (description: CollectionDescription) => syncHash(canonical(description));
 async function selection(workspace: string, projectId: string) {
   const { project, root } = await getProject(workspace, projectId); return { paperRoot: root, mainFile: project.mainFile, engine: project.engine ?? "auto" };
 }
 function summary(ctx: Awaited<ReturnType<typeof context>>, before: SyncSnapshot, description: CollectionDescription) {
-  const old: ExperimentNotebook = json(find(before, description.path)!), byId = new Map(old.cells.map(cell => [cell.id, cell]));
+  const old: ExperimentNotebook = ctx.previousNotebook, byId = new Map(old.cells.map(cell => [cell.id, cell]));
   return { collectionId: collectionId(description), projectId: description.projectId, planId: description.planId, path: description.path, notebookId: description.notebookId,
     beforeRevision: description.beforeRevision, afterRevision: description.afterRevision, candidateHash: description.candidateHash,
     changedCells: ctx.notebook.cells.filter(cell => canonical(cell) !== canonical(byId.get(cell.id))).map(cell => cell.id),
@@ -175,7 +185,7 @@ export async function commitNotebookCollection(workspace: string, projectId: str
     try {
       const check = async () => {
         if (canonical(await selection(workspace, projectId)) !== canonical(description.selection)) throw new Error("Paper root/compiler selection changed. Inspect the retained collection first.");
-        const current = await captureSyncSnapshot(workspace, projectId); return { after: fence(current, before, description), current };
+        const current = await captureSyncSnapshot(workspace, projectId,undefined,{forceFull:true}); return { after: fence(current, before, description), current };
       };
       let checked = await check();
       if (hooks.afterBackup) { await hooks.afterBackup(); checked = await check(); }

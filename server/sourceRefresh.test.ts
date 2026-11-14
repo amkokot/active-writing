@@ -5,7 +5,7 @@ import { createServer } from "node:http";
 import { latexPlugin } from "./latexPlugin.ts";
 import { focusedDocument, focusedSourceSnippets } from "./focus.ts";
 import path from "node:path";
-import { automaticSourceRefresh, locateSavedPassage, refreshSourceState, sourceRefreshPlan } from "../src/sourceRefresh.ts";
+import { automaticSourceRefresh, cacheSourceDraft, restoreSourceDraft, locateSavedPassage, refreshSourceState, sourceRefreshPlan } from "../src/sourceRefresh.ts";
 import { acknowledgeSave, reconcileEditorSave } from "../src/acknowledgedSave.ts";
 import type { SourceDraftCopy } from "../src/sourceRefresh.ts";
 import type { AppState, ProjectDocument } from "../src/types.ts";
@@ -24,6 +24,58 @@ function initialState(): AppState { return { destination: "manuscript", notebook
 function inserted(before: ProjectDocument) { const after = structuredClone(before); after.revision = "after";
   after.paragraphs = [{ ...before.paragraphs[0], id: "p0", text: "Inserted new prose." }, { ...before.paragraphs[0], id: "p1" }, { ...before.paragraphs[1], id: "p2" }, before.paragraphs[2]];
   after.nodes[0].paragraphIds = ["p0", "p1", "p2"]; return after; }
+
+test("reopening a cached draft after unrelated sync keeps its original passage and resumes saving", () => {
+  const before = document(), after = inserted(before), text = before.paragraphs[1].text + " Human continuation.";
+  const state = cacheSourceDraft({ ...initialState(), activeParagraphId: "p1", draftRevision: before.revision, draftMainFile: "main.tex", paragraphEdits: {p1:text} }, before);
+  assert.equal(state.draftBase?.paragraphs.length, 1);
+  const restored = restoreSourceDraft(JSON.parse(JSON.stringify(state)), after);
+  assert.deepEqual(restored.paragraphEdits, {p2:text}); assert.equal(restored.draftRevision, after.revision);
+  assert.equal(restored.activeParagraphId, "p2"); assert.equal(restored.sourceSaveContinuation, undefined);
+});
+
+test("cached originals explain real overlaps instead of borrowing newer text as their base", () => {
+  const before = document(), after = structuredClone(before); after.revision = "after"; after.paragraphs[0].text = "Desktop rewrite.";
+  const state = cacheSourceDraft({ ...initialState(), draftRevision: before.revision, paragraphEdits: {p0:"Human rewrite."} }, before);
+  const restored = restoreSourceDraft(JSON.parse(JSON.stringify(state)), after);
+  assert.equal(restored.draftRevision, before.revision);
+  const plan = sourceRefreshPlan(after, after, restored.paragraphEdits, restored.draftRevision, restored.draftBase);
+  assert.equal(plan.conflicts.length, 1); assert.equal(plan.conflicts[0].reason, "changed");
+  assert.equal(plan.conflicts[0].baseText, before.paragraphs[0].text); assert.deepEqual(plan.rebasedEdits, {});
+  assert.equal(cacheSourceDraft(restored, after).draftBase?.revision, before.revision);
+});
+
+test("recovery rejects duplicate, foreign, unknown and differently owned baselines", () => {
+  const before = document(), state = { ...initialState(), draftRevision: before.revision, paragraphEdits: {p0:"Human rewrite."} };
+  before.paragraphs.push({...before.paragraphs[0],id:"duplicate"});
+  const cached = cacheSourceDraft(state,before), after = inserted(before);
+  for(const candidate of [cached,{...cached,draftBase:undefined},{...cached,draftBase:{...cached.draftBase!,projectId:"foreign"}},{...cached,draftBase:{...cached.draftBase!,rootFile:"other.tex"}},{...cached,draftBase:{...cached.draftBase!,engine:"xelatex"}}]){
+    assert.equal(restoreSourceDraft(candidate,after).draftRevision,before.revision);
+  }
+  assert.equal(cacheSourceDraft({...state,paragraphEdits:{}},before).draftBase,undefined);
+});
+
+test("a recovered own-save continuation retains its baseline even after another file changed", () => {
+  const before=document(),after=inserted(before),state={...initialState(),draftRevision:before.revision,paragraphEdits:{p1:"Still typing."},sourceSaveContinuation:{document:before,ranges:[]}};
+  const restored=restoreSourceDraft(JSON.parse(JSON.stringify(state)),after);
+  assert.deepEqual(restored.paragraphEdits,{p2:"Still typing."});assert.equal(restored.draftRevision,after.revision);
+});
+
+test("a figure arriving during an own-save continuation cannot stall subsequent prose saves", async () => {
+  const {workspace,folder,project}=await fixture(),before=publicDocument(await parseProject(workspace,project.id)),p=before.paragraphs[0];
+  const submitted={[p.id]:p.text+" Partial sentence"},newer=submitted[p.id]+" completed.";
+  const saved=await saveEdits(workspace,project.id,submitted,before.revision);
+  const state={...initialState(),draftRevision:before.revision,paragraphEdits:{[p.id]:newer}};
+  const pending=reconcileEditorSave(state,before,publicDocument(saved),submitted,saved.saveAcknowledgement!);
+  assert.ok(pending.state.sourceSaveContinuation);
+  await writeFile(path.join(folder,"arriving-figure.svg"),"<svg/>");
+  const incoming=publicDocument(await parseProject(workspace,project.id));
+  const refreshed=automaticSourceRefresh(pending.state,pending.document,incoming);
+  assert.ok(refreshed);assert.equal(refreshed.state.sourceSaveContinuation,undefined);
+  const final=await saveEdits(workspace,project.id,refreshed.state.paragraphEdits,refreshed.state.draftRevision);
+  assert.ok(final.paragraphs.some(p=>p.text===newer));
+  assert.equal(await readFile(path.join(folder,"arriving-figure.svg"),"utf8"),"<svg/>");
+});
 
 test("automatic save retry follows only exact unchanged passages, keeping double Enter and the caret", () => {
   const before = document(), after = inserted(before);

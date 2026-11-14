@@ -26,6 +26,7 @@ export function PdfDownload({ result, projectId, projectName, mainFile, stale }:
     } catch (reason) { if (!request.signal.aborted) setError((reason as Error).message); }
     finally { if (!request.signal.aborted) setBusy(false); }
   }
+  if (result?.sectionParts) return <button disabled><strong>Download PDF</strong><small>Choose Compile full paper for one continuous, shareable PDF.</small></button>;
   if (!url) return <button disabled><strong>Download PDF</strong><small>Compile a PDF first</small></button>;
   return <details className="pdf-download"><summary>Download PDF…</summary>
     <form onSubmit={event => { event.preventDefault(); void download(); }}>

@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import {copyExperimentRuns} from './experimentRunCopies.ts';
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { parseProject } from "./projects.ts";
@@ -68,6 +69,7 @@ export async function transferNotebook(workspace: string, input: {
   try {
     for (const [owner, snapshot] of snapshots) {
       const notebook = structuredClone(snapshot.notebook);
+      await copyExperimentRuns(workspace,input.projectId,owner,snapshot,newOwners.get(owner)!);
       notebook.metadata = { ...notebook.metadata, awVersionOrigin: { projectId: input.projectId, notebookId: owner, path: snapshot.path, revision: snapshot.revision, copiedAt: now } };
       await writeExperiments(workspace, input.projectId, newOwners.get(owner)!, "", notebook);
     }

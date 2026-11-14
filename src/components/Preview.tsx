@@ -1,4 +1,4 @@
-import { lazy, Suspense, useLayoutEffect, useMemo, useRef } from "react";
+import { lazy, memo, Suspense, useDeferredValue, useLayoutEffect, useMemo, useRef } from "react";
 import type { ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { CheckCircle2, LoaderCircle, TriangleAlert } from "lucide-react";
@@ -12,7 +12,9 @@ import { useReadingLayout } from "../usePaneLayout";
 import { useSavedReadingPosition } from "../useSavedReadingPosition";
 import { linkedProofTitle } from "../proofLinks";
 import { manuscriptContents } from "../latexStructure";
+import { readingLabelNumbers } from "../latexReading";
 import { useSectionEdges, type SectionNavigation } from "../useSectionEdges";
+import {useStableEvent} from '../useStableEvent';
 
 const PdfViewer = lazy(() =>
   import("./PdfViewer").then((module) => ({ default: module.PdfViewer })),
@@ -45,7 +47,20 @@ interface PreviewProps {
   onPdfSourcePosition?: (page: number, x: number, y: number) => void;
 }
 
-export function Preview({
+export function Preview(props: PreviewProps) {
+  const deferred=useDeferredValue(props);
+  // Navigation and new saved revisions remain immediate. Only background
+  // display work for the same editing location yields to the source caret.
+  const navigation=deferred.figureProject?.project.id!==props.figureProject?.project.id
+    || deferred.figureProject?.project.mainFile!==props.figureProject?.project.mainFile
+    || deferred.figureProject?.revision!==props.figureProject?.revision
+    || deferred.format!==props.format || deferred.lens!==props.lens
+    || deferred.focusedNodeId!==props.focusedNodeId || deferred.paragraphIds!==props.paragraphIds
+    || deferred.hiddenNodeIds!==props.hiddenNodeIds || deferred.jumpTarget!==props.jumpTarget || deferred.theme!==props.theme;
+  return <PreviewContent {...(navigation ? props : deferred)}/>;
+}
+
+const PreviewContent = memo(function PreviewContent({
   figureProject,
   recoveryIdentity,
   sectionNavigation,
@@ -79,13 +94,20 @@ export function Preview({
   useReadingLayout(scrollRef);
   const wheelIntent = useRef({ amount: 0, at: 0, lastAdvance: 0 });
   const paragraphMap = useMemo(() => new Map(paragraphs.map((paragraph) => [paragraph.id, paragraph])), [paragraphs]);
-  const contents = useMemo(() => manuscriptContents(nodes, paragraphs, paragraphEdits), [nodes, paragraphs, paragraphEdits]);
+  const nextContents = useMemo(() => manuscriptContents(nodes, paragraphs, paragraphEdits), [nodes, paragraphs, paragraphEdits]);
+  const contentsCache = useRef({key: "", value: nextContents});
+  const contentsKey = JSON.stringify(nextContents);
+  if (contentsCache.current.key !== contentsKey) contentsCache.current = {key: contentsKey, value: nextContents};
+  const contents = contentsCache.current.value;
+  const referenceLabels = useMemo(() => readingLabelNumbers({ nodes, labels: figureProject?.labels }), [nodes, figureProject?.labels]);
   const figureContext = useMemo(() => figureProject ? { projectId: figureProject.project.id, revision: figureProject.revision, files: figureProject.files } : undefined, [figureProject]);
   const followContents = (id: string) => {
     const heading = contents.find(item => item.id === id); if (!heading) return;
     if (heading.paragraphId) onSyncToSource?.(heading.paragraphId);
     else if (heading.nodeId) onNavigateNode?.(heading.nodeId);
   };
+  const passageReference=useStableEvent((paragraphId:string,token:ReferenceRequest['token'])=>onReference?.({token,paragraphId}));
+  const headingReference=useStableEvent(followContents);
   const proofKinds = new Set(["theorem", "lemma", "corollary", "proof"]);
   const previewNodes = useMemo(() => {
     const visible=restrictNodesToParagraphs(visiblePreviewNodes(nodes, lens, focusedNodeId, hiddenNodeIds), paragraphIds);
@@ -121,14 +143,14 @@ export function Preview({
   }, [jumpTarget?.sequence, quickReading, active]);
   const partialView = compileResult?.mode === "focus" && compileResult.diagnostics?.some(item => item.code === "focus_source_snippets");
   const statusDetail = compiling ? "Compiling LaTeX" : compileResult?.stale ? "Edits are not in this PDF" : compileResult?.success
-    ? quickReading ? "Quick reading · approximate; cached PDF available" : compileResult.originalPages ? "Original pages · complete page layout" : compileResult.mode === "full" ? "Full document PDF ready" : priorView ? "PDF from a previous focused view" : partialView ? "Focused PDF ready; unfinished snippets have placeholders" : "Focused PDF ready"
+    ? quickReading ? "Quick reading · approximate; cached PDF available" : compileResult.sectionParts ? "Section PDF · cached sections, local page numbers" : compileResult.originalPages ? "Original pages · complete page layout" : compileResult.mode === "full" ? "Full document PDF ready" : priorView ? "PDF from a previous focused view" : partialView ? "Focused PDF ready; unfinished snippets have placeholders" : "Focused PDF ready"
     : compileResult ? "LaTeX compilation failed" : "Quick reading · approximate, not a typeset PDF";
   const compileStatus = compiling ? (
     <span className="compile-state is-running"><LoaderCircle className="spin" size={14} /> Compiling…</span>
   ) : compileResult?.success && !compileResult.stale ? (
     <span className={`compile-state is-success ${compileResult.mode === "full" ? "is-full" : ""}`}>
       <CheckCircle2 size={14} />
-      {quickReading ? "Quick reading" : compileResult.originalPages ? "Original pages" : compileResult.mode === "full" ? "Full PDF" : priorView ? "Older PDF" : partialView ? "Partial PDF" : "Excerpt PDF"}
+      {quickReading ? "Quick reading" : compileResult.sectionParts ? "Section PDF" : compileResult.originalPages ? "Original pages" : compileResult.mode === "full" ? "Full PDF" : priorView ? "Older PDF" : partialView ? "Partial PDF" : "Excerpt PDF"}
     </span>
   ) : compileResult?.stale ? (
     <span className="compile-state is-running"><TriangleAlert size={14} /> Needs update</span>
@@ -147,7 +169,7 @@ export function Preview({
         <p className="preview-status-detail">{statusDetail}{compileResult?.success && !quickReading ? ` · ${(compileResult.durationMs / 1000).toFixed(1)}s` : ""}</p>
         {priorView && compileResult?.success && !quickReading && <p>This PDF is from another view. Scope changes update it automatically; other view changes may require Compile.</p>}
         {compileResult?.viewNote && !quickReading && <p>{compileResult.viewNote}</p>}
-        <p>Ctrl/⌘-click source to find it here. Double-click a preview passage to find its source. PDF links need an up-to-date compile.</p>
+        <p>Ctrl/⌘-click source to find it here. Double-click a preview passage to find its source. PDF links follow the last build; after edits they may land nearby.</p>
         <details className="compile-log is-compact preview-details">
           <summary>Build details</summary>
           <p>{compileResult?.success && !quickReading ? `Paper typography · ${compileResult.mode === "full" ? "complete document" : "focused excerpt; pagination and float positions may differ"}. Editor appearance doesn't change this PDF.` : "Quick reading is approximate. Compile to see custom LaTeX commands and page layout."}</p>
@@ -157,12 +179,14 @@ export function Preview({
     , controlsTarget) : null;
 
   return (
-    <section className="preview-pane" aria-label="LaTeX preview">
+    <section className={`preview-pane${figureProject?.project.researchCorpus?' research-corpus-reading':''}`} aria-label="LaTeX preview">
       {compileResult?.success && compileResult.pdfUrl && !quickReading ? (
         <Suspense fallback={<>{renderControls()}<div className="pdf-loading"><LoaderCircle className="spin" size={20} /> Loading PDF renderer</div></>}>
           <PdfViewer continuous active={active} darkDisplay={darkPdf} zoomFactor={zoom} onZoomFactorChange={setZoom} visiblePages={compileResult.originalPages} jumpTarget={jumpTarget} onSourcePosition={onPdfSourcePosition} url={compileResult.pdfUrl}
+            sectionParts={compileResult.sectionParts}
+            loadRevision={compileResult.sectionParts ? compileResult.requestedAt : undefined}
             readingIdentity={JSON.stringify([figureProject?.project.id, compileResult.mainFile, compileResult.engine, compileResult.mode, compileResult.scope, compileResult.originalPages])}
-            unavailableDestinations={compileResult.unavailablePdfDestinations} renderControls={renderControls} />
+            unavailableDestinations={compileResult.sectionParts ? undefined : compileResult.unavailablePdfDestinations} renderControls={renderControls} />
         </Suspense>
       ) : (
         <>
@@ -187,17 +211,17 @@ export function Preview({
             {lens === "themes" && theme ? (
               <>
                 <h2>Theme: {theme.name}</h2>
-                {themePassages(paragraphs, theme.matches.filter((match) => !match.excluded).map((match) => match.paragraphId)).map((paragraph) => <div key={paragraph.id} data-preview-paragraph={paragraph.id} className={jumpTarget?.paragraphId === paragraph.id ? "preview-source-target" : undefined} title="Double-click to find this passage in the source" onDoubleClick={event => { if (!(event.target as HTMLElement).closest("a,button")) onSyncToSource?.(paragraph.id); }}>{paragraph.renderIssue ? <div className="unrendered-passage"><p>{paragraphEdits[paragraph.id] ?? paragraph.text}</p>{paragraph.renderIssue && <small>{paragraph.renderIssue} · Source saved.</small>}</div> : <Suspense fallback={<p>Rendering passage…</p>}><RenderedPassage text={paragraphEdits[paragraph.id] ?? paragraph.text} figureContext={figureContext} contents={contents} onHeading={followContents} onReference={onReference ? token => onReference({ token, paragraphId: paragraph.id }) : undefined} /></Suspense>}</div>)}
+                {themePassages(paragraphs, theme.matches.filter((match) => !match.excluded).map((match) => match.paragraphId)).map((paragraph) => <div key={paragraph.id} data-preview-paragraph={paragraph.id} className={jumpTarget?.paragraphId === paragraph.id ? "preview-source-target" : undefined} title="Double-click to find this passage in the source" onDoubleClick={event => { if (!(event.target as HTMLElement).closest("a,button")) onSyncToSource?.(paragraph.id); }}>{paragraph.renderIssue ? <div className="unrendered-passage"><p>{paragraphEdits[paragraph.id] ?? paragraph.text}</p>{paragraph.renderIssue && <small>{paragraph.renderIssue} · Source saved.</small>}</div> : <Suspense fallback={<p>Rendering passage…</p>}><RenderedPassage text={paragraphEdits[paragraph.id] ?? paragraph.text} figureContext={figureContext} referenceLabels={referenceLabels} contents={contents} onHeading={headingReference} paragraphId={paragraph.id} onPassageReference={onReference ? passageReference : undefined} /></Suspense>}</div>)}
               </>
             ) : (
               previewNodes.map((node) => {
                 const Heading = manuscriptHeadingTag(node);
                 return <section key={paragraphIds ? node.paragraphIds[0] : "renderKey" in node ? node.renderKey as string : node.id} className={proofKinds.has(node.kind) ? "preview-proof" : ""} data-heading-level={sectionHeadingLevel(node)}>
-                  {!("continued" in node && node.continued) && <Heading className="preview-heading">{node.number ? `${node.number} ` : ""}{focusedNodeId && node.proofFor?.includes(focusedNodeId) ? linkedProofTitle(node, nodes) : node.title}</Heading>}
+                  {!(figureProject?.project.researchCorpus && node.id==='document') && !("continued" in node && node.continued) && <Heading className="preview-heading">{node.number ? `${node.number} ` : ""}{focusedNodeId && node.proofFor?.includes(focusedNodeId) ? linkedProofTitle(node, nodes) : node.title}</Heading>}
                   {focusedNodeId && node.proofFor?.includes(focusedNodeId) && <small className="source-file-badge">Linked proof · {paragraphMap.get(node.paragraphIds[0])?.file ?? node.sourceInsertion?.file}</small>}
                   {node.paragraphIds.map((paragraphId) => {
                     const paragraph = paragraphMap.get(paragraphId);
-                    return paragraph ? <div key={paragraphId} data-preview-paragraph={paragraphId} className={jumpTarget?.paragraphId === paragraphId ? "preview-source-target" : undefined} title="Double-click to find this passage in the source" onDoubleClick={event => { if ((event.target as HTMLElement).closest("a,button")) return; onSyncToSource?.(paragraphId); }}>{paragraph.renderIssue ? <div className="unrendered-passage"><p>{paragraphEdits[paragraphId] ?? paragraph.text}</p>{paragraph.renderIssue && <small>{paragraph.renderIssue} · Source saved.</small>}</div> : <Suspense fallback={<p>Rendering passage…</p>}><RenderedPassage text={paragraphEdits[paragraphId] ?? paragraph.text} figureContext={figureContext} contents={contents} onHeading={followContents} onReference={onReference ? token => onReference({ token, paragraphId: paragraphId }) : undefined} /></Suspense>}</div> : null;
+                    return paragraph ? <div key={paragraphId} data-preview-paragraph={paragraphId} className={jumpTarget?.paragraphId === paragraphId ? "preview-source-target" : undefined} title="Double-click to find this passage in the source" onDoubleClick={event => { if ((event.target as HTMLElement).closest("a,button")) return; onSyncToSource?.(paragraphId); }}>{paragraph.renderIssue ? <div className="unrendered-passage"><p>{paragraphEdits[paragraphId] ?? paragraph.text}</p>{paragraph.renderIssue && <small>{paragraph.renderIssue} · Source saved.</small>}</div> : <Suspense fallback={<p>Rendering passage…</p>}><RenderedPassage text={paragraphEdits[paragraphId] ?? paragraph.text} figureContext={figureContext} referenceLabels={referenceLabels} contents={contents} onHeading={headingReference} paragraphId={paragraphId} onPassageReference={onReference ? passageReference : undefined} /></Suspense>}</div> : null;
                   })}
                 </section>;
               })
@@ -211,4 +235,4 @@ export function Preview({
       <PaneZoomIndicator zoom={zoom} label="preview" onReset={() => setZoom(1)} />
     </section>
   );
-}
+});

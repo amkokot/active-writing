@@ -1,5 +1,6 @@
 import { defaultThemeLenses } from "./demoProject";
-import type { AppState, ProgressState } from "./types";
+import type { AppState, ProgressState, ProjectDocument } from "./types";
+import { cacheSourceDraft } from "./sourceRefresh";
 import { freshTurbo } from "./turbo";
 import { createJsonSnapshotter } from "./jsonSnapshot";
 import { defaultDisplayMode, normalizeDisplayMode } from "./display";
@@ -79,7 +80,8 @@ export function loadState(projectId = "demo"): AppState {
   }
 }
 
-export function saveState(state: AppState, projectId = "demo") {
+export function saveState(state: AppState, projectId = "demo", document?: ProjectDocument) {
+  state = cacheSourceDraft(state, document);
   windowStateCache().write(projectId === "demo" ? STORAGE_KEY : `${STORAGE_KEY}.${projectId}`, state, snapshot(state));
 }
 

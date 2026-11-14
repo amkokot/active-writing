@@ -1,22 +1,24 @@
 import { memo, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import { ArrowLeft, ChevronLeft, ChevronRight, LoaderCircle, Search, ZoomIn, ZoomOut } from "lucide-react";
-import { getDocument, GlobalWorkerOptions } from "pdfjs-dist";
+import { ArrowLeft, ChevronDown, ChevronLeft, ChevronRight, LoaderCircle, Search, ZoomIn, ZoomOut } from "lucide-react";
+import { getDocument, GlobalWorkerOptions, PDFWorker } from "pdfjs-dist";
 import type { PDFDocumentProxy, RenderTask } from "pdfjs-dist";
 import pdfWorker from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import { safeLink } from "../references";
 import { unavailablePdfDestination } from "../pdfLinks";
 import { renderProfiling } from "../renderProfile";
 import { usePaneZoomGestures, useStoredPaneZoom } from "../usePaneZoom";
-import { clampPaneZoom } from "../paneZoom";
+import { clampPaneZoom, pdfRasterSize } from "../paneZoom";
 import type { PreviewLocation } from "../types";
 import { useViewportRevision } from "../usePaneLayout";
-import { pdfFitScale, resizedPdfPosition } from "../editorGeometry";
+import { pdfFitScale, resizedPdfPosition, readingPaneVisible } from "../editorGeometry";
 import { compiledPdfResume, parseReadingPosition, readingPositionKey, type ReadingPosition } from "../readingPosition";
 import { windowStateCache } from "../windowCache";
 import { ContinuousPdfPages } from "./ContinuousPdfPages";
 import type { PdfScrollTo } from "./ContinuousPdfPages";
 import { PdfTextLayer } from "./PdfTextLayer";
+import { SectionPdfPool, sectionPageOwner, sectionPdfUrl, sectionReadingPosition } from "../sectionPdfDocument";
+import type { SectionPdfPart } from "../types";
 
 GlobalWorkerOptions.workerSrc = pdfWorker;
 
@@ -38,6 +40,8 @@ interface PdfViewerProps {
   visiblePages?: number[];
   jumpTarget?: PreviewLocation;
   onSourcePosition?: (page: number, x: number, y: number) => void;
+  sectionParts?: SectionPdfPart[];
+  loadRevision?: string;
 }
 
 interface PdfLink { id: string; url?: string; dest?: string | unknown[]; left: number; top: number; width: number; height: number }
@@ -45,13 +49,16 @@ interface SearchMatch { page: number; snippet: string }
 const textCache = new Map<string, string[]>();
 const normalize = (value: string) => value.normalize("NFKC").replace(/-\s+/g, "").replace(/\s+/g, " ").toLowerCase();
 
-function PdfViewerView({ continuous = false, active = true, darkDisplay = false, zoomFactor, onZoomFactorChange, url, readingIdentity, initialPage = 1, initialSearch = "", onPageChange, onSearchChange, alwaysShowSearch = false, unavailableDestinations, renderControls, visiblePages, jumpTarget, onSourcePosition }: PdfViewerProps) {
+function PdfViewerView({ continuous = false, active = true, darkDisplay = false, zoomFactor, onZoomFactorChange, url, readingIdentity, initialPage = 1, initialSearch = "", onPageChange, onSearchChange, alwaysShowSearch = false, unavailableDestinations, renderControls, visiblePages, jumpTarget, onSourcePosition, sectionParts, loadRevision }: PdfViewerProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const viewportRevision = useViewportRevision();
   const scrollRef = useRef<HTMLDivElement>(null);
   const continuousNavigator = useRef<PdfScrollTo | undefined>(undefined);
   const [document, setDocument] = useState<PDFDocumentProxy>();
   const liveDocument = useRef<PDFDocumentProxy | null>(null);
+  const sectionPool = useRef<{ pool: SectionPdfPool; worker: PDFWorker; owner: string | null } | undefined>(undefined);
+  const sectionEpoch = useRef(0);
+  useEffect(() => () => { const saved = sectionPool.current; sectionPool.current = undefined; if (saved) void saved.pool.destroy().finally(() => saved.worker.destroy()); }, []);
   const [pageNumber, setPageNumber] = useState(1);
   const [fitScale, setFitScale] = useState(0.55);
   const [readerZoom, setReaderZoom] = useStoredPaneZoom("pdf-reader");
@@ -88,7 +95,15 @@ function PdfViewerView({ continuous = false, active = true, darkDisplay = false,
 
   useEffect(() => {
     let cancelled = false;
-    const task = getDocument({ url });
+    const epoch = ++sectionEpoch.current;
+    const sectionOwner = new URL(url, window.location.origin).searchParams.get("projectId");
+    if (sectionPool.current && sectionPool.current.owner !== sectionOwner) { const saved = sectionPool.current; sectionPool.current = undefined; void saved.pool.destroy().finally(() => saved.worker.destroy()); }
+    if (!sectionParts && sectionPool.current) { const saved = sectionPool.current; sectionPool.current = undefined; void saved.pool.destroy().finally(() => saved.worker.destroy()); }
+    if (sectionParts && !sectionPool.current) {
+      const worker = new PDFWorker();
+      sectionPool.current = { worker, owner: sectionOwner, pool: new SectionPdfPool(partUrl => getDocument({ url: sectionPdfUrl(partUrl, url, window.location.origin), worker })) };
+    }
+    const task = sectionParts ? { promise: sectionPool.current!.pool.load(sectionParts), destroy: async () => {} } : getDocument({ url });
     liveDocument.current = null;
     drawnPage.current = undefined;
     positionedPage.current = undefined;
@@ -98,6 +113,7 @@ function PdfViewerView({ continuous = false, active = true, darkDisplay = false,
     try { recoveryPosition.current = parseReadingPosition(windowStateCache().read(recoveryKey)); } catch { recoveryPosition.current = undefined; }
     const carried = compiledPdfResume(lastReadingPosition.current, readingIdentity, url);
     if (carried) recoveryPosition.current = carried;
+    if (sectionParts && recoveryPosition.current) recoveryPosition.current = sectionReadingPosition(sectionParts, recoveryPosition.current);
     if (initialPage !== 1 || initialSearch || jumpTarget?.page || recoveryPosition.current?.revision !== url) recoveryPosition.current = undefined;
     const resumePage = recoveryPosition.current?.page;
     const firstPage = resumePage && (!selectedPages?.length || selectedPages.includes(resumePage)) ? resumePage : selectedPages?.[0] ?? initialPage;
@@ -105,7 +121,7 @@ function PdfViewerView({ continuous = false, active = true, darkDisplay = false,
     setPageNumber(firstPage);
     task.promise
       .then((nextDocument) => {
-        if (!cancelled) {
+        if (!cancelled && epoch === sectionEpoch.current) {
           const page = Math.min(nextDocument.numPages, Math.max(1, firstPage));
           if (page !== firstPage && recoveryPosition.current) recoveryPosition.current = { ...recoveryPosition.current, page };
           liveDocument.current = nextDocument; setDocument(nextDocument); setPageNumber(page);
@@ -124,7 +140,7 @@ function PdfViewerView({ continuous = false, active = true, darkDisplay = false,
       searchEpoch.current++;
       void task.destroy();
     };
-  }, [url, readingIdentity]);
+  }, [url, readingIdentity, loadRevision]);
 
   useEffect(() => {
     const pane = scrollRef.current; if (continuous || !pane || !active || !document) return;
@@ -167,10 +183,10 @@ function PdfViewerView({ continuous = false, active = true, darkDisplay = false,
     let cancelled = false;
     const scroll = scrollRef.current;
     const updateFit = async () => {
-      if (cancelled || liveDocument.current !== document) return;
+      if (cancelled || liveDocument.current !== document || !readingPaneVisible(scroll)) return;
       try {
         const page = await document.getPage(continuous ? selectedPages?.[0] ?? 1 : pageNumber);
-        if (cancelled || liveDocument.current !== document) return;
+        if (cancelled || liveDocument.current !== document || !readingPaneVisible(scroll)) return;
         const natural = page.getViewport({ scale: 1 });
         setFitScale(pdfFitScale(scroll.clientWidth, natural.width));
       } catch (reason: unknown) {
@@ -221,8 +237,9 @@ function PdfViewerView({ continuous = false, active = true, darkDisplay = false,
       const canvas = canvasRef.current;
       const context = canvas.getContext("2d");
       if (!context) return;
-      canvas.width = Math.floor(viewport.width * outputScale);
-      canvas.height = Math.floor(viewport.height * outputScale);
+      const raster = pdfRasterSize(viewport.width, viewport.height, outputScale);
+      canvas.width = raster.width;
+      canvas.height = raster.height;
       canvas.style.width = `${Math.floor(viewport.width)}px`;
       canvas.style.height = `${Math.floor(viewport.height)}px`;
       // Position immediately, not after painting: repeated pinch events can
@@ -250,7 +267,7 @@ function PdfViewerView({ continuous = false, active = true, darkDisplay = false,
         canvas,
         canvasContext: context,
         viewport,
-        transform: outputScale === 1 ? undefined : [outputScale, 0, 0, outputScale, 0, 0],
+        transform: raster.scale === 1 ? undefined : [raster.scale, 0, 0, raster.scale, 0, 0],
       });
       await renderTask.promise;
       if (cancelled || liveDocument.current !== document) return;
@@ -352,6 +369,7 @@ function PdfViewerView({ continuous = false, active = true, darkDisplay = false,
           <ChevronLeft size={15} />
         </button>
         <label className="pdf-page-input">Page <input aria-label="PDF page number" key={`${url}:${pageNumber}`} type="number" min={1} max={document.numPages} defaultValue={pageNumber} onBlur={(event) => { const page = Number(event.target.value) || 1; navigate(selectedPages?.length && !selectedPages.includes(page) ? selectedPages[0] : page); }} onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }} /> {selectedPages?.length ? `· ${selectedPages.length} selected` : `of ${document.numPages}`}</label>
+        {sectionParts && <small>{sectionParts[sectionPageOwner(sectionParts, pageNumber)]?.title} · page {pageNumber - (sectionParts[sectionPageOwner(sectionParts, pageNumber)]?.pageOffset ?? 0)} in section</small>}
         <button
           aria-label="Next page"
           disabled={selectedPages?.length ? selectedPages.indexOf(pageNumber) >= selectedPages.length - 1 : pageNumber >= document.numPages}
@@ -390,14 +408,25 @@ function PdfViewerView({ continuous = false, active = true, darkDisplay = false,
   return (
     <div className={`pdf-viewer${darkDisplay ? " dark-pdf-display" : ""}`}>
       {renderControls ? renderControls(controls) : controls}
-      {renderControls && <nav className="pdf-controls pdf-pagination" aria-label="PDF page navigation">
-        {pagination}
-        <small>{continuous ? "Scroll through all pages" : "One page at a time · use the arrows for more pages"}</small>
+      {renderControls && <nav className="pdf-pagination" aria-label="PDF page navigation">
+        <details className="pdf-page-picker" onBlur={event => {
+          if (!event.currentTarget.contains(event.relatedTarget as Node | null)) event.currentTarget.open = false;
+        }} onKeyDown={event => {
+          if (event.key !== "Escape") return;
+          event.preventDefault(); event.currentTarget.open = false;
+          event.currentTarget.querySelector("summary")?.focus();
+        }}>
+          <summary aria-label={`Page ${pageNumber} of ${document.numPages} · open page controls`}>
+            <span>{pageNumber} / {document.numPages}</span><ChevronDown size={12} aria-hidden="true" />
+          </summary>
+          <div className="pdf-page-picker-controls">{pagination}</div>
+        </details>
       </nav>}
       {notice && <p className="pdf-link-notice" role="status">{notice}</p>}
       {continuous ? <ContinuousPdfPages key={url} document={document} active={active} scale={scale} scrollRef={scrollRef} navigator={continuousNavigator}
         pages={selectedPages?.length ? selectedPages : Array.from({ length: document.numPages }, (_, i) => i + 1)} initialPage={pageNumber}
         resume={recoveryPosition.current} recoveryKey={recoveryKey} url={url} onPage={setPageNumber}
+        pageIdentity={sectionParts ? page => { const part = sectionParts[sectionPageOwner(sectionParts, page)]; return part ? { sectionId: part.nodeId, sectionPage: page - part.pageOffset } : {}; } : undefined}
         onPosition={position => { if (readingIdentity) lastReadingPosition.current = { identity: readingIdentity, position }; }}
         onDestination={destination => void followDestination(destination)} onSourcePosition={onSourcePosition} />
       : <div className="pdf-canvas-scroll" ref={scrollRef} tabIndex={0} aria-label="PDF preview · Ctrl/⌘ scroll to zoom">

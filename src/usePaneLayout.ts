@@ -1,5 +1,5 @@
-import { useEffect, useState, type RefObject } from "react";
-import { readingAnchorAdjustment } from "./editorGeometry";
+import { useEffect, useRef, useState, type RefObject } from "react";
+import { readingAnchorAdjustment, readingPaneVisible } from "./editorGeometry.ts";
 
 /** F11 changes the browser viewport without necessarily entering DOM fullscreen. */
 export function useViewportRevision() {
@@ -19,11 +19,25 @@ export function useViewportRevision() {
  * Keep native caret/selection intact and never treat a layout resize as work.
  */
 export function useReadingLayout(ref: RefObject<HTMLElement | null>) {
+  const binding = useRef<{pane: HTMLElement; close: () => void} | undefined>(undefined);
+  useEffect(() => () => { binding.current?.close(); binding.current = undefined; }, []);
   useEffect(() => {
+    // Typing rerenders this component. Keep the current pane's observer/anchor:
+    // scanning every paragraph and forcing layout on each key is unnecessary.
+    if (binding.current?.pane === ref.current) return;
+    binding.current?.close(); binding.current = undefined;
     const pane = ref.current; if (!pane) return;
+    binding.current = { pane, close: bindReadingLayout(pane) };
+  }); // Rebind conditional panes, not unchanged panes on every keystroke.
+}
+
+/** One binding per mounted pane; exported for layout lifecycle regressions. */
+export function bindReadingLayout(pane: HTMLElement) {
     let width = pane.clientWidth, height = pane.clientHeight, frame = 0, scrollFrame = 0;
+    let hidden = !readingPaneVisible(pane);
     let anchor: { element: HTMLElement; offset: number; scrolled: boolean } | undefined;
     const capture = () => {
+      if (!readingPaneVisible(pane)) return;
       const top = pane.getBoundingClientRect().top;
       const element = [...pane.querySelectorAll<HTMLElement>("[data-paragraph-id], [data-preview-paragraph], [data-notebook-entry]")]
         .find(item => item.getBoundingClientRect().bottom > top + 8 && item.getBoundingClientRect().top < top + pane.clientHeight);
@@ -34,7 +48,9 @@ export function useReadingLayout(ref: RefObject<HTMLElement | null>) {
       if (frame) return;
       frame = requestAnimationFrame(() => {
         frame = 0;
-        if (width === pane.clientWidth && height === pane.clientHeight) return;
+        if (!readingPaneVisible(pane)) { hidden = true; return; }
+        if (!hidden && width === pane.clientWidth && height === pane.clientHeight) return;
+        hidden = false;
         width = pane.clientWidth; height = pane.clientHeight;
         if (anchor?.scrolled && anchor.element.isConnected && pane.contains(anchor.element)) {
           const offset = anchor.element.getBoundingClientRect().top - pane.getBoundingClientRect().top;
@@ -44,11 +60,13 @@ export function useReadingLayout(ref: RefObject<HTMLElement | null>) {
       });
     };
     const scrolled = () => {
+      if (!readingPaneVisible(pane)) { hidden = true; return; }
       // A resize-induced scroll must not replace the pre-resize anchor.
-      if (width !== pane.clientWidth || height !== pane.clientHeight) changed();
+      if (hidden || width !== pane.clientWidth || height !== pane.clientHeight) changed();
       else if (!scrollFrame) scrollFrame = requestAnimationFrame(() => {
         scrollFrame = 0;
-        if (width !== pane.clientWidth || height !== pane.clientHeight) changed();
+        if (!readingPaneVisible(pane)) { hidden = true; return; }
+        if (hidden || width !== pane.clientWidth || height !== pane.clientHeight) changed();
         else capture();
       });
     };
@@ -57,5 +75,4 @@ export function useReadingLayout(ref: RefObject<HTMLElement | null>) {
     pane.addEventListener("scroll", scrolled, { passive: true });
     window.addEventListener("resize", changed); document.addEventListener("fullscreenchange", changed);
     return () => { cancelAnimationFrame(frame); cancelAnimationFrame(scrollFrame); observer.disconnect(); pane.removeEventListener("scroll", scrolled); window.removeEventListener("resize", changed); document.removeEventListener("fullscreenchange", changed); };
-  }); // Rebind to conditional views and refresh anchors after intentional navigation.
 }

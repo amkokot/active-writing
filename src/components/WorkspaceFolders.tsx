@@ -4,9 +4,12 @@ import { useDismissibleLayer } from "../useDismissibleLayer";
 import { workspaceNote, type WorkspaceFolders as Folders } from "../workspaceFolders";
 import { PortableAwDownload } from "./PortableAwDownload";
 import { DeviceSyncPreparation } from "./DeviceSyncPreparation";
+import {SyncAttentionNotice} from './SyncAttentionNotice';
 
 export function WorkspaceFolders({ projectId, onSaveDrafts }: { projectId?: string; onSaveDrafts?: () => Promise<void> }) {
   const [open, setOpen] = useState(false);
+  const [tools,setTools]=useState<{revision:string;sync:boolean}>(),[toolsBusy,setToolsBusy]=useState(false);
+  const [syncOpenRequest,setSyncOpenRequest]=useState(0),[syncNeedsAttention,setSyncNeedsAttention]=useState(false);
   const [folders, setFolders] = useState<Folders>();
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -15,6 +18,16 @@ export function WorkspaceFolders({ projectId, onSaveDrafts }: { projectId?: stri
   const id = useId();
   useDismissibleLayer(open, root, () => setOpen(false), "button");
   const current = folders && (folders.paper?.id ?? undefined) === projectId ? folders : undefined;
+  useEffect(()=>{
+    const controller=new AbortController();
+    void fetch('/api/paperfocus/optional-tools',{signal:controller.signal}).then(async response=>{if(response.ok)setTools(await response.json());}).catch(()=>{});
+    return()=>controller.abort();
+  },[open]);
+  async function toggleSync(sync:boolean){
+    if(!tools)return;setToolsBusy(true);setError('');
+    try{const response=await fetch('/api/paperfocus/optional-tools',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({revision:tools.revision,sync})});const value=await response.json();if(!response.ok)throw Error(value.error);setTools(value);setSyncNeedsAttention(false);}
+    catch(error){setError((error as Error).message);}finally{setToolsBusy(false);}
+  }
   useEffect(() => {
     if (!open) return;
     const controller = new AbortController();
@@ -53,7 +66,8 @@ export function WorkspaceFolders({ projectId, onSaveDrafts }: { projectId?: stri
     </section>;
   }
   return <div className="workspace-folders" ref={root}>
-    <button className="folder-access-trigger" type="button" aria-label="Workspace folders" title="Workspace paths · open folders or copy a chat workspace path" aria-expanded={open} aria-controls={id} onClick={() => setOpen(!open)}><House size={17} /></button>
+    <button className={`folder-access-trigger${syncNeedsAttention?' sync-needs-attention':''}`} type="button" aria-label="Workspace folders" title={syncNeedsAttention?'Sync needs attention · open workspace folders':'Workspace paths · open folders or copy a chat workspace path'} aria-expanded={open} aria-controls={id} onClick={() => setOpen(!open)}><House size={17} /></button>
+    {tools?.sync&&<SyncAttentionNotice projectId={projectId} onAttention={setSyncNeedsAttention} onReview={()=>{setOpen(true);setSyncOpenRequest(value=>value+1);}}/>}
     {open && <div id={id} className="workspace-folders-panel" aria-label="Workspace folders">
       <header><strong>Workspace folders</strong><small>Choose this folder in your other app.</small></header>
       {current ? <>{current.paper && folder("Paper repository", current.paper, "paper")}{current.data && folder("Aw files · this paper", current.data, "data")}{folder("Aw home", current.home, "home")}
@@ -63,7 +77,11 @@ export function WorkspaceFolders({ projectId, onSaveDrafts }: { projectId?: stri
       {notice && <p role="status" className="workspace-folder-notice">{notice}</p>}
       {error && <p role="alert" className="workspace-folder-error">{error}</p>}
       <PortableAwDownload />
-      <DeviceSyncPreparation projectId={projectId} onSaveDrafts={onSaveDrafts} />
+      <details className="optional-tool-settings"><summary>Optional tools</summary>
+        <label><input type="checkbox" aria-label="Two-computer tools" checked={tools?.sync??false} disabled={!tools||toolsBusy} onChange={event=>void toggleSync(event.target.checked)}/> Two-computer tools</label>
+        <small>Off in new workspaces. Showing tools does not pair machines or install background jobs. Hiding them keeps existing jobs and saved work intact.</small>
+      </details>
+      {tools?.sync&&<DeviceSyncPreparation projectId={projectId} onSaveDrafts={onSaveDrafts} openRequest={syncOpenRequest}/>}
     </div>}
   </div>;
 }

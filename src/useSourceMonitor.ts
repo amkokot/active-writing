@@ -4,7 +4,7 @@ import { subscribeWindowMessages } from "./windowMessages";
 import { manuscriptPurpose } from "./manuscripts";
 
 export function useSourceMonitor(document?: ProjectDocument) {
-  const [status, setStatus] = useState<{ projectId: string; revision?: string; rootFile?: string; engine?: string; purpose?: string; overviewTarget?: string; error?: string }>();
+  const [status, setStatus] = useState<{ projectId: string; revision?: string; rootFile?: string; engine?: string; purpose?: string; overviewTarget?: string; pins?: string; error?: string }>();
   useEffect(() => {
     setStatus(undefined);
     if (!document) return;
@@ -22,8 +22,8 @@ export function useSourceMonitor(document?: ProjectDocument) {
         if (!response.ok) throw new Error(result.error || "Source checking is temporarily unavailable.");
         if (!cancelled && result.projectId === projectId) {
           failures = 0;
-          setStatus((previous) => previous?.projectId === projectId && previous.revision === result.revision && previous.rootFile === result.rootFile && previous.engine === result.engine && previous.purpose === result.purpose && previous.overviewTarget === result.overviewTarget && !previous.error
-            ? previous : { projectId, revision: result.revision, rootFile: result.rootFile, engine: result.engine, purpose: result.purpose, overviewTarget: result.overviewTarget });
+          setStatus((previous) => previous?.projectId === projectId && previous.revision === result.revision && previous.rootFile === result.rootFile && previous.engine === result.engine && previous.purpose === result.purpose && previous.overviewTarget === result.overviewTarget && previous.pins === result.pins && !previous.error
+            ? previous : { projectId, revision: result.revision, rootFile: result.rootFile, engine: result.engine, purpose: result.purpose, overviewTarget: result.overviewTarget, pins: result.pins });
         }
       } catch (error) {
         if (!cancelled && ++failures >= 2) {
@@ -39,5 +39,5 @@ export function useSourceMonitor(document?: ProjectDocument) {
     void poll();
     return () => { cancelled = true; controller.abort(); clearTimeout(timer); unsubscribe(); window.removeEventListener("focus", onFocus); window.document.removeEventListener("visibilitychange", onVisible); };
   }, [document?.project.id, document?.project.mainFile, document?.project.engine, document?.revision, document && manuscriptPurpose(document.project), document?.project.manuscriptOverviewTargets?.[document.project.mainFile]]);
-  return { changed: Boolean(document && status?.projectId === document.project.id && status.revision && (status.revision !== document.revision || status.rootFile !== document.project.mainFile || status.engine !== document.project.engine || status.purpose !== undefined && status.purpose !== manuscriptPurpose(document.project) || status.overviewTarget !== undefined && status.overviewTarget !== (document.project.manuscriptOverviewTargets?.[document.project.mainFile] ?? ""))), revision: status?.projectId === document?.project.id ? status?.revision : undefined, error: status?.projectId === document?.project.id ? status?.error : undefined };
+  return { changed: Boolean(document && status?.projectId === document.project.id && status.revision && (status.revision !== document.revision || status.rootFile !== document.project.mainFile || status.engine !== document.project.engine || status.purpose !== undefined && status.purpose !== manuscriptPurpose(document.project) || status.overviewTarget !== undefined && status.overviewTarget !== (document.project.manuscriptOverviewTargets?.[document.project.mainFile] ?? "") || status.pins !== undefined && status.pins !== JSON.stringify(document.project.manuscriptPins ?? {}))), revision: status?.projectId === document?.project.id ? status?.revision : undefined, error: status?.projectId === document?.project.id ? status?.error : undefined };
 }

@@ -8,6 +8,20 @@ import { workspaceNote } from "../src/workspaceFolders.ts";
 import { registerProject } from "./projects.ts";
 import { latexPlugin } from "./latexPlugin.ts";
 import { appCodeRoot } from "./appPaths.ts";
+import {readOptionalTools,saveOptionalTools} from './optionalTools.ts';
+
+test('optional sync tools are off in new workspaces, preserve existing pairs, and fence settings',async()=>{
+ const f=await fixture();
+ assert.deepEqual(await readOptionalTools(f.workspace),{revision:'',sync:false});
+ const dir=path.join(f.workspace,'.paperfocus/device-sync/auto/example');await mkdir(dir,{recursive:true});
+ const config=path.join(dir,'config.json');await writeFile(config,JSON.stringify({enabled:true}));
+ assert.deepEqual(await readOptionalTools(f.workspace),{revision:'',sync:true});
+ const off=await saveOptionalTools(f.workspace,'',false);assert.equal(off.sync,false);
+ assert.deepEqual(JSON.parse(await readFile(config,'utf8')),{enabled:true},'Hiding controls must not stop or alter a pair');
+ await assert.rejects(saveOptionalTools(f.workspace,'',true),/changed/);
+ await assert.rejects(saveOptionalTools(f.workspace,off.revision,'yes' as unknown as boolean),/whether/);
+ assert.equal((await saveOptionalTools(f.workspace,off.revision,true)).sync,true);
+});
 
 async function fixture() {
   const base = path.resolve(".paperfocus/trials");

@@ -148,6 +148,7 @@ export async function parseProject(workspace: string, id?: string, editing = fal
     let expanded = ""; let cursor = 0;
     for (const match of maskComments(source).matchAll(/\\input\s*\{([^}]+)\}/g)) {
       expanded += source.slice(cursor, match.index);
+      if(project.researchCorpus&&match[1].includes('#')){expanded+=source.slice(match.index,match.index!+match[0].length);cursor=match.index!+match[0].length;continue;}
       const relative = resolveInput(file, match[1]);
       if (!files.includes(relative) || !inside(root, path.resolve(root, relative))) throw new Error(`The preamble input ${relative} is outside the project or missing.`);
       if (!preambleVisits.has(relative)) {
@@ -160,6 +161,8 @@ export async function parseProject(workspace: string, id?: string, editing = fal
     return expanded + source.slice(cursor);
   };
   const expandedPreamble = await expandPreamble(main.slice(0, begin), project.mainFile);
+  const hiddenCorpusProjects=new Set<string>();
+  if(project.researchCorpus)for(const m of maskComments(expandedPreamble).matchAll(/\\(hideproject|showproject)\{([a-z0-9-]+)\}/g)){if(m[1]==='hideproject')hiddenCorpusProjects.add(m[2]);else hiddenCorpusProjects.delete(m[2]);}
   const includeOnlyMatch = maskComments(expandedPreamble).match(/\\includeonly\s*\{([^}]+)\}/);
   const includeOnly = includeOnlyMatch ? new Set(includeOnlyMatch[1].split(",").map((file) => file.trim().replace(/\.tex$/, ""))) : undefined;
   const environments = new Map<string, { title: string; counter?: string; within?: string }>();
@@ -192,6 +195,7 @@ export async function parseProject(workspace: string, id?: string, editing = fal
   const labels: DocumentLabel[] = [];
   const nodeBodies: Record<string, string> = {};
   const nodePrefixes: Record<string, string> = {};
+  const nodeHeadings: Record<string, string> = {};
   const counts: Record<string, number> = {};
   const counterValues: Record<string, number> = {};
   const sectionCounters: Record<string, number> = Object.fromEntries(sectionCommands.map(command => [command, 0]));
@@ -209,8 +213,13 @@ export async function parseProject(workspace: string, id?: string, editing = fal
     const addLabels = (paragraphId?: string) => labelMatches.forEach((match) => labels.push({ key: match.key, nodeId: activeId, paragraphId, file, line: source.slice(0, match.offset).split(/\r?\n/).length }));
     while (start < end && /\s/.test(source[start])) start++;
     while (end > start && /\s/.test(source[end - 1])) end--;
+    if(project.researchCorpus && file===project.mainFile && /^\\(?:begin|end)\{researchlist\}$/.test(source.slice(start,end)))return;
     const marker = source.slice(start, end).match(/(?:^|\r?\n)%\s*paperfocus:paragraph=([^\s]+)[^\r\n]*\r?\n/);
-    if (marker) {
+    // An environment can be one editable block containing several stable
+    // markers. Retain its existing first-marker identity, but never move real
+    // text before that marker into an invisible/hoisted node prefix.
+    const beforeMarker = marker ? source.slice(start, start + (marker.index ?? 0)) : "";
+    if (marker && /^(?:\s|%[^\r\n]*(?:\r?\n|$)|\\label\s*\{[^}]*\})*$/.test(beforeMarker)) {
       nodePrefixes[activeId] = (nodePrefixes[activeId] ?? "") + source.slice(start, start + (marker.index ?? 0)) + "\n";
       start += (marker.index ?? 0) + marker[0].length;
     }
@@ -237,7 +246,7 @@ export async function parseProject(workspace: string, id?: string, editing = fal
     const masked = maskComments(source);
     const opaque = sourceBoundaries(source.slice(start, end ?? source.length)).opaque.map(range => ({ start: start + range.start, end: start + range.end }));
     const limit = end ?? source.length;
-    const tokens = new RegExp(`\\\\(${sectionCommands.join("|")})(\\*)?\\s*(?:\\[[^\\]]*\\]\\s*)?\\{|\\\\(input|include)\\s*\\{|\\\\(begin|end)\\s*\\{(${environmentPattern})\\}`, "g");
+    const tokens = new RegExp(`\\\\(${sectionCommands.join("|")})(\\*)?\\s*(?:\\[[^\\]]*\\]\\s*)?\\{|\\\\(input|include${project.researchCorpus?'|researchproject':''})\\s*\\{|\\\\(begin|end)\\s*\\{(${environmentPattern})\\}`, "g");
     tokens.lastIndex = start;
     let cursor = start;
     let expanded = "";
@@ -258,6 +267,8 @@ export async function parseProject(workspace: string, id?: string, editing = fal
         // title swallows the remainder of the paper. Structure it when closed.
         if (!title.closed || title.end > limit) { incompleteSnippets.push({ file, start: match.index, message: "This heading is unfinished." }); cursor = match.index; continue; }
         tokenEnd = title.end;
+        // Research-list paragraph headings belong to their text, not separate sections.
+        if(project.researchCorpus && match[1]==='paragraph'){cursor=match.index;tokens.lastIndex=tokenEnd;continue;}
         const depth = sectionCommands.indexOf(match[1] as typeof sectionCommands[number]);
         if (!match[2]) {
           sectionCounters[match[1]]++;
@@ -270,13 +281,16 @@ export async function parseProject(workspace: string, id?: string, editing = fal
         nodes.push({ id: nodeId, title: title.text, kind: depth ? "subsection" : "section", depth,
           parentId: sectionStack.at(-1)?.id, paragraphIds: [], sectionCounters: { ...sectionCounters }, sourceInsertion: { file, offset: tokenEnd + (source.slice(tokenEnd).match(/^\r?\n/)?.[0].length ?? 0) } });
         nodes.at(-1)!.sourceOpening={file,start:match.index,end:tokenEnd,text:source.slice(match.index,tokenEnd)};
+        nodeHeadings[nodeId] = source.slice(match.index, tokenEnd);
         sectionStack.push({ id: nodeId, depth }); activeId = nodeId; lastStatementId = undefined;
       } else if (match[3]) {
         const input = braced(source, tokenEnd - 1);
         if (!input.closed || input.end > limit) { incompleteSnippets.push({ file, start: match.index, message: "This input command is unfinished." }); cursor = match.index; continue; }
         tokenEnd = input.end;
         if (match[3] === "include" && includeOnly && !includeOnly.has(input.text.replace(/\.tex$/, ""))) { cursor = tokenEnd; tokens.lastIndex = tokenEnd; continue; }
-        const relative = resolveInput(file, input.text);
+        if(match[3]==='researchproject' && !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(input.text))throw Error('Use a literal research-project key.');
+        if(match[3]==='researchproject' && hiddenCorpusProjects.has(input.text)){cursor=tokenEnd;tokens.lastIndex=tokenEnd;continue;}
+        const relative = resolveInput(file, match[3]==='researchproject'?`projects/${input.text}.tex`:input.text);
         if (editing && (!files.includes(relative) || !inside(root, path.resolve(root, relative)))) {
           // Keep only the unavailable snippet as source; surrounding blocks are
           // still parseable. Never follow a missing or out-of-project path.
@@ -359,7 +373,7 @@ export async function parseProject(workspace: string, id?: string, editing = fal
     let text = (nodePrefixes[node.id] ? `${nodePrefixes[node.id]}\n` : "") + node.paragraphIds.map((id) => paragraphs.find((p) => p.id === id)!.text).join("\n\n");
     if (node.environment) {
       text = `\\begin{${node.environment}}${node.environmentTitle ? `[${node.environmentTitle}]` : ""}\n${text}\n\\end{${node.environment}}`;
-    } else if (node.id !== "document") text = `\\${sectionCommands[node.depth] ?? "section"}*{${node.title}}\n${text}`;
+    } else if (node.id !== "document") text = `${nodeHeadings[node.id]}\n${text}`;
     nodeBodies[node.id] = text;
   }
   const rootFiles = await discoverManuscriptRoots(root, files, sources);

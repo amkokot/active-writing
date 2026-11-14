@@ -1,15 +1,170 @@
 # Two-computer workflow
 
+## Slow VPN and travel connections
+
+SSH handshakes allow up to 30 seconds (bounded by the overall exchange budget),
+and the campus/VPN gateway probe allows five seconds. Earlier eight-second SSH
+and 1.2-second probe limits caused all projects to report unavailable on a working
+in-flight VPN connection. Eligibility still requires campus Wi-Fi or the VPN;
+these limits do not open an alternate route or bypass authentication.
+Reading sync now honors the project's configured `timeoutSeconds` (10–120),
+as full-history sync already did. Previously it silently used 30 seconds.
+The native scheduling, network backoff, byte/revision and conflict guards remain.
+Long-lived followers need a guarded refresh to load a changed transport module;
+new scheduled checks use it immediately. Do not reset project history or restart
+desktop research to repair a slow laptop link.
+
+## Scheduling recovery after laptop restart
+
+The automatic scheduler's global slots (`auto/coordinator`,
+`auto/reading-coordinator`) and per-project `auto/ID/cycle` have a native
+process-lifetime lease: a private named mutex on Windows and `flock` on Linux.
+This is distinct from manuscript/notebook/store locks. A crashed owner releases
+the kernel lease. Under that exclusive lease only, a well-formed scheduling
+marker with a confirmed missing process can be archived byte-for-byte before
+trying the scheduling slot again. On Windows, a reused PID can also be recovered
+when a bounded OS start-time query proves the current process started more than
+one second after the marker was written. This check runs only under the exclusive
+kernel scheduling lease. Live original owners, unknown/access-denied start times,
+invalid markers and changed bytes remain held. Earlier blanket manual-recovery
+instructions still apply to every other record/data lock; they are superseded
+only for these exact scheduling paths. Recovery does not resume a partial merge,
+choose a source version, acknowledge history, close a comment or bypass the
+existing pending-operation, per-record and byte/revision checks.
+
+This addresses an observed laptop reboot that left an overnight fast coordinator
+marker and two per-project scheduling markers behind. Merely restarting a follower
+could not clear them; all fast projects waited indefinitely on the shared marker.
+The recovered original markers remain in the private auto folder. Status now also
+reports the fast reading coordinator. Busy live followers wait two seconds rather
+than probing the scheduling locks twice per second. No editor/research restart
+or public listener is part of normal scheduling recovery.
+
+The reading-text path preserves form-feed whitespace exactly, rather than
+silently classifying the entire TeX file as busy. Invalid UTF-8, NUL and other
+unsupported control bytes still fail validation. This changes no manuscript
+bytes. Two-machine installs need the same validator acceptance on both ends;
+apply a scoped checked code patch, not a copy of research/state or a forced merge.
+## Windows SSH lifetime
+
+Fast figure inventories are selected-document dependency subsets, not complete
+directory listings. A previously synchronized figure absent from one fast subset
+is deferred to the ordinary reading pass, never classified as a deletion or
+binary conflict merely because the two devices have different documents open.
+Full reading inventories and genuine two-sided figure changes retain their
+existing conflict guards. No source, baseline or review decision is overwritten
+to clear this notice.
+
+Aw's reading, full-history and bulk SSH transports contain each connection in a
+private Windows Job Object. The installed `scripts/OwnedProcessHost.cs` is compiled
+once per worker using Windows' bundled .NET compiler, without downloading a runtime
+or requiring administrator rights. It assigns SSH before allowing it to run.
+Normal exit, timeout, cancellation and loss of the owning Aw worker close the
+whole local connection tree, including ProxyJump helpers. Other SSH/Codex
+connections and remote research jobs are outside that job. If containment cannot
+start, sync waits with an error; it does not silently launch an uncontained SSH.
+The university route gate, pinned identity, save/merge guards and reconnect backoff
+remain in force. This is a connection-lifetime boundary, not a research sandbox.
+Live loops read only their bounded configuration between cycles. A reading
+inventory shares one policy observation across its files instead of repeatedly
+loading the same workbench; packet fetches and imports still check current policy
+and exact bytes. The file-event path and five-second fallback remain unchanged.
+The pooled followers queue fast passes in memory before acquiring cross-process
+leases; idle projects do not repeatedly race for the same filesystem lock.
+
+Typing remains local. A source save waits for a pause; sync follows saved files,
+not individual key events. Browser recovery is immediate and self-contained,
+packing immutable state fields separately so an edit does not recompress unchanged
+notebook/comment history. Readers retain support for earlier raw and LZW copies.
+
+## Bring a desktop idea to the laptop when it is ready to read
+
+Do not pair every scratch idea or research phase. Keep exploration on the desktop
+until the user asks to read/audit a substantial note. Then prepare one frozen,
+complete inline reading baseline with no missing parents or pending requests and
+a `link-plan.json` describing its SHA-256, byte count, snapshot/project/device IDs,
+desktop home, installed tool, selected root, expected cells and pins. Use the
+existing desktop handoff format; explicitly set `rawArraysIncluded: false`.
+Keep raw arrays and historical execution archives out of that reading packet.
+Preparing a packet does not upload it or enable laptop sync.
+
+The laptop agent fetches only those two files through the already approved SSH
+alias and campus/VPN gate, then batches setup with:
+
+```text
+node scripts/awLinkReading.mjs --workspace CONTROL_HOME --packet BASELINE.json --link-plan LINK-PLAN.json --destination NEW_HOME --host APPROVED_ALIAS
+```
+
+Inspect its identities/coverage, then repeat with `--review HASH --commit`. This
+uses the existing guarded clone, peer, network gate, desktop-first policy, both
+installed journals, reading/comment coordinator, windowless Windows worker and
+project desktop shortcut.
+No human walkthrough of each subcommand is needed. The control home is the
+existing laptop Aw installation with its installed journal configuration; the
+destination is a NEW independent child data home under that control workspace.
+The completed copy is automatically listed in Aw's usual folder/project chooser;
+opening that entry starts/reuses its separate local reading view. It never imports over an occupied
+home, substitutes device IDs, runs notebook code or claims full-history agreement.
+Interrupted steps retain their receipts; inspect and retry the same inputs,
+never clear files/locks to force a retry. A deliberately paused or changed peer
+stays paused rather than being silently re-enabled. The first setup still needs
+the desktop reachable and the one-time journal installations present.
+
+Use `node scripts/readingWorkspaceLauncher.mjs --workspace NEW_HOME` to open the
+reading copy. It starts/reuses its separate loopback view without replacing the
+main Aw service. Windows setup installs a windowless one-click shortcut;
+`scripts/installReadingShortcut.ps1 -WorkspacePath NEW_HOME -Name NAME` can also
+install one explicitly. Retain that home for
+later versions: routine saved source, comments/replies, existing notebooks and
+figures flow through reading sync; do not make another first copy for each audit.
+New notebook owners, policy/version decisions and new archive evidence still
+need their existing guarded collection workflow.
+
+Reading views use the same project chooser as the main app: a completed clone
+finds the ancestor catalogue that explicitly registers its exact home and project.
+It can then open sibling reading copies and ordinary projects from that chooser.
+No project records, comments or active manuscript selection are copied to build
+the menu. Standalone/unregistered homes do not inherit a catalogue merely because
+they are nearby. Listing never starts a service; an explicit project click starts
+or reuses the matching local view after the current draft-navigation guard.
+
 Status: **offline-first research reconciliation, private incremental exchanges
 and optional reviewed SSH synchronization**, October 2026. Each machine keeps its
 own data home and works without a connection. Ordinary research-source, conversation
 and experiment changes can collect through guarded, recoverable batches. Publication
 wording, locks, review/policy/task decisions, deletions and ambiguous code/output
-changes retain their own workflows. This is not a distributed database, automatic
-background sync, remote Python worker or backup restore. No real second host has
-been configured or tested yet; the SSH contract has been exercised with local doubles.
+changes retain their own workflows. This is not a distributed database, remote
+Python worker or backup restore. As of 21 October, first-copy import and a bounded
+SSH exchange have also been exercised on a real Linux desktop. The opt-in CLI
+coordinator below adds saved-work automatic synchronization; the app's ordinary
+Two computers button remains an explicitly reviewed operation.
 
 ## What works now
+
+Recovery note: a completed newer same-peer join may explicitly supersede an old
+interrupted pair using `supersedePairedSync`. The replacement receipt must be
+verified complete and its checked ancestry must contain both old branches. The
+original plan, journals and incomplete status remain intact; this is not a forged
+completion, deleted lock, rollback or automatic conflict decision. Only then may
+the automatic reading coordinator stop treating that old pair as pending.
+
+Full-capture performance: compiled-PDF retention skips historical-manifest
+enumeration when no compiled PDF exists. Merge fencing no longer repeats a full
+capture for an absent hook or an empty owner-lease step; real hook/lease changes,
+native write guards and final verification retain their checks. Full history
+reconciliation is still a deeper operation than reading sync. The persistent
+local change journal below avoids repeated discovery scans while its checked
+index and continuous watcher are healthy. Final acceptance still verifies live
+files, rather than trusting a cache as merge authority. Routine TeX/comments use
+the separate live reading lane.
+
+Saved comments now have a guarded comment-only merge inside the existing pair:
+new threads/replies, independent body edits and explicit updated-UI human
+Resolve/Reopen markers can collect. No status is inferred from source changes or
+assistant replies. Competing edits, identity/anchor changes, deletions, legacy
+unmarked resolutions, other review/request records and wording approvals remain
+held. New saved comments can prompt the next connected scheduled check, without
+waiting for the longer source interval. See [REMOTE_REVIEW.md](REMOTE_REVIEW.md).
 
 - Each Aw installation can have a distinct saved device ID and a human name.
   **Workspace folders → Two computers** is collapsed until opened. Reading its
@@ -65,7 +220,144 @@ been configured or tested yet; the SSH contract has been exercised with local do
 - Interrupted two-copy operations can be reopened after refresh in **Two computers
   → Interrupted syncs**, or inspected/resumed with their exact offline tool IDs.
 
-## Offline commands
+## Paired working copies, including large evidence
+
+### Local-light storage and network gating
+
+For a configured desktop pair, `awStore.ts` keeps bulk data there while preserving
+the laptop's complete readable/editable notes. `offload` previews only eligible
+archives, arrays and model checkpoints regardless of individual size, plus raw
+research `*.results.json` files of at least 1 MB. Thousands of small arrays/weights
+are still bulk evidence, not required reading. It never
+offloads TeX/BibTeX, Markdown explanations, notebooks, run records, figures/PDFs,
+reviews or policy. Current enrollment requires a streaming-sync project. A preview
+does not remove files; exact-plan commit verifies their immutable desktop copies
+through the pinned SSH identity, checks current local bytes, then saves local-only
+availability references before evicting anything. Shared/legacy inline cache
+dependencies are retained. New eligible desktop evidence can stay remote during
+a guarded sync instead of being downloaded automatically. Notebook IDs, source
+bytes and agreement semantics do not depend on physical residency.
+
+The automatic desktop-first policy uses file roles: `.npy`, `.npz`, `.pt`, `.pth`,
+`.ckpt`, `.pkl`, `.parquet`, `.h5`, `.hdf5`, `.zip`, `.tar` and `.gz` stay backed by
+verified desktop copies. Text, source, comments, notebooks, compact JSON summaries,
+CSV tables, code/protocols and figures remain eligible for local transfer. Transfer
+does not execute a protocol or accept a protected merge. Unknown formats remain
+local rather than being silently hidden. Explicit Fetch/local pins take priority;
+the policy does not evict existing files automatically or replace conflicting local
+edits. Desktop verification uses bounded batches with exact path/hash/size checks,
+not a raised transfer cap. Both paired tool installations need this policy update.
+
+```text
+node scripts/awStore.ts status --workspace LAPTOP_HOME --project ID
+node scripts/awStore.ts enroll --workspace HOME --project ID
+node scripts/awStore.ts offload --workspace LAPTOP_HOME --project ID --peer PEER_HASH
+node scripts/awStore.ts offload --workspace LAPTOP_HOME --project ID --plan RETURNED_HASH --commit
+node scripts/awStore.ts fetch --workspace LAPTOP_HOME --project ID --path data/research/EXACT_FILE.npz
+node scripts/awStore.ts network --workspace LAPTOP_HOME --check
+```
+
+For an existing paired project, `enroll` on each confirmed home enables streaming
+checkpoints without recopying the project, resetting ancestry or rewriting source.
+Install compatible tools on both hosts and pin their exact paths deliberately.
+The next guarded sync handles the representation change; it grants no new wording,
+review, execution or conflict-resolution authority. Existing inline history bytes
+remain until a dedicated safe archival workflow can remove their local dependency.
+
+Fetch restores verified bytes to their original path and keeps them local. A
+different existing file is never replaced. **Workspace folders → Two computers →
+Files on desktop** lists these files, has a search/Fetch action, and copies the
+remote project folder for starting a remote chat. Reading the list does not connect.
+Cold references are not local backups: retain the desktop's immutable store and
+normal backups. A full new clone/exact export needs actual bytes; fetch missing
+artifacts first instead of pretending a thin copy contains them. Do not copy cold
+metadata by hand, reset history or delete cache folders to free disk space.
+
+An interrupted eviction can retain a quarantine file and its exact source-path
+record under `cold/quarantine/`. `awStore status` reports these recovery files.
+Inspect before retrying; do not discard them, roll back through later edits or
+claim the entire offload completed. A failed proof or changed source is preserved.
+
+`awStore network --file POLICY.json` saves an explicit local-only gate. Its schema
+is `{version:1,profiles:["APPROVED_WIFI"],vpnDescriptions:["APPROVED_ADAPTER"],host:
+"DESKTOP_HOST",port:22}`. It uses active interfaces with assigned IPv4 addresses,
+approved connection/adapter names and a bounded TCP check of the chosen SSH entry
+point (the gateway for a jump-host connection, not a blocked direct desktop port).
+This does not certify SSH authentication or the downstream desktop's health. Unsupported
+or unreadable OS status waits safely; status checks do not enable networking. The
+Windows observation is briefly cached and invalidated on interface changes so
+fifteen project workers do not each launch repeated network queries. No retries,
+SSH, project hashing or failure/backoff counter changes happen off-network. Ordinary
+manual sync/fetch also respects the gate. This is a resource/access preference,
+not a replacement for trusted SSH keys or university access policy.
+
+`awPair.ts` is the short setup path for an existing registered project. It creates
+a complete independent desktop Aw home: source, selected manuscript, purpose,
+overview links, notebook conversations, experiments and saved evidence. It keeps
+the laptop copy. For a new project, use `new --name NAME` instead of `prepare
+--project ID`; it creates ordinary research notes before preparing the pair.
+
+```text
+node scripts/awPair.ts prepare --workspace LAPTOP_HOME --project ID --host SSH_ALIAS --remote-code /INSTALLED/AW_CODE --remote-parent /RESEARCH/PROJECTS --auto yes
+node scripts/awPair.ts commit --workspace LAPTOP_HOME --project ID --plan RETURNED_HASH --saved-drafts yes
+node scripts/awPair.ts status --workspace LAPTOP_HOME --project ID --plan RETURNED_HASH
+```
+
+Install the current app code/Node separately on the selected trusted host first.
+Preparation stages local saved work and checks that host; it does not replace a
+desktop folder. Commit binds the exact project, packet, paths and automatic-sync
+choice. Save browser drafts first. Pending requests, missing history, changed
+copies, linked paths and occupied destinations stop it rather than being forced.
+Repeat the same interrupted plan: complete content hashes are reused; partial
+files/journals remain for inspection. A crashed lock needs explicit recovery.
+It never executes experiments, resumes chats or installs dependencies. `--auto yes`
+enables the existing guarded saved-work coordinator and its windowless Windows task;
+on other coordinating systems, use the documented watch command/scheduler.
+
+The receipt returns the exact desktop workspace, laptop viewing query and optional
+desktop launcher command. Continue viewing/editing the same project in the laptop
+Aw app, offline if needed; saved desktop results appear there after synchronization.
+The desktop needs no editor server for agent/notebook work. The browser's **Two
+computers → Set up a desktop copy → Copy setup instructions** gives a folder-aware
+assistant the correct scope and tool. It does not launch an agent or connect by itself.
+
+Version 2 stores bulk files as SHA-256 references, not base64 inside snapshots.
+Files stream over verified SSH with 256 KB buffers; no whole-project ZIP, public
+listener or paid service is involved. The first copy has an explicit 128 GB budget;
+later automatic exchanges allow at most 1 GB of missing bulk content per direction.
+Limits are 50,000 files, 8 GB/file and 128 GB/project, with the old bounded inline
+budgets retained for catalogue/review/policy stores and editable text. Unchanged
+notebooks are references with verified schema/canonical hashes; only changed ones
+are loaded for cell-level merging. A valid legacy pretty-printed notebook may be
+read up to 24 MB without rewriting it; new saves use compact JSON when necessary
+to remain within the existing logical notebook and 5 MB saved-file budgets.
+Oversized logical notebooks or
+ambiguous/protected changes still require their own workflow, not a higher RAM limit.
+
+Only missing content hashes cross the network. An edited binary transfers as a file,
+not a binary delta; completed files are reused after interruption, but an incomplete
+file restarts. A saved fingerprint cache avoids repeatedly reading unchanged bulk
+files; inode/size/mtime/ctime changes invalidate it. Incoming bytes and live file
+replacements are hash-checked; changed destinations preserve both variants. Source
+and notebook saves retain revision/wording/ownership/provenance guards. Run history
+is immutable, and notebook collection loads only changed run evidence, not its entire
+archive. No synchronization executes or extracts ZIPs, NumPy arrays or notebook code.
+
+Keep one coordinating worker per project. Automatic workers also share one
+laptop-wide slot, so several projects cannot start heavy checks together. A busy
+worker defers; it never stops another project or steals its lock. Windowless Windows
+tasks start while signed in, connected and on AC power; a started guarded operation
+can finish if power is unplugged. Routine checks scan metadata; they do not
+re-upload evidence. Research source edits, schema-safe notebook edits and safe data
+assets can collect when both proposals agree. Deletes, competing edits, executable
+code/configuration, publication words, reviews, policies and task decisions stay held.
+Read-only cached blobs are internal evidence, not user-editable source files or a
+backup. Do not delete caches/ancestors to silence a warning. Full detached review
+copies and standalone `.aw-sync` downloads do not bundle external blobs; use the SSH
+pair or exact `file --output NEW_FILE` for those bytes. Legacy version-1 projects
+keep their existing protocol until explicitly enrolled on both copies.
+
+### Legacy commands
 
 Use the confirmed Aw home and registry project ID, not the selected browser tab.
 
@@ -124,8 +416,16 @@ node scripts/awSync.ts merge --workspace AW_HOME --project ID --plan PLAN_HASH -
 node scripts/awSync.ts merge-status --workspace AW_HOME --project ID --merge RETURNED_MERGE_HASH
 ```
 
-Ordinary UTF-8 `.tex`, `.bib`, `.md`, `.txt`, and supported figure files may transfer;
-code/configuration files are held. Separate literal line edits combine mechanically.
+Ordinary UTF-8 `.tex`, `.bib`, `.md`, `.txt`, and supported figure files may transfer.
+One-sided research protocols, summaries and logs under `data/research/` transfer as
+exact inert text; they are never executed, loaded as Aw state or treated as requests.
+Competing code/configuration edits, paper-repository code and protected Aw records
+stay held. Separate literal prose line edits combine mechanically.
+Generated research PDF extracts/logs retain their exact UTF-8 control glyphs;
+this exception does not relax manuscript-source or binary/NUL checks. Private
+helper requests/caches may be retained as opaque desktop-backed archives only
+after exact path/hash and catalogue ownership checks. They never become incoming
+model requests, accepted answers, completed tasks or executable notebook cells.
 Existing conversation title/question/notes/reply/proposal, compact context and filing/
 pin/order fields can merge; ownership, anchors, pending/completed requests, integrated
 status, applied-change history and unknown metadata are not silently replaced.
@@ -134,7 +434,7 @@ Independent new entries use the checked plan's deterministic order; competing
 reorders remain held. Existing cell deletion/type changes and filed/trash resurrection,
 ambiguous outputs and unmatched run provenance stay held. New cards/evidence are units.
 
-The batch caps are 300 changed files/48 MB, eight new conversations, sixteen changed
+Ordinary batches cap at 300 changed files/48 MB inline data, eight new conversations, sixteen changed
 owners, with the original notebook/run and snapshot limits still enforced. The
 original project is captured once for the journal; individual writes use exact-byte
 fences/native stores, and full state is checked before/after the batch and before
@@ -143,6 +443,29 @@ files accept only that journal's exact before/after bytes. No removals, task com
 comment resolution, purpose changes, code execution or wording approval occur.
 All publication-source changes are conservatively held, even one-sided changes;
 use their writing workflow. Known or uncertain wording locks also hold source.
+
+A desktop-first bulk batch distinguishes verified nonresident references from files
+actually copied: at most 20,000 changes, 5,000 resident files, 256 MiB resident data
+and the same 48 MiB inline cap. Reference ownership is checked per path/hash; short
+destination leases and one guarded index save avoid thousands of index rewrites.
+Metadata journals/receipts remain bounded to 8 MiB. This does not raise the 1 GiB
+SSH transfer budget, import unverified references or join a partly held history.
+Small verified proof batches retain valid progress after a disconnect; bad or
+unverified batches do not become availability claims. Local pins always win.
+Review collection derives its native save counter from the immutable local
+before-image. Earlier counter-only UI housekeeping cannot block a comment
+transfer; exact byte fences still reject newer authored work. Partial retries
+expect the same native result and never increment the counter a second time.
+Checked source PDF assets remain in sync even when one host selects that PDF's
+TeX file as its main document. This uses ready, project-owned history and hashes
+the actual current bytes; it does not treat history as proof of file content.
+Ordinary source ZIP downloads still omit the selected document's compiled PDF.
+
+Aw reads compact saved sync status without SSH while the editor is visible. A
+dismissible **Sync needs attention** notice opens **Workspace folders → Two
+computers** for holds, interrupted operations, abandoned locks or structural failures.
+Ordinary offline waiting is quiet. Dismissal does not resolve a conflict; the folder
+button keeps a small marker, and **Copy sync help** supplies a scoped assistant brief.
 
 For a held ordinary source overlap, make the existing `reconcile` proposal, then
 pass `merge --proposal PROPOSAL_HASH`. For an ordinary conversation-field overlap,
@@ -238,7 +561,236 @@ offered. The app can collect selected safe changes here, with the remaining conc
 visible. An assistant can inspect exact conflicts and propose scoped ordinary text;
 it does not receive permission to approve publication words, complete requests,
 unlock text, remove history, execute cells or choose a side merely to make counts zero.
-No real desktop/SSH host has been exercised in this development environment yet.
+The first-copy/SSH path has also been exercised on a real Linux desktop. Local
+doubles cover two-sided guarded saves, conflicts and interrupted collection.
+
+### Opt-in automatic saved-work sync
+
+#### Follow reading files while experiments run
+
+For an already enabled, verified safe pair, `awSyncWatch.ts follow --workspace HOME
+--project ID` chooses independent reading records. Then `awSyncWatch.ts live
+--workspace HOME --project ID` keeps one private SSH stdio connection open.
+Saved TeX/BibTeX/Markdown/text and comments follow file notifications after a
+300 ms debounce, with a five-second poll for missed/NFS notifications. The aim
+is seconds after a saved edit, not a scheduled multi-minute batch. Network and
+filesystem latency still apply; unsaved browser drafts do not transfer.
+It follows TeX/BibTeX/Markdown/text and figure/PDF files in the paper checkout,
+saved comments, and existing notebooks whose conversation ownership agrees on
+both devices. It does not scan the research archive or require unrelated reports
+to stop changing. A moving or leased record waits for a later pass; settled
+records keep making progress. A pass copies at most 32 records / 32 MiB, with a
+16 MiB packet cap. Only changed records cross the connection.
+
+This is a **reading scope**, not full-project agreement. Its per-record baselines,
+before-images and receipts stay in private `device-sync/reading/` storage. The
+ordinary snapshot/exchange ledger is not reset or falsely acknowledged. Raw
+experiments, unregistered research-folder files, new conversation catalogues and
+version/policy changes retain the full guarded workflow. Existing notebooks bring
+their exact settled run evidence, never Python execution. New notebook ownership,
+cell removal/type changes, competing source/notebook edits, protected wording and deletions stay
+held. One-sided saves use native store/file revision fences; an atomic remote save
+whose acknowledgement is lost can be recognized by matching saved content on the
+next pass, without replaying a two-copy merge or restarting a job.
+
+Comment records are the exception to whole-record conflict holds: independent
+threads and replies added on both machines combine automatically in the fast lane.
+If both copies contain different text for the same comment, preserve both with a
+deterministic copy ID and an `(other version)` title, rather than ask which one
+wins. Retries do not keep multiplying copies. Original quotes/source snapshots,
+explicit human decisions and before-images remain; syncing never infers closure.
+Each device keeps its own queue ordering, and non-comment requests/wording locks
+are not replaced. Both stores save with native revision/byte guards; after an
+interrupted one-side save the next pass combines the remaining work, not rollback.
+Malformed/foreign anchors, unknown executable fields and storage limits still
+stop a write. This is inert comment preservation, not a manuscript text merge.
+
+Ordinary research-source files now use bounded literal three-way comparison in
+the fast lane: independent edits within one file can combine automatically. The
+coordinator keeps checked common text privately, seeded at most 16 files / 1 MiB
+per pass (individual merge cap 512 KiB / 12,000 lines / two million diff cells).
+Publication/locked text, deletions and unknown bases are not silently merged.
+Overlapping edits retain both originals and offer **Compare revisions** in the
+sync notice. A human whole-file choice queues for sync only while both captured
+versions still match; changing either copy requires a fresh comparison. A real
+overlap currently holds that file, not unrelated files/comments. No model runs,
+comment resolution or source conflict markers are involved. See REMOTE_REVIEW.md
+for the human loop and the read-only `awSync.ts source-reviews` agent command.
+
+The campus/VPN gate and below-normal CPU priority still apply. Keep one
+coordinating laptop; do not copy its per-peer baseline onto another coordinator.
+There is one fast text/comment slot alongside the single bulk slot: an unrelated
+archive scan must not make a comment wait minutes. Per-project cycles and native
+file/store locks remain exclusive; conflicts are never overridden for speed.
+Existing notebooks and figures use a bounded slower pass every three minutes,
+not every keystroke. New notebook/catalogue ownership retains the full workflow.
+Reinstalling the existing Windows task after `follow` selects this resident
+windowless worker. The repeating task trigger is crash recovery, not its transfer
+interval; IgnoreNew prevents duplicate task instances. This bounded reader may
+run on battery, never wakes the laptop, and checks the configured campus/VPN gate
+before contact or scans. It closes the channel while offline and reconnects with
+bounded backoff; a changed network interface prompts a new route check. Source
+directory watches are shallow and limited to reading-file directories, never the
+whole experiment tree. No public listener, model call or SSH trust change is used.
+A dropped route stops further SSH calls in that pass.
+`status` reports `scope: reading` and
+lists records still changing or needing review. This mode needs the reading
+protocol on both installations; unsupported peers do not receive a fallback
+unguarded copy. Full two-copy interrupted operations still require inspection.
+Fast and slower status records are separate so a successful TeX check cannot
+erase a slower notebook conflict notice. Run only one live worker for a project.
+The visible app checks comments every two seconds with conditional reads;
+notebook histories remain on the slower twelve-second UI cadence. Source display
+already checks changed files every three seconds and preserves overlapping drafts.
+An open browser needs the updated assets (save drafts, then reload); changing
+sync's CLI does not itself replace JavaScript already loaded in a browser tab.
+
+Pilot measurement, 24 October: a synthetic project over the configured desktop
+SSH route transferred three saved TeX edits in 146–162 ms and a saved comment in
+153 ms on the warm connection. A remote save produced an event and copied back
+in 1.02 seconds including the separate diagnostic SSH startup. These are observed
+trials, not a latency guarantee or evidence of whole-project synchronization.
+The first live example project reader reported four fast records aligned and eight reading
+records aligned, without pausing its research. Other projects retain their saved
+sync mode until deliberately upgraded. The multi-project installer
+`scripts/installSyncPool.ps1 -WorkspacePath HOME -ExistingLiveProject PROJECT_ID`
+shares the other enabled reading pairs in one below-normal-priority Node process.
+Startup connections are staggered; fast passes share one slot. Existing scheduled
+workers handle slower notebook/figure passes. Network observations are coalesced
+so reconnecting does not launch discovery separately for each project. Interrupted
+pairs stay held for explicit inspection, not silently bypassed by this pool.
+
+##### Local change journal on each computer
+
+`node scripts/awSyncJournal.ts start --config ABSOLUTE_CONFIG.json` watches saved
+files locally, including while the VPN is disconnected or Aw is closed. The
+configuration is `{ "version": 1, "projects": [{ "workspace": "ABSOLUTE_HOME",
+"projectId": "EXACT_ID" }] }` (at most 32 scopes). Use the laptop installer
+`scripts/installSyncJournal.ps1 -WorkspacePath CODE -ConfigPath CONFIG` for a
+hidden, below-normal-priority, single-instance task. The desktop uses a user
+service with restart backoff. Neither starts research, opens SSH, downloads
+anything, wakes the laptop, or hashes all projects at startup.
+
+Each computer has its own private `.paperfocus/device-sync/change-journal/ID/`
+index and filesystem-event segments. A requested bulk snapshot establishes one
+baseline; subsequent discovery reads changed/new paths and the small protected
+catalogues. A private local barrier drains pending events before a capture.
+Watcher restart, stale/erroring owner, event gaps, damaged index, structural
+directory changes or changed ownership/binding cause a recovery inventory.
+An audit is due after an hour, only when another full snapshot is requested;
+there is no timer scanning every project. Strong write/acceptance fences bypass
+the index deliberately. This is not a guarantee that every full-sync phase reads
+only changed files, nor permission to resolve conflicts automatically.
+
+`changeJournalStatus` reports watcher health and the last capture's mode, reason,
+checked-path count and time. Active event segments rotate; older segments are
+archived locally rather than deleted, and previous epochs/history are retained.
+The index is a disposable discovery aid, not a backup or sync acknowledgement.
+`node scripts/awSyncJournal.ts stop --config CONFIG` flushes and stops only this
+watcher; the next requested snapshot safely falls back to full discovery.
+
+For every **new paired project**, after the initial clone and pinned peer exist,
+activate enrollment from the laptop (the configured daemons are already installed):
+
+```text
+node scripts/awSyncJournalSetup.ts pair --workspace LAPTOP_HOME --project ID --peer PEER_HASH
+node scripts/awSyncJournalSetup.ts pair --workspace LAPTOP_HOME --project ID --peer PEER_HASH --commit REVIEW_HASH
+```
+
+The first command previews both exact devices/configurations. The second enrolls
+both through guarded configuration saves; existing watchers adopt it within five
+seconds without restarts. This is idempotent: no duplicate watcher per project.
+If interrupted, preview again and commit the fresh review; a completed enrollment
+on one side is harmless and preserved. Campus/VPN gating still applies to setup.
+It does not clone a project, enable transfers, resolve conflicts or start jobs.
+Enable the ordinary reading coordinator separately as part of the authorized
+pairing workflow. Do not create another daemon or invent desktop paths per project.
+On a fresh machine install its daemon once first; missing installations fail with
+an explicit instruction instead of claiming activation.
+
+#### Whole-project reconciliation
+
+With explicit host/data-transfer permission and a verified pinned peer, one
+coordinating computer can run `scripts/awSyncWatch.ts`. No Aw service or browser
+is needed. This does not start or supervise desktop Codex or experiments.
+
+```text
+node scripts/awSyncWatch.ts enable --workspace LAPTOP_HOME --project ID --peer PEER_HASH --mode safe --saved-drafts yes --interval-seconds 180
+node scripts/awSyncWatch.ts once --workspace LAPTOP_HOME --project ID
+node scripts/awSyncWatch.ts status --workspace LAPTOP_HOME --project ID
+node scripts/awSyncWatch.ts disable --workspace LAPTOP_HOME --project ID
+```
+
+`safe` previews both saved copies and commits the exact prepared pair only when
+both complete proposals agree. `stage` only exchanges/prepares work. Neither mode
+uses AI to resolve conflicts, picks the latest file, imports protected decisions,
+executes transferred code or resumes an interrupted collection. A held conflict
+keeps both versions; inspect the normal merge tools. Interrupted collections need
+explicit status/recovery, not background retries. Offline checks back off to at
+most one attempt per 30 minutes; successful checks return to the configured pace.
+Scheduled invocations still check the shared cached campus/VPN route during that
+backoff, without scanning project files or starting SSH while off-network. After
+an observed disconnection, the next connected invocation can make one early
+catch-up attempt. At least two minutes must separate attempts, so a flapping VPN
+cannot create a scan/transfer loop. The pending reconnect survives process exits
+and the cooldown. Conflicts and interrupted collections are never auto-resolved
+or resumed. This is scheduled polling (normally up to three minutes), not a
+permanent socket or a guarantee to notice an outage shorter than the polling gap.
+For an explicit manual verification, `once --check-now yes` bypasses only the
+interval/backoff; all network, ownership and merge protections still apply.
+If ordinary saved files change during a preview, that stale plan remains unused
+and a fresh check is scheduled after two minutes rather than escalating network
+failure backoff. Repeated edits can still prevent a complete collection; sync
+does not freeze an agent's files or force a stale snapshot onto either copy.
+For file-heavy projects on slower remote storage, `enable --timeout-seconds 120`
+allows up to two minutes per SSH message (default 30 seconds, range 10–120).
+This changes only the bounded transport wait, not transfer size, merge guards,
+experiment time limits or retry policy. Older settings retain the 30-second default.
+
+Save drafts on both copies before enabling. Only saved disk work is synchronized;
+it cannot flush another browser's draft. Existing source/notebook revision fences,
+locks, immutable checkpoints and retained variants remain in force. Readers must
+use updated cross-process-aware Aw writers before mixed offline/background saves.
+Never point both machines at the same live NFS/cloud-synced data home. Keep one
+coordinator, not opposing background sync jobs. Stop on storage/history limits;
+do not discard checkpoints to keep a worker running.
+
+On Windows, `scripts/installSyncTask.ps1 -WorkspacePath LAPTOP_HOME -ProjectId ID`
+adds a limited, signed-in-user task every three minutes, with a windowless
+Windows Script Host entry point (rather than launching a console and hiding it),
+no password/elevation, no wake request and no competing task instance. It runs
+the standalone worker at below-normal CPU priority, leaving the Aw service and
+research processes unchanged. Existing cached hashes and peer inventories avoid
+recopying unchanged content; no polling loop downloads desktop-backed arrays.
+The scheduled task runs
+with network and AC power; a cycle already underway may finish after unplugging
+instead of being terminated mid-save. The desktop's research continues without it. `-Remove`
+unregisters that exact task without deleting research/history. To pause cleanly,
+disable the configuration first; an already started guarded commit can finish.
+Never kill it to try to undo a sync. Alternatively `awSyncWatch.ts watch` runs a
+foreground coordinator with graceful Ctrl+C. Local status contains the last result,
+next check and an interrupted sync ID when applicable. The CLI is the initial
+control surface; the app does not yet expose an automatic-sync toggle/banner.
+The latest launch output replaces `launcher.log` beside that project's automatic
+sync settings. The launcher waits and forwards the exit code, so overlapping
+cycles remain excluded. If Windows Script Host is disabled by local policy,
+installation/execution must be corrected explicitly; there is no visible-console
+fallback. Do not automatically clear abandoned locks: verify their owner and
+preserve the lock during explicit recovery.
+
+If scheduled tasks repeatedly report `busy`, check the owner in both the global
+`auto/coordinator.aw-lock` and the project's `cycle.aw-lock`; a successful task
+exit does not prove an exchange occurred. An absent owner requires explicit,
+byte-checked recovery that preserves the original lock, not an automatic unlock.
+
+Bulk capture validates research paths before hashing/copying evidence and names
+any linked path it refuses. Keep experiment inputs as ordinary files in the
+synced tree, with provenance links in notes/receipts rather than filesystem
+symlinks. A link introduced by an experiment can otherwise block comments and
+source too. Do not delete it or silently follow it: inspect the full inventory.
+An authorized path-preserving repair can retain original links outside capture
+and substitute verified byte-identical ordinary copies of in-project files;
+never import an external target, rerun research or infer a new shared baseline.
 
 ### Updating the app, not the data
 
@@ -717,3 +1269,24 @@ ignored or migrated. Snapshots are **not complete private backups**. Follow
 
 Aw code updates remain separate from project data synchronization. An SSH compute
 worker or automatic app updater is not enabled by this reconciliation protocol.
+
+
+## Reading document pins
+
+Paired readers with the optional `documentPins` inventory capability exchange a
+small separate record for ordinary Overview and Research notes pins and the
+pinned overview target. Only these selected roots receive the corresponding
+notes/overview purpose tag. The selected main file, publication purpose/pins,
+wording locks, review decisions and unrelated version metadata are preserved.
+Both sides must advertise the capability; older peers keep syncing source and
+comments. The digest is saved separately from legacy file baselines so an older
+running app service can continue ordinary sync safely.
+
+Existing differing choices for one role are held, with neither computer treated
+as authoritative. Independent role edits combine from the saved common version;
+first pairing fills blank roles but does not replace a nonempty competing choice.
+An explicit later unpin follows once a common baseline exists. Missing/new source
+defers metadata while other files continue, then the next pass retries the pin.
+Full registry bytes are fenced before saving and other projects are retained.
+This is ordinary reading navigation, never permission to relabel publication
+text, approve wording or switch a user away from the document they are editing.

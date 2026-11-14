@@ -13,6 +13,7 @@ import { chromePreferencesKey, loadChromePreferences, saveChromePreferences } fr
 import { useStoredPaneZoom } from "./usePaneZoom";
 import { ToolbarDetails } from "./components/ToolbarDetails";
 import { ManuscriptSwitcher } from "./components/ManuscriptSwitcher";
+import { ResearchCorpusMenu } from './components/ResearchCorpusMenu';
 import { PdfDownload } from "./components/PdfDownload";
 import { SourceZipDownload } from "./components/SourceZipDownload";
 import { CollaboratorDownload } from "./components/CollaboratorDownload";
@@ -84,7 +85,7 @@ import { acceptWritingParagraph, dropWritingParagraph, editWritingDraft, editWri
 import { WorkbenchStatus } from "./components/WorkbenchStatus";
 import { checkTaskSource, taskSourceTarget } from "./taskSource";
 import { useSourceMonitor } from "./useSourceMonitor";
-import { anchorAppliedNotebookEntries, automaticSourceRefresh, locateSavedPassage, refreshSourceState, sourceRefreshPlan, SourceSaveConflict } from "./sourceRefresh";
+import { anchorAppliedNotebookEntries, automaticSourceRefresh, locateSavedPassage, refreshSourceState, restoreSourceDraft, sourceRefreshPlan, SourceSaveConflict } from "./sourceRefresh";
 import type { SourceDraftCopy } from "./sourceRefresh";
 import { SourceRefresh } from "./components/SourceRefresh";
 import { editableCaret, editableText, restoreEditableCaret } from "./editableText";
@@ -310,8 +311,8 @@ export default function App() {
   const [sourceRefreshing, setSourceRefreshing] = useState(false);
   const sourceRefreshBusy = useRef(false);
   const sourcePlan = useMemo(() => document && incomingSource?.project.id === document.project.id && incomingSource.project.mainFile === document.project.mainFile
-    ? sourceRefreshPlan(document, incomingSource, state.paragraphEdits, state.draftRevision) : undefined,
-    [document, incomingSource, state.paragraphEdits, state.draftRevision]);
+    ? sourceRefreshPlan(document, incomingSource, state.paragraphEdits, state.draftRevision, state.draftBase) : undefined,
+    [document, incomingSource, state.paragraphEdits, state.draftRevision, state.draftBase]);
   const [savingHandoff, setSavingHandoff] = useState(false);
   const manuscriptNodes = document?.nodes ?? [];
   const paragraphs = useSourceLines(document);
@@ -400,7 +401,7 @@ export default function App() {
           if (text !== base) edits[p.id] = text;
         }
         saveState({ ...current, paragraphEdits: edits, draftRevision: Object.keys(edits).length ? current.draftRevision ?? paper.revision : undefined,
-          draftMainFile: Object.keys(edits).length ? current.draftMainFile ?? paper.project.mainFile : undefined }, paper.project.id);
+          draftMainFile: Object.keys(edits).length ? current.draftMainFile ?? paper.project.mainFile : undefined }, paper.project.id, paper);
       } catch { /* Keep earlier complete checkpoints; never send a blind unload save. */ }
     };
     const hide = () => { checkpoint(); try { windowStateCache().release(); } catch { /* lease also expires */ } };
@@ -436,7 +437,7 @@ export default function App() {
 
   useEffect(() => {
     setBrowserRecoveryError(document ? saveBrowserRecovery(() => saveState({ ...state,
-      draftMainFile: Object.keys(state.paragraphEdits).length ? state.draftMainFile ?? document.project.mainFile : undefined }, document.project.id)) : undefined);
+      draftMainFile: Object.keys(state.paragraphEdits).length ? state.draftMainFile ?? document.project.mainFile : undefined }, document.project.id, document)) : undefined);
   }, [state, document, recoveryRetry]);
   useEffect(() => {
     if (!document || !Object.keys(state.paragraphEdits).length || savingPaper || autoSaveError || repositoryOpen || sourceRefreshing || incomingSource && (sourcePlan?.conflicts.length || sourcePanelOpen && incomingSource.revision !== document.revision)) return;
@@ -615,7 +616,7 @@ export default function App() {
   } : undefined;
   const compileWindowIds = useMemo(() => state.turbo.enabled ? turboPreviewIds : blockWindow?.paragraphs.filter(p => !p.emptySource).map(p => p.id), [blockWindow, state.turbo.enabled, turboPreviewIds]);
   const compileFocus = state.turbo.enabled || blockWindow ? undefined : state.focusedNodeId;
-  const compileScope = manuscriptBuildScope({ focusNodeId: compileFocus, lens: state.lens, hiddenNodeIds: state.hiddenNodeIds, paragraphIds: compileWindowIds });
+  const compileScope = manuscriptBuildScope({ focusNodeId: compileFocus, lens: state.lens, hiddenNodeIds: state.hiddenNodeIds, paragraphIds: compileWindowIds, sectionPdf: chromePreferences.sectionPdf });
   renderedCompileScope.current = compileScope;
   const compiledScope = compileResult?.scope && manuscriptBuildScope(compileResult.scope);
   const sourceEdits = useMemo(() => JSON.stringify(state.paragraphEdits), [state.paragraphEdits]);
@@ -623,24 +624,24 @@ export default function App() {
     if (!forwardSyncRequest || !document) return;
     if (forwardSyncRequest.identity !== manuscriptBuildIdentity(document)) { setForwardSyncRequest(undefined); return; }
     if (compiling || compileInFlight.current || manuscriptBusy || savingPaper || sourceRefreshing || incomingSource || autoSaveError || effectivePreviewMode === "hidden") return;
-    // One guarded build attempt per explicit jump. Requests wait for an ongoing
-    // build; failures do not cause a compile/retry loop.
+    // Navigation uses the displayed PDF's saved paragraph map, including after
+    // edits. It never saves or starts TeX just to move the reading position.
     setForwardSyncRequest(undefined);
     const { identity, paragraphId, sequence } = forwardSyncRequest;
     if (previewFormat !== "pdf") { setPreviewJumpTarget({ paragraphId, sequence: ++sourceSyncSequence.current }); return; }
     const show = (build?: CompileResult) => {
       if (build?.success && sequence === forwardSyncSequence.current && latestDocument.current && manuscriptBuildIdentity(latestDocument.current) === identity) void syncPdf("forward", { paragraphId }, build);
     };
-    // Save command drafts as well as paragraph drafts before any cache lookup.
-    void compileLatex("focus", false, true).then(show);
+    if (compileResult?.success && compileResult.mainFile === document.project.mainFile && compileResult.engine === document.project.engine) show(compileResult);
+    else setToast("Compile once to create a PDF. Later edits won't prevent source links.");
   }, [forwardSyncRequest, document, previewFormat, effectivePreviewMode, compiling, manuscriptBusy, savingPaper, sourceRefreshing, incomingSource, autoSaveError, compileResult, compileScope, compiledScope, sourceEdits]);
   useEffect(() => {
     if (!document || pendingRootCompile.current !== rootCompileReady || rootCompileReady !== manuscriptBuildIdentity(document)
       || previewFormat !== "pdf" || effectivePreviewMode === "hidden" || compiling || manuscriptBusy || savingPaper
       || sourceRefreshing || incomingSource || autoSaveError || pendingSelection || state.turbo.enabled) return;
     pendingRootCompile.current = undefined; // One attempt per opening; errors never create a retry loop.
-    if (matchingManuscriptBuild(compileResult, document) && (compileResult?.mode === "full" ? compileScope === manuscriptBuildScope({}) : compiledScope === compileScope)) return;
-    void compileLatex("focus", false, true);
+    if (matchingManuscriptBuild(compileResult, document) && compileResult?.mode === "full") return;
+    void compileLatex("full", false, true);
   }, [document?.project.id, document?.project.mainFile, rootCompileReady, previewFormat, effectivePreviewMode, compiling,
     manuscriptBusy, savingPaper, sourceRefreshing, incomingSource, autoSaveError, pendingSelection, state.turbo.enabled, compileResult, compileScope]);
   useEffect(() => {
@@ -651,7 +652,8 @@ export default function App() {
     // Explicit scope changes are not typing-idle compilation. Consume once,
     // after navigation/save guards, and let the latest view win a running build.
     setScopeCompileRequest(undefined);
-    void compileLatex("focus", false, true);
+    if (matchingManuscriptBuild(compileResult, document) && compileResult?.mode === "full") return;
+    void compileLatex("full", false, true);
   }, [scopeCompileRequest, rootCompileReady, document, previewFormat, effectivePreviewMode, compiling, manuscriptBusy, savingPaper,
     sourceRefreshing, incomingSource, autoSaveError, pendingSelection, state.turbo.enabled, compileScope, compileResult, sourceEdits]);
   useIdleCompilation({ enabled: !state.turbo.enabled && chromePreferences.automaticCompilation && previewFormat === "pdf" && effectivePreviewMode !== "hidden",
@@ -660,13 +662,15 @@ export default function App() {
     needsCompile: !compileResult?.success || Boolean(compileResult.stale) || Boolean(Object.keys(state.paragraphEdits).length) || compileResult.sourceRevision !== document?.revision || compileResult.mode !== "full" && compiledScope !== compileScope,
     blocked: turboBlocked || savingPaper || savingHandoff || sourceRefreshing || compileMenuOpen || latexMenuOpen || Boolean(autoSaveError || incomingSource || pendingSelection || manuscriptPromptOpen),
     blockWindow: Boolean(blockWindow),
-  }, async () => { await compileLatex("focus", false, true); });
+  }, async () => { await compileLatex("full", false, true); });
   const workSuggestion = useMemo(() => document ? suggestWork(document, state) : undefined,
     [document, state.destination, state.activeNotebookId, state.activeNodeId, state.activeParagraphId, state.notebookEntries, state.suggestions.relation, state.attentionTasks, state.paragraphEdits, state.progressByNode, state.hiddenNodeIds, state.turbo, state.lens]);
   const manuscriptNotebookEntries=useMemo(()=>document ? notebookForManuscript(state.notebookEntries,document.project.mainFile) : state.notebookEntries,[state.notebookEntries,document?.project.mainFile]);
   const catalogueEntries=useMemo(()=>orderedNotebookEntries(manuscriptNotebookEntries).filter(entry=>!entry.filed),[manuscriptNotebookEntries]);
   const activeNotebook = state.notebookEntries.find((entry) => entry.id === state.activeNotebookId) ?? catalogueEntries[0];
-  const isPassageQueued = useMemo(() => document ? (selection: Parameters<typeof passageBookmark>[3]) => !!passageBookmark(state.attentionTasks, document, state.paragraphEdits, selection) : undefined, [document, state.attentionTasks, state.paragraphEdits]);
+  // The getter reads current edits; its identity needn't invalidate every source
+  // block for a change in one passage. Queue changes still invalidate normally.
+  const isPassageQueued = useMemo(() => document ? (selection: Parameters<typeof passageBookmark>[3]) => !!passageBookmark(state.attentionTasks, document, latestState.current.paragraphEdits, selection) : undefined, [document, state.attentionTasks]);
   const activeCommentHighlight = useMemo(() => {
     if (!reviewOpen || !document || state.destination !== "manuscript") return undefined;
     const task = state.attentionTasks.find(task => task.id === reviewTaskId);
@@ -717,8 +721,8 @@ export default function App() {
     const keepOutgoing = (projectId: string) => {
       // Only a completed guarded navigation may outlive a browser quota failure.
       // Source/disk-save failures still stop before this activation is reached.
-      if (diskNavigationSaved) setBrowserRecoveryError(saveBrowserRecovery(() => saveState(previousState, projectId)));
-      else saveState(previousState, projectId);
+      if (diskNavigationSaved) setBrowserRecoveryError(saveBrowserRecovery(() => saveState(previousState, projectId, previous)));
+      else saveState(previousState, projectId, previous);
     };
     const archived = navigationArchive.current;
     if (archived && archived.projectId === previous?.project.id) {
@@ -729,6 +733,7 @@ export default function App() {
     } else if (previous) keepOutgoing(previous.project.id);
     if (previous) saveWorkspaceView();
     let loaded = preserveState ? previousState : loadState(incoming.project.id);
+    if (!preserveState) loaded = restoreSourceDraft(loaded, incoming);
     let resume;
     try {
       const cache = windowStateCache(), fresh = Boolean(initialWindowRequest) && !hasSavedWindowState(incoming.project.id);
@@ -951,7 +956,7 @@ export default function App() {
     if (!source) return;
     navigationArchive.current = undefined;
     const key = await prepareProjectNavigation(source, () => latestState.current, savePaper,
-      draft => saveState({ ...draft, draftMainFile: draft.draftMainFile ?? source.project.mainFile }, source.project.id),
+      draft => saveState({ ...draft, draftMainFile: draft.draftMainFile ?? source.project.mainFile }, source.project.id, source),
       async copy => {
         const response = await fetch("/api/paperfocus/source-drafts", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(copy) });
         const result = await response.json();
@@ -997,6 +1002,8 @@ export default function App() {
       const response = await fetch("/api/paperfocus/projects", { method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "select", projectId: saved.project.id, mainFile: candidate?.path ?? file, expected: { mainFile: saved.project.mainFile, revision: saved.revision } }) });
       const result = await response.json(); if (!response.ok) throw new Error(result.error ?? "Could not open the manuscript.");
+      // A successful explicit switch consumes the startup link; it must not pull us back.
+      linkedSourceAutoAttempt.current = true;
       activateDocument(result.document, true, true, true); patchState({ activeNotebookId: undefined, manuscriptPromptId: undefined }); announceSaved(saved.project.id, "source");
       if (kept) setToast(kept);
       else setToast(`${candidate?.path ?? file} opened. Notebook and other manuscripts are kept.`);
@@ -1004,6 +1011,23 @@ export default function App() {
     } catch (reason) {
       if (created) throw new Error(`${(reason as Error).message} The new file ${candidate!.path} was created and kept; reopen Paper & files to select it.`);
       throw reason;
+    } finally { manuscriptNavigationBusy.current = false; setManuscriptBusy(false); }
+  }
+
+  async function pinManuscript(purpose: "notes" | "overview" | "publication", file: string) {
+    const before = latestDocument.current;
+    if (!before || manuscriptNavigationBusy.current) throw new Error("Wait for the current manuscript operation.");
+    manuscriptNavigationBusy.current = true; setManuscriptBusy(true);
+    try {
+      const response = await fetch("/api/paperfocus/manuscripts/pin", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ projectId: before.project.id, mainFile: before.project.mainFile, revision: before.revision, purpose, file, expectedFile: before.project.manuscriptPins?.[purpose] ?? "" }) });
+      if (response.status === 404) throw new Error("Pinned documents need the updated Aw service. Restart after drafts and runs are saved.");
+      const result = await response.json(); if (!response.ok) throw new Error(result.error ?? "Could not pin the document.");
+      const current = latestDocument.current;
+      if (current?.project.id === before.project.id) {
+        const next = { ...current, project: { ...current.project, manuscriptPins: result.document.project.manuscriptPins } };
+        latestDocument.current = next; setDocument(next);
+      }
+      announceSaved(before.project.id, "source"); setToast("Pinned documents updated.");
     } finally { manuscriptNavigationBusy.current = false; setManuscriptBusy(false); }
   }
 
@@ -1019,7 +1043,7 @@ export default function App() {
       const result = await response.json(); if (!response.ok) throw new Error(result.error ?? "Could not change the writing purpose.");
       const current = latestDocument.current;
       if (current?.project.id === before.project.id && current.project.mainFile === before.project.mainFile) {
-        const next = { ...current, project: { ...current.project, manuscriptPurposes: result.document.project.manuscriptPurposes, manuscriptOverviewTargets: result.document.project.manuscriptOverviewTargets } };
+        const next = { ...current, project: { ...current.project, manuscriptPurposes: result.document.project.manuscriptPurposes, manuscriptOverviewTargets: result.document.project.manuscriptOverviewTargets, manuscriptPins: result.document.project.manuscriptPins } };
         latestDocument.current = next; setDocument(next);
       }
       announceSaved(before.project.id, "source");
@@ -1205,7 +1229,7 @@ export default function App() {
       if (saveInFlight.current || latestDocument.current?.revision !== before.revision || latestDocument.current.project.id !== before.project.id) return;
       if (incoming.revision === before.revision && incoming.project.mainFile === before.project.mainFile && incoming.project.engine === before.project.engine) {
         // Policy-only refresh: preserve the draft, selection, layout and compiled PDF.
-        if ((JSON.stringify(incoming.project.manuscriptPurposes) !== JSON.stringify(before.project.manuscriptPurposes) || JSON.stringify(incoming.project.manuscriptOverviewTargets) !== JSON.stringify(before.project.manuscriptOverviewTargets))) {
+        if ((JSON.stringify(incoming.project.manuscriptPurposes) !== JSON.stringify(before.project.manuscriptPurposes) || JSON.stringify(incoming.project.manuscriptOverviewTargets) !== JSON.stringify(before.project.manuscriptOverviewTargets) || JSON.stringify(incoming.project.manuscriptPins) !== JSON.stringify(before.project.manuscriptPins))) {
           const next = { ...latestDocument.current, project: incoming.project };
           latestDocument.current = next; setDocument(next);
         }
@@ -1218,7 +1242,7 @@ export default function App() {
       const refreshed = automaticSourceRefresh(latestState.current, before, incoming, caret);
       if (!refreshed) {
         if (incoming.revision !== before.revision && incoming.project.mainFile === before.project.mainFile && incoming.project.engine === before.project.engine) {
-          const plan = sourceRefreshPlan(before, incoming, latestState.current.paragraphEdits, latestState.current.draftRevision);
+          const plan = sourceRefreshPlan(before, incoming, latestState.current.paragraphEdits, latestState.current.draftRevision, latestState.current.draftBase);
           if (plan.conflicts.length) { setIncomingSource(incoming); setSourcePanelOpen(true); }
         }
         return; // Present overlapping versions; never silently replace the live draft.
@@ -1282,7 +1306,7 @@ export default function App() {
       if (!before || latestProjectId.current !== projectId) return;
       if (incoming.project.mainFile !== before.project.mainFile) throw new Error("The main LaTeX file changed in another window. Reopen this paper from Paper & files; unfinished drafts are kept.");
       const current = latestState.current;
-      const plan = sourceRefreshPlan(before, incoming, current.paragraphEdits, current.draftRevision);
+      const plan = sourceRefreshPlan(before, incoming, current.paragraphEdits, current.draftRevision, current.draftBase);
       const draftKey = JSON.stringify([current.paragraphEdits, current.draftRevision]);
       let copy: SourceDraftCopy | undefined;
       if (plan.conflicts.length) {
@@ -1302,7 +1326,7 @@ export default function App() {
       if (JSON.stringify([latestState.current.paragraphEdits, latestState.current.draftRevision]) !== draftKey) throw new Error("Your draft changed during refresh. Check files again before replacing the source view.");
       const nextState = refreshSourceState(latestState.current, before, incoming);
       // Write the safe rebased state before replacing the editable DOM.
-      saveState(nextState, projectId);
+      saveState(nextState, projectId, incoming);
       latestState.current = nextState; latestDocument.current = incoming;
       setState(nextState); setDocument(incoming); setDocumentEpoch((value) => value + 1);
       setIncomingSource(undefined); setPendingSelection(undefined); setJumpTarget(undefined); setNavigationHistory([]);
@@ -2664,19 +2688,19 @@ export default function App() {
     const document = latestDocument.current;
     const compileResult = build;
     if (!document || !compileResult?.success) return;
-    if (Object.keys(latestState.current.paragraphEdits).length || compileResult.sourceRevision !== document.revision || compileResult.stale) {
-      setToast("Compile this view again to link the current source and PDF. Rendered text links work immediately."); return;
-    }
+    if (compileResult.mainFile !== document.project.mainFile || compileResult.engine !== document.project.engine) return;
     const projectId = document.project.id;
     const sequence = ++sourceSyncSequence.current;
     try {
       const response = await fetch("/api/paperfocus/source-sync", { method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ projectId, revision: document.revision, mode: compileResult.mode, artifactKey: compileResult.artifactKey, direction, ...position }) });
+        body: JSON.stringify({ projectId, revision: document.revision, compiledAt: compileResult.compiledAt, hasDrafts: Boolean(Object.keys(latestState.current.paragraphEdits).length), mode: compileResult.mode, artifactKey: compileResult.artifactKey, direction, ...position }) });
       const target = await response.json();
       if (!response.ok) throw new Error(target.error ?? "This passage has no source link.");
       if (latestProjectId.current !== projectId || sequence !== sourceSyncSequence.current) return;
       const currentSource = latestDocument.current;
-      if (!currentSource || currentSource.project.mainFile !== document.project.mainFile || currentSource.revision !== document.revision) return;
+      // Autosave may finish during the lookup. Navigation is approximate and
+      // read-only: a revision change must not silently cancel an explicit jump.
+      if (!currentSource || currentSource.project.mainFile !== document.project.mainFile || currentSource.project.engine !== document.project.engine) return;
       if (direction === "inverse") syncToSource(target.paragraphId);
       else {
         if (compileResult.originalPages && !compileResult.originalPages.includes(target.page)) setCompileResult(current => current ? { ...current, originalPages: undefined, viewNote: "Opened the full PDF to show this passage outside the selected pages." } : current);
@@ -2692,7 +2716,7 @@ export default function App() {
     else setPreviewJumpTarget({ paragraphId, sequence: ++sourceSyncSequence.current });
   }
 
-  async function compileLatex(mode: CompileMode, originalPages = false, automatic = false) {
+  async function compileLatex(mode: CompileMode, originalPages = false, automatic = false, draft = false) {
     const requestedDocument = latestDocument.current;
     if (!requestedDocument || manuscriptNavigationBusy.current || compileInFlight.current) return;
     compileInFlight.current = true;
@@ -2722,6 +2746,8 @@ export default function App() {
           projectId: saved.project.id,
           revision: saved.revision,
           mode,
+          draft,
+          sectionPdf: false,
           originalPages,
           focusNodeId: originalPages && !savedView.blockWindow && !savedView.turbo.enabled ? savedView.activeNodeId : savedView.turbo.enabled || savedView.blockWindow && savedView.lens !== "themes" ? undefined : savedView.focusedNodeId,
           paragraphIds: savedView.turbo.enabled ? turboWindows(turboPass(saved.paragraphs, saved.nodes, savedView.hiddenNodeIds, savedView.turbo.includeTechnical), savedView.turbo.activeParagraphId, savedView.turbo.context).preview.paragraphs.map(p => p.id)
@@ -2850,7 +2876,7 @@ export default function App() {
 
         <div className="topbar-actions">
           {document && <ManuscriptSwitcher key={`${document.project.id}:${document.project.mainFile}`} document={document} disabled={manuscriptBusy || compiling || savingPaper || savingHandoff || sourceRefreshing || queueNavigating || repositoryOpen || environmentBusy}
-            onSelect={switchManuscript} onVersion={newVersion} onPurpose={changeManuscriptPurpose} onCreate={(file, title, kind) => switchManuscript(file, { title, kind })}
+            onSelect={switchManuscript} onVersion={newVersion} onPurpose={changeManuscriptPurpose} onPin={pinManuscript} onCreate={(file, title, kind) => switchManuscript(file, { title, kind })}
             section={document.nodes.find(node => node.id === chooseManuscriptScope(state, "section", document.nodes).focusedNodeId)} onSectionFile={saveSectionFile} />}
           <ToolbarDetails className="appearance-settings" summary={<><SlidersHorizontal size={14} /><span className="sr-only">Appearance settings</span></>}>
             <div className="appearance-settings-panel">
@@ -3055,6 +3081,7 @@ export default function App() {
                 const paragraphId = pendingSelection?.paragraphId ?? sourcePositionReader.current?.()?.paragraphId ?? state.activeParagraphId;
                 if (paragraphId) syncToPreview(paragraphId);
               }}><Scan size={14} /> Show in preview</button>
+              {document?.project.researchCorpus && <ResearchCorpusMenu key={document.project.id} projectId={document.project.id} onSave={savePaper} notebookRevision={()=>latestState.current.notebookRevision??0} />}
               <div className="toolbar-secondary-controls" id="manuscript-toolbar-controls">
               <WorkspaceTools context={state.turbo.enabled ? "the active paragraph" : activeNode.title} disabled={!document || savingHandoff}
                 onExplore={exploreSelection} onRewrite={rephraseCurrentParagraph} onChat={() => openPassageTool("chatgpt")} onAgent={() => openPassageTool("codex")} onReview={() => openReview()} onWrite={() => openWriting()} />
@@ -3120,14 +3147,15 @@ export default function App() {
               </select></label>
               <div className="compile-control" ref={compileControlRef}>
                 <button className="primary-button compile-main" disabled={compiling || !document} aria-label={compiling ? "Compiling…" : "Compile"}
-                  title={state.turbo.enabled ? "Compile the active paragraph's containing section. Navigation doesn't recompile." : "Compile the visible view"} onClick={() => void compileLatex("focus")} type="button">
+                  title="Compile the paper · reuse unchanged PDF and previous build files" onClick={() => void compileLatex("full")} type="button">
                   <Play size={12} fill="currentColor" /> <span>{compiling ? "Compiling…" : "Compile"}</span>
                 </button>
                 <button className="primary-button compile-menu-button" aria-label="Compile options" aria-expanded={compileMenuOpen} aria-controls="compile-options" disabled={compiling || !document} onClick={() => setCompileMenuOpen(open => !open)} type="button"><ChevronDown size={12} /></button>
                 {compileMenuOpen && <div className="compile-menu" id="compile-options" aria-label="Compile options">
-                  <button disabled={compiling} onClick={() => void compileLatex("focus")}><strong>Compile view</strong><small>Visible sections or blocks · faster</small></button>
+                  <button disabled={compiling} onClick={() => void compileLatex("focus", false, false, true)}><strong>Quick draft</strong><small>Visible text · one TeX pass · references may be unsettled</small></button>
+                  <button disabled={compiling} onClick={() => void compileLatex("focus")}><strong>Compile view</strong><small>Visible sections or blocks only</small></button>
                   <button disabled={compiling} onClick={() => void compileLatex("full", true)}><strong>Original pages</strong><small>Current section · reuse full PDF or update full build</small></button>
-                  <button disabled={compiling} onClick={() => void compileLatex("full")}><strong>Compile full paper</strong><small>Complete layout · before sharing</small></button>
+                  <button disabled={compiling} onClick={() => void compileLatex("full")}><strong>Compile full paper</strong><small>Normal layout · reuse previous build files</small></button>
                   {document && <PdfDownload key={`${document.project.id}:${document.project.mainFile}`} result={compileResult} projectId={document.project.id} projectName={document.project.name} mainFile={document.project.mainFile} stale={Boolean(compileResult?.stale || Object.keys(state.paragraphEdits).length || compileResult?.sourceRevision && compileResult.sourceRevision !== document.revision)} />}
                   {document && <SourceZipDownload key={document.project.id} projectId={document.project.id} onSave={savePaper} />}
                   {document && <CollaboratorDownload key={document.project.id} projectId={document.project.id} roots={document.rootFiles} purposes={document.project.manuscriptPurposes} entryId={manuscriptPrompt?.recoveryKey ? undefined : manuscriptPrompt?.id} blocked={!notebookStorage.ready || notebookStorage.pending || notebookStorage.saving || Boolean(notebookStorage.error)} onSave={savePaper} notebookRevision={() => latestState.current.notebookRevision ?? 0} />}

@@ -5,12 +5,13 @@ export interface ChromePreferences {
   theme: "light" | "dark";
   darkPdf: boolean;
   automaticCompilation: boolean;
+  sectionPdf: boolean;
   interfaceSize: "auto" | "compact" | "comfortable" | "large";
   compactAwLinks: boolean;
 }
 
 export const chromePreferencesKey = "active-writing.chrome.v1";
-export const defaultChromePreferences: ChromePreferences = { autoHideTopbar: false, hideTopbarByDefault: false, sidebarPinned: false, theme: "light", darkPdf: false, automaticCompilation: false, interfaceSize: "auto", compactAwLinks: true };
+export const defaultChromePreferences: ChromePreferences = { autoHideTopbar: false, hideTopbarByDefault: false, sidebarPinned: false, theme: "light", darkPdf: false, automaticCompilation: false, sectionPdf: false, interfaceSize: "auto", compactAwLinks: true };
 
 // These are app-wide appearance choices, not part of a paper or its saved work.
 export function loadChromePreferences(storage?: Pick<Storage, "getItem">): ChromePreferences {
@@ -20,6 +21,9 @@ export function loadChromePreferences(storage?: Pick<Storage, "getItem">): Chrom
     // not silently opt users into hiding the toolbar on every startup.
     return { autoHideTopbar: saved?.hideTopbarByDefault === true, hideTopbarByDefault: saved?.hideTopbarByDefault === true, sidebarPinned: saved?.sidebarPinned === true,
       theme: saved?.theme === "dark" ? "dark" : "light", darkPdf: saved?.darkPdf === true, automaticCompilation: saved?.automaticCompilation === true,
+      // Retired: separate TeX jobs per section were slower on long papers.
+      // Keep the field for old saved settings, but always use continuous PDFs.
+      sectionPdf: false,
       interfaceSize: ["compact", "comfortable", "large"].includes(saved?.interfaceSize) ? saved.interfaceSize : "auto", compactAwLinks: saved?.compactAwLinks !== false };
   } catch { return { ...defaultChromePreferences }; }
 }

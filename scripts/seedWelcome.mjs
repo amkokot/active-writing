@@ -36,7 +36,7 @@ export async function seedWelcome(workspace = appRoot) {
     await writeNotebook(workspace, "demo", 0, [entry], "");
     // Exclusive creation never replaces a concurrently registered project.
     const registry = await open(target, "wx");
-    try { await registry.writeFile(JSON.stringify({ activeId: "demo", projects: [{ id: "demo", name: "Welcome to Aw", folder: "demo-paper", mainFile: "main.tex", createdAt: now, manuscriptPurposes: { "main.tex": "notes", "overview.tex": "overview" }, manuscriptOverviewTargets: { "overview.tex": "main.tex" } }] }, null, 2)); } finally { await registry.close(); }
+    try { await registry.writeFile(JSON.stringify({ activeId: "demo", projects: [{ id: "demo", name: "Welcome to Aw", folder: "demo-paper", mainFile: "main.tex", createdAt: now, manuscriptPurposes: { "main.tex": "notes", "overview.tex": "overview" }, manuscriptPins: {overview:'overview.tex',notes:'main.tex'}, manuscriptOverviewTargets: { "overview.tex": "main.tex" } }] }, null, 2)); } finally { await registry.close(); }
     return { seeded: true, projectId: "demo", entryId: entry.id };
   } finally {
     await claim.close();

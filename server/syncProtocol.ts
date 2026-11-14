@@ -5,9 +5,9 @@ import { validateExperimentNotebook } from "../src/experiments.ts";
 export const syncLimits = { version: 1, records: 5000, fileBytes: 24 * 1024 * 1024, totalBytes: 96 * 1024 * 1024, packetBytes: 140 * 1024 * 1024, ancestors: 256 };
 export interface SyncDevice { version: 1; id: string; label: string }
 export type SyncKind = "source" | "catalogue" | "experiment" | "run" | "review" | "asset" | "record" | "policy";
-export interface SyncRecord { path: string; kind: SyncKind; sha256: string; bytes: number; data: string }
+export interface SyncRecord { path: string; kind: SyncKind; sha256: string; bytes: number; data: string; external?: true; semanticHash?:string }
 export interface SyncSnapshot {
-  format: "aw-device-snapshot"; version: 1; id: string; projectId: string; device: SyncDevice;
+  format: "aw-device-snapshot"; version: 1 | 2; id: string; projectId: string; device: SyncDevice;
   createdAt: string; parents: string[]; ancestors: string[]; records: SyncRecord[];
   tombstones: Array<{ path: string; previousHash: string }>;
 }
@@ -30,13 +30,24 @@ export function canonical(value: unknown): string {
   if (value && typeof value === "object") return `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${canonical((value as Record<string, unknown>)[key])}`).join(",")}}`;
   return JSON.stringify(value) ?? "undefined";
 }
+/** Same bytes as canonical(), without materializing a whole base64 packet. */
+export function canonicalHash(value:unknown):string{
+ const hash=createHash('sha256');let chunks:string[]=[],length=0;
+ const flush=()=>{if(chunks.length)hash.update(chunks.join(''));chunks=[];length=0;};
+ const write=(part:string)=>{if(part.length>16384){flush();hash.update(part);}else{chunks.push(part);length+=part.length;if(length>=16384)flush();}};
+ const visit=(item:unknown)=>{if(Array.isArray(item)){write('[');for(let i=0;i<item.length;i++){if(i)write(',');visit(item[i]);}write(']');}else if(item&&typeof item==='object'){write('{');let first=true;for(const key of Object.keys(item).sort()){if(!first)write(',');first=false;write(JSON.stringify(key));write(':');visit((item as Record<string,unknown>)[key]);}write('}');}else write(JSON.stringify(item)??'undefined');};
+ visit(value);flush();return hash.digest('hex');
+}
 const same = (a: unknown, b: unknown) => canonical(a) === canonical(b);
 const object = (value: unknown): value is Record<string, unknown> => Boolean(value && typeof value === "object" && !Array.isArray(value));
-function safeJson(value: unknown, depth = 0, budget = { count: 100000 }) {
+function safeJson(value: unknown, depth = 0, budget = { count: 1000000 }) {
   if (depth > 48 || --budget.count < 0) throw new Error("Sync record is too complex.");
   if (Array.isArray(value)) for (const item of value) safeJson(item, depth + 1, budget);
   else if (object(value)) for (const [key, item] of Object.entries(value)) {
-    if (["__proto__", "prototype", "constructor"].includes(key)) throw new Error("Unsafe sync record key.");
+    // Saved research JSON can use "prototype" as a plain category name. A
+    // scalar cannot carry a prototype chain; object-valued prototype paths
+    // and the mutation keys remain forbidden.
+    if (["__proto__", "constructor"].includes(key) || key === "prototype" && item !== null && typeof item === "object") throw new Error("Unsafe sync record key.");
     safeJson(item, depth + 1, budget);
   }
 }
@@ -45,7 +56,9 @@ export function syncRecord(name: string, kind: SyncKind, bytes: Buffer): SyncRec
   return { path: name, kind, bytes: bytes.length, sha256: syncHash(bytes), data: bytes.toString("base64") };
 }
 export function validSyncReference(record: Omit<SyncRecord, "data">): boolean {
-  return Boolean(record && safeSyncPath(record.path) && kinds.has(record.kind) && digest.test(record.sha256) && Number.isSafeInteger(record.bytes) && record.bytes >= 0 && record.bytes <= syncLimits.fileBytes
+  return Boolean(record && safeSyncPath(record.path) && kinds.has(record.kind) && digest.test(record.sha256) && Number.isSafeInteger(record.bytes) && record.bytes >= 0 && record.bytes <= (record.external === true ? 8*1024**3 : syncLimits.fileBytes)
+    && (record.external === undefined || record.external === true && !["catalogue","review","policy"].includes(record.kind))
+    && (record.external&&record.kind==='experiment'?record.bytes<=syncLimits.fileBytes&&digest.test(record.semanticHash??''):record.semanticHash===undefined)
     && (record.kind !== "catalogue" || record.path === "data/notebook.json")
     && (record.kind !== "review" || record.path === "data/workbench.json")
     && (record.kind !== "policy" || record.path === "project/manuscripts.json")
@@ -58,14 +71,19 @@ export function validateDevice(device: unknown): asserts device is SyncDevice {
 }
 export function validateSnapshot(value: unknown): asserts value is SyncSnapshot {
   const packet = value as SyncSnapshot;
-  if (!packet || packet.format !== "aw-device-snapshot" || packet.version !== syncLimits.version) throw new Error("Unsupported sync format. Update Aw before comparing; no records changed.");
+  if (!packet || packet.format !== "aw-device-snapshot" || ![1,2].includes(packet.version)) throw new Error("Unsupported sync format. Update Aw before comparing; no records changed.");
   safeJson(packet);
   validateDevice(packet.device);
   if (Object.keys(packet).some(key => !["format", "version", "id", "projectId", "device", "createdAt", "parents", "ancestors", "records", "tombstones"].includes(key))) throw new Error("Unsupported snapshot header fields.");
-  if (!safeSyncId(packet.projectId) || !digest.test(packet.id) || typeof packet.createdAt !== "string" || !Number.isFinite(Date.parse(packet.createdAt)) || !Array.isArray(packet.parents) || packet.parents.length > 2 || !Array.isArray(packet.ancestors) || packet.ancestors.length > syncLimits.ancestors || !Array.isArray(packet.records) || packet.records.length > syncLimits.records || !Array.isArray(packet.tombstones) || packet.tombstones.length > syncLimits.records) throw new Error("Invalid snapshot header.");
+  const countLimit=packet.version===2?50000:syncLimits.records;
+  if (!safeSyncId(packet.projectId) || !digest.test(packet.id) || typeof packet.createdAt !== "string" || !Number.isFinite(Date.parse(packet.createdAt)) || !Array.isArray(packet.parents) || packet.parents.length > 2 || !Array.isArray(packet.ancestors) || packet.ancestors.length > syncLimits.ancestors || !Array.isArray(packet.records) || packet.records.length > countLimit || !Array.isArray(packet.tombstones) || packet.tombstones.length > countLimit) throw new Error("Invalid snapshot header.");
   if ([...packet.parents, ...packet.ancestors].some(id => !digest.test(id) || id === packet.id) || new Set(packet.ancestors).size !== packet.ancestors.length || new Set(packet.parents).size !== packet.parents.length || packet.parents.some(id => !packet.ancestors.includes(id))) throw new Error("Invalid snapshot ancestry.");
-  const paths = new Set<string>(); let total = 0;
+  const paths = new Set<string>(); let total = 0, externalTotal=0;
   for (const record of packet.records) {
+    if(record.external){
+      if(packet.version!==2||!validSyncReference(record)||record.data!==''||paths.has(record.path.toLowerCase())||(externalTotal+=record.bytes)>128*1024**3)throw new Error('Invalid external evidence reference.');
+      paths.add(record.path.toLowerCase());continue;
+    }
     if (!validSyncReference(record) || paths.has(record.path.toLowerCase()) || (total += record.bytes) > syncLimits.totalBytes || typeof record.data !== "string" || record.data.length > Math.ceil(record.bytes / 3) * 4) throw new Error("Invalid or oversized snapshot file.");
     paths.add(record.path.toLowerCase());
     const bytes = Buffer.from(record.data, "base64");
@@ -76,17 +94,17 @@ export function validateSnapshot(value: unknown): asserts value is SyncSnapshot 
     paths.add(item.path.toLowerCase());
   }
   const { id, ...body } = packet;
-  if (syncHash(canonical(body)) !== id) throw new Error("Snapshot manifest checksum mismatch.");
+  if (canonicalHash(body) !== id) throw new Error("Snapshot manifest checksum mismatch.");
 }
-export function makeSnapshot(projectId: string, device: SyncDevice, records: SyncRecord[], parent?: SyncSnapshot): SyncSnapshot {
+export function makeSnapshot(projectId: string, device: SyncDevice, records: SyncRecord[], parent?: SyncSnapshot, version?:1|2): SyncSnapshot {
   if (parent) { validateSnapshot(parent); if (parent.projectId !== projectId) throw new Error("The parent belongs to another project."); }
   const paths = new Set(records.map(record => record.path));
   if (parent?.tombstones.some(item => paths.has(item.path))) throw new Error("A previously deleted path reappeared. Preserve both versions for deliberate restoration.");
-  const body = { format: "aw-device-snapshot" as const, version: 1 as const, projectId, device, createdAt: new Date().toISOString(),
+  const body = { format: "aw-device-snapshot" as const, version: version??(records.some(r=>r.external)||parent?.version===2?2:1) as 1|2, projectId, device, createdAt: new Date().toISOString(),
     parents: parent ? [parent.id] : [], ancestors: parent ? [...new Set([parent.id, ...parent.ancestors])] : [],
     records: [...records].sort((a, b) => a.path.localeCompare(b.path)),
     tombstones: [...(parent?.tombstones ?? []), ...(parent?.records.filter(record => !paths.has(record.path)).map(record => ({ path: record.path, previousHash: record.sha256 })) ?? [])].sort((a, b) => a.path.localeCompare(b.path)) };
-  const snapshot = { ...body, id: syncHash(canonical(body)) }; validateSnapshot(snapshot); return snapshot;
+  const snapshot = { ...body, id: canonicalHash(body) }; validateSnapshot(snapshot); return snapshot;
 }
 
 /** Both inputs must have been collected/reconciled, not merely received. A
@@ -101,10 +119,10 @@ export function makeMergedSnapshot(projectId: string, device: SyncDevice, record
     }
     for (const record of parent.records) if (!paths.has(record.path)) { if (deleted.has(record.path) && deleted.get(record.path) !== record.sha256) throw new Error("Ambiguous deleted variants remain held."); deleted.set(record.path, record.sha256); }
   }
-  const body = { format: "aw-device-snapshot" as const, version: 1 as const, projectId, device, createdAt: new Date().toISOString(), parents: parents.map(parent => parent.id),
+  const body = { format: "aw-device-snapshot" as const, version: (records.some(r=>r.external)||parents.some(p=>p.version===2)?2:1) as 1|2, projectId, device, createdAt: new Date().toISOString(), parents: parents.map(parent => parent.id),
     ancestors: [...new Set(parents.flatMap(parent => [parent.id, ...parent.ancestors]))].sort(), records: [...records].sort((a,b) => a.path.localeCompare(b.path)),
     tombstones: [...deleted].sort(([a],[b]) => a.localeCompare(b)).map(([name,previousHash]) => ({ path:name,previousHash })) };
-  const snapshot = { ...body, id: syncHash(canonical(body)) }; validateSnapshot(snapshot); return snapshot;
+  const snapshot = { ...body, id: canonicalHash(body) }; validateSnapshot(snapshot); return snapshot;
 }
 
 function mergeJson(base: unknown, local: unknown, remote: unknown, file: string, field: string, conflicts: SyncConflict[]): unknown {
@@ -144,7 +162,7 @@ function mergeJson(base: unknown, local: unknown, remote: unknown, file: string,
   return conflict("overlapping-change");
 }
 
-export function previewSync(base: SyncSnapshot, local: SyncSnapshot, remote: SyncSnapshot): SyncPlan {
+export function previewSync(base: SyncSnapshot, local: SyncSnapshot, remote: SyncSnapshot, resolve?:(record:SyncRecord)=>SyncRecord): SyncPlan {
   for (const snapshot of [base, local, remote]) validateSnapshot(snapshot);
   if (base.projectId !== local.projectId || base.projectId !== remote.projectId) throw new Error("Snapshots belong to different projects.");
   if (local.device.id === remote.device.id) throw new Error("Both copies have the same device ID. Set up a distinct identity before synchronizing.");
@@ -156,11 +174,11 @@ export function previewSync(base: SyncSnapshot, local: SyncSnapshot, remote: Syn
   // Reject cross-platform casing ambiguity across packets, not just within one.
   if (new Set(paths.map(name => name.toLowerCase())).size !== paths.length) throw new Error("File paths differ only by letter case. Keep both and rename deliberately before syncing.");
   for (const name of paths) {
-    const [b, l, r] = maps.map(map => map.get(name)), hashes = [b, l, r].map(record => record?.sha256);
+    const [b, l, r] = maps.map(map => {const record=map.get(name);return record?.external&&resolve?resolve(record):record;}), hashes = [b, l, r].map(record => record?.sha256);
     const conflict = (reason: string) => plan.conflicts.push({ path: name, field: "", reason, base: b, local: l, remote: r });
     try {
       for (const record of [b, l, r]) {
-        if (!record || !["catalogue", "experiment"].includes(record.kind)) continue;
+        if (!record || record.external || !["catalogue", "experiment"].includes(record.kind)) continue;
         const value = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(Buffer.from(record.data, "base64"))); safeJson(value);
         if (record.kind === "catalogue") {
           if (!object(value) || value.version !== 1 || !Number.isSafeInteger(value.revision) || Number(value.revision) < 0) throw new Error("Unknown catalogue schema.");

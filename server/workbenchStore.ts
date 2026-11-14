@@ -1,5 +1,5 @@
 import { lstat, mkdir, readFile, writeFile } from "node:fs/promises";
-import { randomUUID } from "node:crypto";
+import { randomUUID, createHash } from "node:crypto";
 import path from "node:path";
 import type { WorkbenchData, WorkbenchStore } from "../src/types.ts";
 import { emptyWorkbench } from "../src/workbench.ts";
@@ -8,6 +8,7 @@ import { replaceFile } from "./atomicFile.ts";
 import { sourceSnapshotLimits } from "../src/taskSource.ts";
 import { validateReturnAnchor } from "../src/sourceAnchors.ts";
 import { validateWritingTask } from "../src/writing.ts";
+import { withRecordLock } from "./recordLock.ts";
 
 const maxBytes = 4_000_000;
 function object(value: unknown): asserts value is Record<string, any> {
@@ -76,6 +77,12 @@ function task(value: unknown) {
     if (review.kind === "comment") {
       choice(review.author, ["human", "assistant"]); text(review.body, 6000); text(review.quote, 12000);
       strings(review, ["resolvedAt", "batchId", "externalId", "replyTo"], true); boolean(review.editedByHuman);
+      if (review.humanDecision !== undefined) {
+        object(review.humanDecision); choice(review.humanDecision.action, ["resolve", "reopen"]);
+        if (Object.keys(review.humanDecision).some(key => !["action", "at"].includes(key)) || typeof review.humanDecision.at!=='string' || !Number.isFinite(Date.parse(review.humanDecision.at))
+          || (review.humanDecision.action === "resolve") !== (value.status === "reviewed")
+          || review.humanDecision.action === "resolve" && review.resolvedAt !== review.humanDecision.at) throw new Error("Invalid explicit comment decision.");
+      }
       const source = value.sourceSnapshot.paragraphs.find((p: any) => p.id === value.paragraphId);
       if (!source || value.sourceSnapshot.paragraphs.length !== 1 || !Number.isInteger(review.start) || !Number.isInteger(review.end) || review.start < 0 || review.end <= review.start || review.end > source.text.length || source.text.slice(review.start, review.end) !== review.quote
         || !["queued", "reviewed"].includes(value.status) || (value.status === "reviewed") !== Boolean(review.resolvedAt) || value.ticket || value.localJobId || value.sessionId || value.subscriptionJobId) throw new Error("Invalid review comment anchor or resolution.");
@@ -174,12 +181,16 @@ export async function readWorkbench(workspace: string, projectId: string): Promi
 }
 export class WorkbenchConflict extends Error {}
 const writes = new Map<string, Promise<void>>();
-export function writeWorkbench(workspace: string, projectId: string, revision: number, data: unknown): Promise<WorkbenchStore> {
+export function writeWorkbench(workspace: string, projectId: string, revision: number, data: unknown, expectedHash?: string): Promise<WorkbenchStore> {
   const key = `${path.resolve(workspace)}:${projectId}`;
   const operation = (writes.get(key) ?? Promise.resolve()).then(async () => {
     validateWorkbench(data);
     if (!Number.isSafeInteger(revision) || revision < 0) throw new Error("Invalid saved work revision.");
     const { folder, target, backup } = await storage(workspace, projectId);
+    return withRecordLock(target, async () => {
+    const bytes = await readFile(target).catch(error => { if(error.code==='ENOENT')return undefined; throw error; });
+    const originalHash = bytes ? createHash('sha256').update(bytes).digest('hex') : '';
+    if(expectedHash!==undefined && expectedHash!==originalHash)throw new WorkbenchConflict('Review bytes changed; inspect current comments before retry.');
     const previous = await readWorkbench(workspace, projectId);
     if (previous.revision !== revision) throw new WorkbenchConflict("Saved work changed in another window. Reload before saving.");
     await mkdir(folder, { recursive: true });
@@ -193,8 +204,11 @@ export function writeWorkbench(workspace: string, projectId: string, revision: n
     }
     const temporary = path.join(folder, `workbench-${randomUUID()}.tmp`);
     await writeFile(temporary, JSON.stringify(result), { encoding: "utf8", flag: "wx" });
+    const current=await readFile(target).catch(error=>{if(error.code==='ENOENT')return undefined;throw error;});
+    if((current?createHash('sha256').update(current).digest('hex'):'')!==originalHash)throw new WorkbenchConflict('Review changed outside this save; current comments and prepared draft retained.');
     await replaceFile(temporary, target);
     return result;
+    });
   });
   const tail = operation.then(() => undefined, () => undefined); writes.set(key, tail);
   void tail.then(() => { if (writes.get(key) === tail) writes.delete(key); });

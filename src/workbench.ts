@@ -89,7 +89,7 @@ export function restoreWorkbenchDraft(state: AppState, id: string): AppState {
       archivedStatus: draft.value.reply?.trim() || draft.value.replyDraft?.trim() ? "ready" as const : "failed" as const,
       ticket: undefined, sessionId: undefined, localJobId: undefined, subscriptionJobId: undefined,
       error: "Recovered draft. No request was sent again; the original record is kept in Saved work.", updatedAt: now };
-    if (task.review?.kind === "comment") task.review = { ...task.review, resolvedAt: undefined };
+    if (task.review?.kind === "comment") task.review = { ...task.review, resolvedAt: undefined, humanDecision: undefined };
     return { ...state, recoveredWorkbenchDrafts, attentionTasks: [...state.attentionTasks, task] };
   }
   return { ...state, recoveredWorkbenchDrafts, rewriteSessions: [...state.rewriteSessions,

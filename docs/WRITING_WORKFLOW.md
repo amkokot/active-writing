@@ -96,3 +96,13 @@ Use a disposable manuscript on an isolated Aw origin, never a working paper curr
 5. Set aside the second paragraph and add a short optional reason. Confirm the next brief includes that reason. Try undoing a placed draft after changing its words; it must refuse to erase those later edits.
 
 Automated regressions cover these data transitions and real multi-file saves. A visual interaction trial is still needed to judge spacing, focus and perceived friction; passing data tests is not a substitute for that observation.
+
+## Keep useful editing examples
+
+Explicit praise, rejection or a chosen revision can become a preference example
+without another human form. Follow [Writing preferences](WRITING_PREFERENCES.md):
+keep exact snippets/context and feedback references, batch the private records
+and link from the owning notebook. A discarded proposal is not inherently bad;
+a model replacement is not inherently preferred. This never changes approval,
+locks or comment resolution, and does not start training or synthesis.
+

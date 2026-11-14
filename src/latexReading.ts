@@ -1,6 +1,6 @@
 import { mathParts } from "./mathText.ts";
 import { groupAt, referenceTokens, safeLink } from "./references.ts";
-import type { ReferenceToken } from "./types.ts";
+import type { ProjectDocument, ReferenceToken } from "./types.ts";
 import { compactAwReference } from "./researchLinks.ts";
 
 /** A bounded prose adapter, never a TeX evaluator or source rewrite. */
@@ -43,7 +43,7 @@ export function latexReading(text: string, depth = 0): string {
 }
 
 /** References use the app's resolver, never an invented PDF/label destination. */
-export function readingReferences(text: string) {
+export function readingReferences(text: string, labels?: ReadonlyMap<string, string>) {
   const protectedParts = mathParts(text, Infinity).filter(part => part.math || part.code);
   const references = new Map<string, ReferenceToken>();
   let cursor = 0, result = "", protectedIndex = 0;
@@ -52,11 +52,30 @@ export function readingReferences(text: string) {
     if (token.kind === "url" || protectedParts[protectedIndex] && token.start >= protectedParts[protectedIndex].start && token.start < protectedParts[protectedIndex].end) continue;
     const key = `#aw-reading-reference-${references.size}`;
     references.set(key, token);
-    let label = token.kind === "citation" ? `[${token.keys.join(", ")}]` : token.keys.join(", ");
+    let label = token.kind === "citation" ? `[${token.keys.join(", ")}]`
+      : token.keys.map(key => /^\\ref\*?(?![A-Za-z])/.test(token.raw) ? labels?.get(key) ?? key : key).join(", ");
     if (/^\\eqref/.test(token.raw)) label = `(${label})`;
     if (/^\\hyperref/.test(token.raw)) label = groupAt(token.raw, token.raw.indexOf("{"))?.text ?? label;
     result += text.slice(cursor, token.start) + `[${label.replace(/([\[\]])/g, "\\$1")}](${key})`;
     cursor = token.end;
   }
   return { text: result + text.slice(cursor), references };
+}
+
+/** Only literal labels on numbered structural openings have known numbers.
+ * Never guess equation/page numbers from their enclosing theorem or section. */
+export function readingLabelNumbers(document: Pick<ProjectDocument, "nodes" | "labels">) {
+  const result = new Map<string, string>();
+  const counts = new Map<string, number>();
+  for (const label of document.labels ?? []) counts.set(label.key, (counts.get(label.key) ?? 0) + 1);
+  for (const node of document.nodes) {
+    const opening = node.sourceOpening?.text ?? "";
+    const number = node.environmentNumber ? node.title.match(/^[^\d]*([\d]+(?:\.[\d]+)*)(?:\s|$)/)?.[1]
+      : !node.environment && !/^\\\w+\*/.test(opening) && node.sectionCounters
+        ? Object.values(node.sectionCounters).slice(0, node.depth + 1).join(".") : undefined;
+    if (!number) continue;
+    const masked = opening.replace(/(?<!\\)%[^\r\n]*/g, match => " ".repeat(match.length));
+    for (const match of masked.matchAll(/\\label\s*\{([^}]+)\}/g)) if (counts.get(match[1]) === 1) result.set(match[1], number);
+  }
+  return result;
 }

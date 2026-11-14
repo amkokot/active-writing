@@ -8,6 +8,9 @@ export function useSharedStorePoll(projectId: string | undefined, kind: "noteboo
   useEffect(() => {
     if (!projectId || !ready) return;
     let cancelled = false, running = false, failures = 0;
+    // Comments are a live editing surface; large notebook histories can stay on
+    // the slower cadence. Conditional reads return no body when unchanged.
+    const interval = kind === "workbench" ? 2_000 : 12_000;
     let timer: ReturnType<typeof setTimeout>;
     const check = async () => {
       if (cancelled || running) return;
@@ -15,12 +18,12 @@ export function useSharedStorePoll(projectId: string | undefined, kind: "noteboo
       if (window.document.visibilityState === "hidden") { timer = setTimeout(check, 30_000); return; }
       running = true;
       try { await poll(); failures = 0; } catch { failures++; /* Own drafts are never replaced on a failed read. */ }
-      finally { running = false; if (!cancelled) timer = setTimeout(check, Math.min(60_000, 12_000 * Math.max(1, failures))); }
+      finally { running = false; if (!cancelled) timer = setTimeout(check, Math.min(60_000, interval * Math.max(1, failures))); }
     };
     const wake = () => { if (!cancelled) void check(); };
     const unsubscribe = subscribeWindowMessages(message => { if (message.projectId === projectId && message.kind === kind) wake(); });
     window.addEventListener("focus", wake); window.document.addEventListener("visibilitychange", wake);
-    timer = setTimeout(check, 12_000);
+    timer = setTimeout(check, interval);
     return () => { cancelled = true; clearTimeout(timer); unsubscribe(); window.removeEventListener("focus", wake); window.document.removeEventListener("visibilitychange", wake); };
   }, [projectId, kind, ready, poll]);
 }

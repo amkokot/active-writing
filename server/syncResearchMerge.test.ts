@@ -12,7 +12,7 @@ import { readNotebook, writeNotebook } from "./notebookStore.ts";
 import { readExperiments, writeExperiments } from "./experiments.ts";
 import { newExperimentNotebook } from "../src/experiments.ts";
 import { emptyWorkbench } from "../src/workbench.ts";
-import { writeWorkbench } from "./workbenchStore.ts";
+import { writeWorkbench,readWorkbench } from "./workbenchStore.ts";
 import { acquireRecordLock } from "./recordLock.ts";
 import { guardedFileHash, saveGuardedFile } from "./guardedFile.ts";
 import { syncCommand } from "../scripts/awSync.ts";
@@ -51,9 +51,38 @@ const preview = (f: Awaited<ReturnType<typeof fixture>>) => previewResearchMerge
 const commit = (f: Awaited<ReturnType<typeof fixture>>, id: string, hooks?: Parameters<typeof commitResearchMerge>[5]) => commitResearchMerge(f.workspace, f.projectId, f.planId, id, {}, hooks);
 const modify = (records: SyncRecord[], name: string, fn: (value: any) => void) => { const index = records.findIndex(record => record.path === name), record = records[index], value = JSON.parse(Buffer.from(record.data, "base64").toString()); fn(value); records[index] = syncRecord(name, record.kind, Buffer.from(JSON.stringify(value))); };
 
+test('comment collection tolerates earlier counter-only housekeeping and resumes without a second native save',async()=>{
+ const f=await fixture(),records=structuredClone(f.remote.records);
+ modify(records,'data/workbench.json',value=>{value.revision=2;value.attentionTasks=[{id:'remote-comment',title:'Clarify',nodeId:'node',paragraphId:'p',route:'local',status:'queued',createdAt:stamp,updatedAt:stamp,
+  sourceSnapshot:{version:1,projectId:f.projectId,rootFile:'main.tex',revision:'hash',scope:'paragraph',nodeId:'node',nodeTitle:'Scope',paragraphs:[{id:'p',nodeId:'node',file:'main.tex',text:'The claim.'}]},
+  review:{kind:'comment',author:'human',body:'Explain this.',quote:'claim',start:4,end:9}}];});
+ const remote=makeSnapshot(f.projectId,f.remote.device,records,f.remote);await stageSyncSnapshot(f.workspace,f.projectId,remote);
+ const plan=await previewStagedSync(f.workspace,f.projectId,f.local.id,remote.id);f.planId=plan.id;
+ await writeWorkbench(f.workspace,f.projectId,1,emptyWorkbench());await writeWorkbench(f.workspace,f.projectId,2,emptyWorkbench());
+ const p=await preview(f);assert.equal(p.complete,true);
+ await assert.rejects(commit(f,p.mergeId,{afterFile:name=>{if(name==='data/workbench.json')throw new Error('Synthetic interruption after native review save');}}),/Synthetic interruption/);
+ const saved=await readWorkbench(f.workspace,f.projectId);assert.equal(saved.revision,4);assert.equal(saved.attentionTasks[0].status,'queued');
+ await commit(f,p.mergeId);assert.equal((await readWorkbench(f.workspace,f.projectId)).revision,4);assert.equal((await researchMergeStatus(f.workspace,f.projectId,p.mergeId)).completed,true);
+});
+
 test("research merge previews complete independent source, conversations and experiments without live writes", async () => {
   const f = await fixture(), p = await preview(f); assert.equal(p.complete, true); assert.equal(p.liveImport, false); assert.equal(p.approvalGranted, false); assert.deepEqual(p.newEntries, ["new-question"]); assert.equal(p.changes.length, 6);
   assert.equal((await readNotebook(f.workspace, f.projectId)).entries.length, 1); await assert.rejects(stat(path.join(f.root, "sections/new-note.tex")), /ENOENT/); await assert.rejects(stat(path.join(f.workspace, ".paperfocus/device-sync/merges")), /ENOENT/);
+});
+
+test('one-sided research protocols and summaries copy exact inert bytes, never executable requests or source code',async()=>{
+ const program="raise RuntimeError('THIS MUST NEVER EXECUTE')\n";
+ const f=await fixture({change:records=>{records.push(syncRecord('data/research/protocol.py','record',Buffer.from(program)));records.push(syncRecord('data/research/summary.json','record',Buffer.from('{"result":"synthetic only"}')));records.push(syncRecord('source/helper.py','source',Buffer.from(program)));}}),p=await preview(f);
+ assert.ok(p.changes.some(c=>c.path==='data/research/protocol.py'));assert.ok(p.changes.some(c=>c.path==='data/research/summary.json'));assert.ok(p.held.some(c=>c.path==='source/helper.py'));
+ const result=await commit(f,p.mergeId);assert.equal(result.codeExecuted,false);assert.equal(result.historyJoined,false);assert.equal(await readFile(path.join(f.data,'research/protocol.py'),'utf8'),program);
+ await assert.rejects(stat(path.join(f.root,'helper.py')),/ENOENT/);
+});
+
+test('generated PDF text/log controls copy literally; manuscript source and binary text remain guarded',async()=>{
+ const extract='Page one\fPage two\u0003 legacy math glyph\n';
+ const f=await fixture({change:records=>{records.push(syncRecord('data/research/build/reading.txt','record',Buffer.from(extract)));records.push(syncRecord('data/research/binary.txt','record',Buffer.from('bad\0binary')));records.push(syncRecord('source/control.tex','source',Buffer.from(extract)));}}),p=await preview(f);
+ assert.ok(p.changes.some(c=>c.path==='data/research/build/reading.txt'));assert.ok(p.held.some(c=>c.path==='data/research/binary.txt'));assert.ok(p.held.some(c=>c.path==='source/control.tex'));
+ await commit(f,p.mergeId);assert.equal(await readFile(path.join(f.data,'research/build/reading.txt'),'utf8'),extract);await assert.rejects(stat(path.join(f.root,'control.tex')),/ENOENT/);
 });
 test("batch retains both humans' source/notes/evidence and publishes the catalogue last", async () => {
   const f = await fixture(), p = await preview(f), done = await commit(f, p.mergeId, { afterCatalogue: async () => {

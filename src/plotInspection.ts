@@ -1,7 +1,10 @@
 import { plotCoordinates, type ExperimentPlot } from "./experiments.ts";
 /** Never mutate the saved series. Retain their indices/colors when hiding them. */
 export function plotWindow(plot: ExperimentPlot, hidden: number[], bounds?: [number, number]): ExperimentPlot {
-  return { ...plot, series: plot.series.map((series, index) => ({ ...series, points: hidden.includes(index) ? [] : bounds ? series.points.filter(([x]) => x >= bounds[0] && x <= bounds[1]) : series.points })) };
+  return { ...plot, series: plot.series.map((series, index) => {
+    const indices = series.points.flatMap(([x], i) => !hidden.includes(index) && (!bounds || x >= bounds[0] && x <= bounds[1]) ? [i] : []);
+    return { ...series, points: indices.map(i => series.points[i]), ...(series.band ? { band: { ...series.band, lower: indices.map(i => series.band!.lower[i]), upper: indices.map(i => series.band!.upper[i]) } } : {}) };
+  }) };
 }
 export function plotViewCoordinates(plot: ExperimentPlot, hidden: number[], bounds?: [number, number], domain?: ExperimentPlot) {
   const view = plotWindow(plot, hidden, bounds);

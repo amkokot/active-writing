@@ -5,10 +5,10 @@ import { zipEntries } from "./sourceZip.ts";
 
 // Distribution is deliberately not a workspace backup. Never walk Aw home,
 // the existing demo paper, personal Codex home, or the development README.
-const rootFiles = ["AGENTS.md", "LICENSE", "package.json", "package-lock.json", "index.html", "vite.config.ts", "tsconfig.json", "tsconfig.app.json", "tsconfig.node.json"];
-const guides = ["AGENT_GUIDE.md", "RESEARCH_WORKFLOW.md", "WRITING_WORKFLOW.md", "REMOTE_RESEARCH.md", "PRESENTATION_REVISION_NOTES.md", "PORTABLE_AW.md", "DEVICE_SYNC.md"];
-const tools = ["awResearch.ts", "awOffline.ts", "awVersions.ts", "awWriting.ts", "awAgentState.ts", "awSync.ts", "awShare.ts", "awShareTypeset.ts", "awSharePdf.py", "syncAgentTrial.mjs", "desktopLauncher.mjs", "desktopServer.mjs", "desktopBuild.mjs", "installDesktopShortcut.ps1", "research-requirements.txt", "scientificSmoke.py", "checkChanges.mjs", "checkPlan.mjs", "shareReaderServer.mjs", "exportAw.mjs", "portableSetup.mjs", "seedWelcome.mjs", "preparePublicAw.mjs", "portableAwTrial.mjs", "uiTrialServer.mjs", "sharingPdfTrial.ts"];
-const deployment = ["project.mjs", "project.test.mjs", "secrets.mjs", "check.mjs", "reader/worker.js", "reader/schema.sql"];
+const rootFiles = ["LICENSE", "package.json", "package-lock.json", "index.html", "vite.config.ts", "tsconfig.json", "tsconfig.app.json", "tsconfig.node.json"];
+const guides = ["REMOTE_REVIEW.md", "DESKTOP_ASSISTANCE.md", "RESEARCH_VISUALS.md", "AGENT_GUIDE.md", "RESEARCH_WORKFLOW.md", "WRITING_WORKFLOW.md", "REMOTE_RESEARCH.md", "PRESENTATION_REVISION_NOTES.md", "PORTABLE_AW.md", "DEVICE_SYNC.md"];guides.push('WRITING_PREFERENCES.md','RESEARCH_CORPUS.md','OUTSIDE_REVIEW.md','MAINTENANCE.md','MODULES.md');const publicGuides=new Set(['DESKTOP_ASSISTANCE.md','REMOTE_RESEARCH.md','OUTSIDE_REVIEW.md','MAINTENANCE.md','MODULES.md']);
+const tools = ["awVisualImport.ts", "examples/research_visuals.py", "awResearch.ts", "awOffline.ts", "awVersions.ts", "awWriting.ts", "awAgentState.ts", "awSync.ts", "awShare.ts", "awShareTypeset.ts", "awSharePdf.py", "syncAgentTrial.mjs", "desktopLauncher.mjs", "desktopServer.mjs", "desktopBuild.mjs", "installDesktopShortcut.ps1", "research-requirements.txt", "scientificSmoke.py", "checkChanges.mjs", "checkPlan.mjs", "shareReaderServer.mjs", "exportAw.mjs", "portableSetup.mjs", "seedWelcome.mjs", "preparePublicAw.mjs", "portableAwTrial.mjs", "uiTrialServer.mjs", "sharingPdfTrial.ts"];
+tools.push("awRemoteBootstrap.py", "awRemoteSession.py", "remotePersistenceProbe.py", "awSyncWatch.ts", "installSyncTask.ps1", "runSyncHidden.vbs", "awPair.ts", "awSyncBlob.ts", "awStore.ts");tools.push("awDelegate.ts", "awDelegate.py", "awDelegateChecks.py", "awLocalRuntime.py");tools.push("awReview.ts");tools.push("OwnedProcessHost.cs");tools.push('devWatch.mjs');tools.push('SyncCoordinatorHost.cs','readingWorkspaceLauncher.mjs','awLinkReading.mjs','awCorpus.ts','awModules.mjs','awSyncJournal.ts','awSyncJournalSetup.ts','awSyncPool.ts','installSyncPool.ps1','installSyncJournal.ps1','installReadingShortcut.ps1','awMaintenance.py','awMaintenanceChecks.py','awMaintenanceSnapshot.ts');const deployment = ["project.mjs", "project.test.mjs", "secrets.mjs", "check.mjs", "reader/worker.js", "reader/schema.sql"];
 const maxFiles = 2500, maxFileBytes = 8 * 1024 * 1024, maxBytes = 48 * 1024 * 1024;
 type Entry = { name: string; data: Buffer };
 type File = { name: string; source: string; size: number; mtimeMs: number; ctimeMs: number };
@@ -105,10 +105,10 @@ async function inventory(root: string) {
     }
   }
   for (const name of rootFiles) await add(name);
-  for (const name of guides) await add(`docs/${name}`);
+  await add('AGENTS.md','distribution/AGENTS.md');  for (const name of guides) await add(`docs/${name}`,publicGuides.has(name)?`distribution/${name}`:`docs/${name}`);
   for (const name of tools) await add(`scripts/${name}`);
   for (const name of deployment) await add(`deploy/cloudflare-reader/${name}`);
-  await add("distribution/.gitignore");
+  await add("distribution/.gitignore");  await add('distribution/check.yml');  await add('.github/workflows/check.yml','distribution/check.yml');
   await add("docs/ONLINE_SHARING.md", "distribution/ONLINE_SHARING.md");
   await add("docs/GETTING_STARTED.md", "distribution/GETTING_STARTED.md");
   await add("deploy/cloudflare-reader/README.md", "distribution/READER_SETUP.md");
@@ -137,10 +137,10 @@ export async function portableEntries(appRoot: string) {
       entries.push({ name: file.name, data: bytes.subarray(0, length) });
     } finally { await handle.close(); }
   }
-  if (JSON.stringify(before) !== JSON.stringify(await inventory(root))) throw new Error("App files changed during export. Try again.");
+  if (JSON.stringify(before) !== JSON.stringify(await inventory(root))) throw new Error("App files changed during export. Try again.");  // Local review accounts and authorizations are not recipient instructions.  for(const entry of entries){    if(entry.name==='docs/AGENT_GUIDE.md'||entry.name==='docs/RESEARCH_WORKFLOW.md'){      const text=entry.data.toString();      entry.data=Buffer.from(text.replace(/\r?\nThe Antigravity pass[\s\S]*?(?=\r?\n## Preferred reading copies|\r?\nFor configured desktop sessions)/,'\nFor an optional outside review, see [OUTSIDE_REVIEW.md](OUTSIDE_REVIEW.md).\nNo external reviewer or permission to send research is configured by default.\n'));    }    if(entry.name==='docs/DEVICE_SYNC.md')entry.data=Buffer.from(entry.data.toString().replaceAll('CIL_ID','PROJECT_ID').replace(/\bCIL\b/g,'example project'));    if(entry.name==='docs/RESEARCH_VISUALS.md')entry.data=Buffer.from(entry.data.toString().replace('diffusion/CIL','a particular topic'));  }
   // No old registry, original demo text or development history travels with Aw.
   const template = (name: string) => entries.find(entry => entry.name === `distribution/${name}`)!.data;
-  entries.push({ name: "README.md", data: template("README.md") }, { name: ".gitignore", data: template(".gitignore") },
+  entries.push({ name: "README.md", data: template("README.md") }, { name: ".gitignore", data: template(".gitignore") },    {name:'CHANGELOG.md',data:template('CHANGELOG.md')},
     { name: ".gitattributes", data: Buffer.from("# Preserve distribution hashes across Git clones on Windows.\n* -text\n") },
     { name: "Set up Aw.cmd", data: Buffer.from('@echo off\r\ncd /d "%~dp0"\r\nnode scripts\\portableSetup.mjs\r\npause\r\n') },
     { name: "Start Aw.cmd", data: Buffer.from('@echo off\r\ncd /d "%~dp0"\r\nnode scripts\\desktopLauncher.mjs\r\nif errorlevel 1 pause\r\n') });

@@ -4,6 +4,7 @@ import path from "node:path";
 import { getProject, inside } from "./projects.ts";
 import { projectDataPath } from "./projectStorage.ts";
 import { sourceEntries } from "./sourceZip.ts";
+import {bulkEnabled,captureBulkRecords,trackedCompiledPdf} from './syncBulkCapture.ts';
 import { withRecordLock } from "./recordLock.ts";
 import { canonical, makeSnapshot, safeSyncId, syncLimits, syncRecord, validateDevice, validateSnapshot, type SyncDevice, type SyncRecord, type SyncSnapshot } from "./syncProtocol.ts";
 
@@ -11,13 +12,18 @@ async function optionalStat(target: string) {
   try { return await lstat(target); } catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined; throw error; }
 }
 async function safePath(root: string, relative: string, missing = false) {
-  let target = root;
+  let target = root, existing = root;
   for (const part of relative.split("/")) {
     if (!part || [".", ".."].includes(part) || /[\\:\x00-\x1f]/.test(part)) throw new Error("Invalid sync storage path.");
     target = path.join(target, part); const stat = await optionalStat(target);
     if (!stat && missing) continue;
-    if (!stat || stat.isSymbolicLink() || !inside(root, await realpath(target))) throw new Error("Sync storage cannot follow links or leave Aw home.");
+    if (!stat || stat.isSymbolicLink()) throw new Error("Sync storage cannot follow links or leave Aw home.");
+    existing = target;
   }
+  // Every component is still lstat-checked above. Resolve the deepest existing
+  // path once, rather than repeating realpath for every common ancestor of
+  // every historical blob. This also fences missing-child preparations.
+  if(!inside(root,await realpath(existing)))throw new Error("Sync storage cannot follow links or leave Aw home.");
   return target;
 }
 async function syncFolder(workspace: string, create = false) {
@@ -56,7 +62,7 @@ export async function syncStatus(workspace: string) {
   let device: SyncDevice | undefined;
   if (await optionalStat(target)) { device = JSON.parse((await boundedFile(target, 2000)).toString()); validateDevice(device); }
   return { version: 1, device, stage: "preview-only" as const, connected: false, applySupported: false, transportSupported: true,
-    capabilities: { researchMerge: true, privateExchange: true, sshExchange: true, reviewedTwoCopySync: true, automaticSync: false, remoteCompute: false, protectedStateImport: false }, folder };
+    capabilities: { researchMerge: true, privateExchange: true, sshExchange: true, reviewedTwoCopySync: true, automaticSync: true, automaticSyncControl: "cli", streamingBlobs:true, remoteCompute: false, protectedStateImport: false }, folder };
 }
 export async function initializeSyncDevice(workspace: string, label: string) {
   const device: SyncDevice = { version: 1, id: randomUUID(), label: label?.trim() }; validateDevice(device);
@@ -84,7 +90,7 @@ function recordKind(name: string): SyncRecord["kind"] {
 async function captureRecords(workspace: string, projectId: string) {
   const home = await realpath(workspace), { project, root } = await getProject(home, projectId);
   if (!safeSyncId(projectId)) throw new Error("Choose a registered project.");
-  const records = (await sourceEntries(home, projectId)).map(entry => syncRecord(`source/${entry.name}`, /\.(tex|bib|md|txt|py|json|yaml|yml|sty|cls)$/i.test(entry.name) ? "source" : "asset", entry.data));
+  const records = (await sourceEntries(home, projectId,{retainCompiledPdf:await trackedCompiledPdf(home,projectId,project.mainFile)})).map(entry => syncRecord(`source/${entry.name}`, /\.(tex|bib|md|txt|py|json|yaml|yml|sty|cls)$/i.test(entry.name) ? "source" : "asset", entry.data));
   const data = projectDataPath(home, projectId), relativeData = path.relative(home, data).replaceAll("\\", "/");
   await safePath(home, relativeData, true);
   if (await optionalStat(path.join(root, ".paperfocus"))) throw new Error("Paper-local legacy Aw storage must be checked/migrated before making a sync snapshot. It was not changed.");
@@ -116,19 +122,20 @@ async function captureRecords(workspace: string, projectId: string) {
   // Device-local paths, active UI selection, credentials and Git remotes are
   // not project policy. Publication purpose/lineage remain protected records.
   records.push(syncRecord("project/manuscripts.json", "policy", Buffer.from(JSON.stringify({ name: project.name, createdAt: project.createdAt,
-    manuscriptPurposes: project.manuscriptPurposes ?? {}, manuscriptVersions: project.manuscriptVersions ?? [], manuscriptOverviewTargets: project.manuscriptOverviewTargets ?? {} }))));
+    manuscriptPurposes: project.manuscriptPurposes ?? {}, manuscriptVersions: project.manuscriptVersions ?? [], manuscriptOverviewTargets: project.manuscriptOverviewTargets ?? {}, ...(project.manuscriptPins ? { manuscriptPins: project.manuscriptPins } : {}) }))));
   return records.sort((a, b) => a.path.localeCompare(b.path));
 }
-export async function captureSyncSnapshot(workspace: string, projectId: string, parent?: SyncSnapshot) {
+export async function captureSyncSnapshot(workspace: string, projectId: string, parent?: SyncSnapshot,options:{forceFull?:boolean}={}) {
   const status = await syncStatus(workspace);
   if (!status.device) throw new Error("Name this installation with awSync init before capturing.");
   if (parent) { validateSnapshot(parent); if (parent.projectId !== projectId) throw new Error("Parent snapshot belongs to another project."); }
-  const before = await captureRecords(workspace, projectId), after = await captureRecords(workspace, projectId);
+  const bulk=await bulkEnabled(workspace,projectId),capture=bulk?(home:string,id:string)=>captureBulkRecords(home,id,options.forceFull):captureRecords;
+  const before = await capture(workspace, projectId), after = await capture(workspace, projectId);
   const fingerprint = (records: SyncRecord[]) => canonical(records.map(({ path: name, sha256, kind }) => ({ path: name, sha256, kind })));
   if (fingerprint(before) !== fingerprint(after)) throw new Error("Source or research records changed during capture. No snapshot saved; retry after saves settle.");
   const current = await syncStatus(workspace);
   if (current.device?.id !== status.device.id) throw new Error("Device identity changed during capture.");
-  return makeSnapshot(projectId, status.device, before, parent);
+  return makeSnapshot(projectId, status.device, before, parent,bulk?2:undefined);
 }
 export async function readSyncSnapshot(file: string): Promise<SyncSnapshot> {
   const snapshot = JSON.parse((await boundedFile(path.resolve(file), syncLimits.packetBytes)).toString("utf8"));

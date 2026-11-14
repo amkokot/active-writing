@@ -53,6 +53,8 @@ export interface Paragraph {
 
 export type ManuscriptPurpose = "notes" | "overview" | "publication";
 export interface PaperProject {
+  /** Private research-directory project with audience-filtered sharing. */
+  researchCorpus?: boolean;
   id: string;
   name: string;
   folder: string;
@@ -66,6 +68,8 @@ export interface PaperProject {
   manuscriptPurposes?: Record<string, ManuscriptPurpose>;
   /** Collaborator overview -> independent main manuscript root, not an include. */
   manuscriptOverviewTargets?: Record<string, string>;
+  /** Preferred existing root per purpose. Aw metadata, never TeX content or approval. */
+  manuscriptPins?: Partial<Record<ManuscriptPurpose, string>>;
 }
 
 export interface ManuscriptVersion {
@@ -304,6 +308,8 @@ export interface ReviewComment {
   end: number;
   quote: string;
   resolvedAt?: string;
+  /** Explicit UI action, copied by sync; never inferred from a reply/source edit. */
+  humanDecision?: { action: "resolve" | "reopen"; at: string };
   editedByHuman?: boolean;
   batchId?: string;
   externalId?: string;
@@ -375,6 +381,9 @@ export interface AppState {
   progressByNode: Record<string, ProgressState>;
   paragraphEdits: Record<string, string>;
   draftRevision?: string;
+  /** Original edited passages, retained across restarts without copying the whole paper. */
+  draftBase?: { projectId: string; rootFile: string; engine?: string; revision: string;
+    paragraphs: Array<Pick<Paragraph, "id" | "nodeId" | "file" | "text"> & { unique: boolean }> };
   /** Root ownership prevents another window's main-file change from misapplying a draft. */
   draftMainFile?: string;
   /** Saved raw regions retain ownership when typing crosses a structural save. */
@@ -563,7 +572,14 @@ export interface PendingSelection extends SelectedPassage {
   spans?: SelectedPassage[];
 }
 
+export interface SectionPdfPart {
+  nodeId: string; title: string; paragraphIds: string[]; artifactKey: string;
+  pdfUrl: string; compiledAt: string; pageCount: number; pageOffset: number;
+  cacheHit: boolean; unavailablePdfDestinations?: string[];
+}
+
 export interface CompileResult {
+  corpusRevision?: string;
   mode: CompileMode;
   success: boolean;
   pdfUrl?: string;
@@ -578,11 +594,14 @@ export interface CompileResult {
   engine?: PaperProject["engine"];
   viewNote?: string;
   unavailablePdfDestinations?: string[];
-  scope?: { focusNodeId?: string; lens?: Lens; hiddenNodeIds?: string[]; paragraphIds?: string[] };
+  scope?: { focusNodeId?: string; lens?: Lens; hiddenNodeIds?: string[]; paragraphIds?: string[]; sectionPdf?: boolean };
   artifactKey?: string;
   cacheHit?: boolean;
   requestedAt?: string;
   originalPages?: number[];
+  draft?: boolean;
+  reusedAuxiliaries?: number;
+  sectionParts?: SectionPdfPart[];
 }
 
 export interface PreviewLocation { paragraphId?: string; page?: number; x?: number; y?: number; sequence: number; edge?: "start" | "end" }

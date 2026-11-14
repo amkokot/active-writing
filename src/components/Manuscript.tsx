@@ -4,7 +4,7 @@ import { referenceTokens, sourceReferenceSummary, expandSourceReference } from "
 import { deleteSourceText, editableCaret, editableText, editableRangeAt, restoreEditableCaret, splitEditCaret } from "../editableText";
 import { chunkAtOffset, hasTrailingLineBreak, joinChunkAtStart, removeEmptyChunk, sourceChunks } from "../sourceChunks";
 import { clipSelectedChunks } from "../selectionPassages";
-import { highlightActionsPosition, arrowBlockDirection, blockActionsBottom } from "../editorGeometry";
+import { highlightActionsPosition, arrowBlockDirection, blockActionsBottom, sameBlockAnnotations } from "../editorGeometry";
 import type { ChunkAction } from "../sourceChunks";
 import type { QueuedPassage } from "../queueEntries";
 import { completeTypedEnvironment, type BlockTypes, type BlockTypeControl, type EnvironmentFields } from "../environmentEditing";
@@ -144,8 +144,8 @@ const ManuscriptBlock = memo(function ManuscriptBlock({ blockCommentCounts, onOp
     {!explicitBlocks && node.sourceClosing && (node.sourceLastParagraphId ? paragraphs.at(-1)?.id===node.sourceLastParagraphId : !node.paragraphIds.length) && <SourceCommand nodeId={node.id} closing command={node.sourceClosing} editable={editable} editing={commandEditing}/>}
   </section>;
 }, (before, after) => {
-  if (before.blockCommentCounts !== after.blockCommentCounts || before.onOpenBlockComments !== after.onOpenBlockComments) return false;
-  if (before.writingMarkers !== after.writingMarkers || before.onWritingReview !== after.onWritingReview) return false;
+  if (before.onOpenBlockComments !== after.onOpenBlockComments || before.onWritingReview !== after.onWritingReview) return false;
+  if (!sameBlockAnnotations([sourceCommandId(before.node.id, "opening"), ...before.paragraphs.map(p=>p.id)], before.blockCommentCounts, after.blockCommentCounts, before.writingMarkers, after.writingMarkers)) return false;
   if (before.commandEditing !== after.commandEditing) return false;
   if(before.explicitBlocks!==after.explicitBlocks || before.onOpenSourceCommand!==after.onOpenSourceCommand || before.node.sourceLastParagraphId!==after.node.sourceLastParagraphId || before.node.sourceOpening?.text!==after.node.sourceOpening?.text || before.node.sourceOpening?.start!==after.node.sourceOpening?.start || before.node.sourceClosing?.text!==after.node.sourceClosing?.text || before.node.sourceClosing?.start!==after.node.sourceClosing?.start)return false;
   if (before.active !== after.active || before.turbo !== after.turbo || before.editable !== after.editable || before.stateLabel !== after.stateLabel || before.showHeading !== after.showHeading || before.linkedProof !== after.linkedProof || before.headingTitle !== after.headingTitle
@@ -228,7 +228,7 @@ export function SourceParagraph({ paragraph, text, editable, onEdit, onReference
     const chunk = element ? chunks[Number(element.dataset.chunkIndex)] : chunkAtOffset(chunks, editableCaret(root) ?? 0);
     if (!chunk) return;
     const span = element ?? root.querySelector<HTMLElement>(`[data-chunk-index="${chunks.indexOf(chunk)}"]`);
-    root.querySelectorAll<HTMLElement>(":scope > .source-chunk").forEach(c => { c.dataset.active = String(c === span); });
+    root.querySelectorAll<HTMLElement>(":scope > .source-chunk").forEach(c => { const active=String(c===span);if(c.dataset.active!==active)c.dataset.active=active; });
     const shell = shellRef.current;
     // offsetTop can refer to a different positioned ancestor. Measure relative
     // to the actual control host, removing pane zoom from viewport coordinates.
@@ -284,7 +284,7 @@ export function SourceParagraph({ paragraph, text, editable, onEdit, onReference
     const live = editableText(root), value = expected ?? live, caret = expectedCaret ?? editableCaret(root), chunks = chunksFor(value);
     const spans = [...root.querySelectorAll<HTMLElement>(":scope > .source-chunk")];
     if (live !== value || spans.length !== chunks.length || spans.some((span, i) => editableText(span) !== chunks[i].text)) { paint(value, true, caret); if (caret !== undefined) restoreEditableCaret(root, caret); }
-    else spans.forEach((span, i) => { span.dataset.empty = String(!chunks[i].text.trim()); });
+    else spans.forEach((span, i) => { const empty=String(!chunks[i].text.trim());if(span.dataset.empty!==empty)span.dataset.empty=empty; });
     const h = history.current;
     if (h.entries[h.index].text !== value) {
       h.entries = [...h.entries.slice(0, h.index + 1), { text: value, caret: caret ?? value.length }];
@@ -475,7 +475,7 @@ export function SourceParagraph({ paragraph, text, editable, onEdit, onReference
         event.preventDefault(); insert("\n");
       }
     }}
-    onKeyUp={() => pickChunk()}
+    onKeyUp={event => { if(event.key.length!==1 || event.ctrlKey || event.metaKey || event.altKey)pickChunk(); }}
     onFocus={(event) => { if (event.target === event.currentTarget) { setEditing(true); setSelected(true); event.currentTarget.querySelectorAll<HTMLElement>(".source-reference").forEach((link) => { if (!link.dataset.compactLabel || link.dataset.referenceExpanded === "true") link.contentEditable = "inherit"; }); normalizeChunks(); } onFocus(paragraph.id, paragraph.nodeId); pickChunk(); }} onInput={() => {
       const root=paragraphRef.current,caret=root && editableCaret(root);
       const completed=root && caret != null && !typeControl?.environment && completeTypedEnvironment(editableText(root),caret,typeControl?.options ?? []);
@@ -598,6 +598,7 @@ export function Manuscript({
   const openDraft = useStableEvent(onOpenRewrite); const focusTurbo = useStableEvent((id: string) => { if (!turbo?.blocked && !readOnly) onTurboFocus?.(id); });
   const chunkAction = useStableEvent((action: ChunkAction, selection: PendingSelection) => onChunkAction(action, pendingSelection?.spans?.some(span => span.paragraphId === selection.paragraphId) ? pendingSelection : selection));
   const blockContext = useStableEvent((id: string, text: string, start: number, end: number) => hasBlockContext?.(id, text, start, end) ?? false);
+  const openBlockComments = useStableEvent((id: string) => onOpenBlockComments?.(id));
   const revealHeldEditor = useStableEvent((target: EventTarget | null) => {
     const held = target instanceof HTMLElement ? target.closest<HTMLElement>('[data-reel-held="true"]') : null;
     if (held?.dataset.reelParagraph && sourceWindow && !sourceWindow.blocked && !pendingSelection && !readOnly) {
@@ -891,7 +892,7 @@ export function Manuscript({
             data-reel-focus={sourceWindow ? String(sourceWindow.paragraphs.some(p => p.id === nodeParagraphs[0]?.id)) : undefined}
             style={sourceWindow ? { opacity: reelOpacity(distanceFromCore, 0) } : undefined}>
           <ManuscriptBlock explicitBlocks={explicitBlocks} onOpenSourceCommand={openSourceCommand} commandEditing={commandEditing} node={node} paragraphs={nodeParagraphs} edits={paragraphEdits} drafts={draftsByParagraph}
-            blockCommentCounts={blockCommentCounts} onOpenBlockComments={onOpenBlockComments}
+            blockCommentCounts={blockCommentCounts} onOpenBlockComments={openBlockComments}
             writingMarkers={writingMarkers} onWritingReview={onWritingReview}
             linkedProof={Boolean(!sourceWindow && focusedNodeId && node.proofFor?.includes(focusedNodeId))}
             headingTitle={!sourceWindow && focusedNodeId && node.proofFor?.includes(focusedNodeId) ? linkedProofTitle(node, nodes) : undefined}

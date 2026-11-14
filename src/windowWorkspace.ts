@@ -46,6 +46,29 @@ type CacheStorage = Pick<Storage, "getItem" | "setItem" | "removeItem"> & Partia
 const recoveryPrefix = "\u0001AWLZW1:";
 const recoveryDictionaryLimit = 131072;
 const recoveryDecodedLimit = 32_000_000;
+const recoveryFieldsPrefix = "\u0001AWFIELDS1:";
+
+/** Immutable top-level fields let typing reuse packed notebook/comment history.
+ * Each saved value is still a complete, synchronous, self-contained recovery. */
+export function createStateRecoveryPacker(pack = packBrowserRecovery) {
+  const fields = new Map<string, {value: unknown; packed?: string}>();
+  return (state: AppState) => {
+    const header: Array<[string, number]> = [], payload: string[] = [];
+    for (const key of Object.keys(state)) {
+      const value = (state as unknown as Record<string, unknown>)[key];
+      let saved = fields.get(key);
+      if (!saved || saved.value !== value) {
+        // Preserve native omission and toJSON's property-key argument.
+        const raw = JSON.stringify({[key]: value});
+        saved = {value, packed: raw === "{}" ? undefined : pack(raw.slice(JSON.stringify(key).length + 2, -1))};
+        fields.set(key, saved);
+      }
+      if (saved.packed !== undefined) { header.push([key, saved.packed.length]); payload.push(saved.packed); }
+    }
+    for (const key of fields.keys()) if (!Object.hasOwn(state, key)) fields.delete(key);
+    return recoveryFieldsPrefix + JSON.stringify(header) + "\n" + payload.join("");
+  };
+}
 
 /** Lossless UTF-16 LZW, with a bounded dictionary and two code units per code.
  * Keep raw snapshots when packing would make them bigger. Shared checkpoints
@@ -72,7 +95,26 @@ export function packBrowserRecovery(raw: string): string {
   return packed.length + 32 < raw.length ? packed : raw;
 }
 
-export function unpackBrowserRecovery(raw: string): string {
+export function unpackBrowserRecovery(raw: string, nesting = 0): string {
+  if (nesting > 4) throw new Error("Invalid nested browser recovery.");
+  if (raw.startsWith(recoveryFieldsPrefix)) {
+    const split = raw.indexOf("\n", recoveryFieldsPrefix.length);
+    if (split < 0 || split > 40_000) throw new Error("Invalid browser recovery fields.");
+    const header = JSON.parse(raw.slice(recoveryFieldsPrefix.length, split)) as unknown;
+    if (!Array.isArray(header) || header.length > 128) throw new Error("Invalid browser recovery fields.");
+    let cursor = split + 1, total = 0; const keys = new Set<string>(), parts: string[] = [];
+    for (const item of header) {
+      if (!Array.isArray(item) || item.length !== 2 || typeof item[0] !== "string" || item[0].length > 200 || keys.has(item[0]) || !Number.isSafeInteger(item[1]) || item[1] < 1 || item[1] > recoveryDecodedLimit || cursor + item[1] > raw.length) throw new Error("Invalid browser recovery fields.");
+      keys.add(item[0]); const field = raw.slice(cursor, cursor + item[1]); cursor += item[1];
+      // Field values use raw JSON or the old bounded LZW format, never nesting.
+      if (field.startsWith(recoveryFieldsPrefix)) throw new Error("Invalid nested browser recovery.");
+      const decoded = unpackBrowserRecovery(field, nesting + 1); JSON.parse(decoded);
+      total += decoded.length; if (total > recoveryDecodedLimit) throw new Error("Browser recovery exceeds its decoded size limit.");
+      parts.push(JSON.stringify(item[0]) + ":" + decoded);
+    }
+    if (cursor !== raw.length) throw new Error("Invalid trailing browser recovery data.");
+    return "{" + parts.join(",") + "}";
+  }
   if (!raw.startsWith(recoveryPrefix)) return raw; // Existing browser records.
   const payload = raw.slice(recoveryPrefix.length);
   if (!payload.length || payload.length % 2) throw new Error("Invalid browser recovery encoding.");
@@ -89,7 +131,9 @@ export function unpackBrowserRecovery(raw: string): string {
     if (previous && next < recoveryDictionaryLimit) dictionary.set(next++, previous + word[0]);
     previous = word;
   }
-  return parts.join("");
+  const decoded = parts.join("");
+  // An older open client may compact an unfamiliar field recovery as LZW.
+  return decoded.startsWith(recoveryFieldsPrefix) ? unpackBrowserRecovery(decoded, nesting + 1) : decoded;
 }
 
 function readRecovery(storage: CacheStorage, key: string) {
@@ -175,15 +219,16 @@ export function experimentRecoverySnapshot(base: unknown, notebook: unknown, ser
 }
 /** Window-local recovery first; the shared checkpoint never lends another live window's draft. */
 export function createWindowStateCache(local: CacheStorage, session: CacheStorage, windowId: string, now = () => Date.now()) {
+  const packState = createStateRecoveryPacker();
   const leaseKey = `active-writing.window.${windowId}.alive`;
   let departed = false;
   const touch = () => { departed = false; writeRecovery(local, leaseKey, String(now()), "local"); };
   const alive = (id: string) => { const raw = local.getItem(`active-writing.window.${id}.alive`); return raw !== null && now() - Number(raw) < 180_000; };
-  const writeSnapshot = (key: string, serialized: string, checkpoint: string) => {
+  const writeSnapshot = (key: string, serialized: string, checkpoint: string, packedState?: string) => {
     // Also repairs old redundant copies when opening their owning notebook.
     if (serialized === "{}") compactSavedExperimentRecoveries(local, key);
     // Publish a pointer only after this window's complete recovery copy exists.
-    const packed = packBrowserRecovery(serialized);
+    const packed = packedState ?? packBrowserRecovery(serialized);
     writeRecovery(session, `${key}.window`, packed, "session");
     writeRecovery(local, `${key}.window.${windowId}`, packed, "local");
     writeRecovery(local, `${key}.window.${windowId}.savedAt`, String(now()), "local"); if (!departed) touch();
@@ -209,9 +254,9 @@ export function createWindowStateCache(local: CacheStorage, session: CacheStorag
       return checkpoint;
     },
     write(key: string, state: AppState, serialized: string) {
-      const checkpoint = { ...state, paragraphEdits: {}, draftRevision: undefined, draftMainFile: undefined, sourceSaveContinuation: undefined,
+      const checkpoint = { ...state, paragraphEdits: {}, draftRevision: undefined, draftBase: undefined, draftMainFile: undefined, sourceSaveContinuation: undefined,
         notebookEntries: [], attentionTasks: [], rewriteSessions: [], handoffDrafts: {}, recoveredWorkbenchDrafts: [], notebookSync: undefined, notebookRevision: undefined, workbenchSync: undefined };
-      writeSnapshot(key, serialized, JSON.stringify(checkpoint));
+      writeSnapshot(key, serialized, JSON.stringify(checkpoint), serialized.length < 4096 || serialized.length > recoveryDecodedLimit ? undefined : packState(state));
     },
   };
 }

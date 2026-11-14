@@ -10,6 +10,12 @@ import sys
 import time
 import traceback
 
+# Node sends the JSON protocol as UTF-8. Windows locale decoding corrupts
+# mathematical labels and non-ASCII source before exec, even with -I.
+for _stream in (sys.stdin, sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8")
+
 # The host validates this Aw-owned folder. -I still excludes PYTHONPATH and user
 # site packages; adding the directory does not execute its .pth startup files.
 package_folder = os.environ.get("AW_PYTHON_PACKAGES")
@@ -51,11 +57,25 @@ def execute_cell(request, namespace):
         outputs.append({"output_type": "display_data", "data": data, "metadata": {}})
 
     def display_plot(title, series, x_label="x", y_label="y", *, x_scale="linear", y_scale="linear"):
+        """Saved lines; optional band={lower:[...],upper:[...],label:'meaning'} per series.
+
+        Supply actual interval bounds and their meaning (SD, quantiles, CI, etc.).
+        Band x coordinates must strictly increase. No uncertainty is inferred.
+        """
+        series = visual_plain(series)
         if x_scale not in ("linear", "log") or y_scale not in ("linear", "log"):
             raise ValueError("Plot scales must be linear or log")
         if any((x_scale == "log" and p[0] <= 0) or (y_scale == "log" and p[1] <= 0)
                for s in series for p in s["points"]):
             raise ValueError("Log axes need strictly positive values; do not silently drop points")
+        for s in series:
+            if "band" not in s:
+                continue
+            b, points = s["band"], s["points"]
+            if not isinstance(b, dict) or not isinstance(b.get("label"), str) or not b["label"].strip() or len(b["label"]) > 300 or any(not isinstance(b.get(key), list) or len(b[key]) != len(points) for key in ("lower", "upper")):
+                raise ValueError("A band needs matching lower/upper arrays and a label explaining the interval")
+            if any(type(lo) not in (int, float) or type(hi) not in (int, float) or not math.isfinite(lo) or not math.isfinite(hi) or lo > hi or y_scale == "log" and lo <= 0 for lo, hi in zip(b["lower"], b["upper"])) or any(points[i][0] <= points[i-1][0] for i in range(1, len(points))):
+                raise ValueError("Band bounds must be finite and ordered (positive on log axes); x must strictly increase")
         display_data({"application/vnd.paperfocus.plot+json": {
             "title": title, "series": series, "xLabel": x_label, "yLabel": y_label,
             "xScale": x_scale, "yScale": y_scale},
@@ -116,6 +136,12 @@ def execute_cell(request, namespace):
         fallback = title + " (saved sample grid; equal-size tiles; no interpolation or rerun)\n" + x_label + "=" + repr(x) + "\n"
         fallback += "\n".join(y_label + "=" + repr(v) + ": " + repr(row) for v, row in zip(y, values))
         display_data({"application/vnd.paperfocus.heatmap+json": {"title": title, "x": x, "y": y, "values": values, "xLabel": x_label, "yLabel": y_label, "colorScale": color_scale}, "text/plain": fallback})
+
+    import runpy
+    from pathlib import Path
+    visual_helpers = runpy.run_path(str(Path(__file__).with_name("research_visuals.py")))
+    visual_plain = visual_helpers["plain"]
+    visual_helpers["install"](namespace, display_data)
 
     start = time.monotonic()
     error = None

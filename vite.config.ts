@@ -2,6 +2,7 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import { latexPlugin } from "./server/latexPlugin";
 import { desktopInputs, writeDesktopBuildStamp } from "./scripts/desktopBuild.mjs";
+import { developmentWatchIgnored } from "./scripts/devWatch.mjs";
 
 let buildInputs: Awaited<ReturnType<typeof desktopInputs>>;
 
@@ -15,6 +16,6 @@ export default defineConfig({
   server: {
     host: "127.0.0.1",
     port: 4173,
-    watch: { ignored: ["**/.paperfocus/**", "**/problem-lab/**", "**/output/**", "**/tmp/**"] },
+    watch: { ignored: (filename) => developmentWatchIgnored(process.cwd(), filename) },
   },
 });

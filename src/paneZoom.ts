@@ -1,4 +1,12 @@
 export const paneZoomLimits = { min: 0.5, max: 2.5 };
+/** Bound a PDF page's backing bitmap to 32 MB, regardless of monitor DPI or
+ * zoom. CSS dimensions and source coordinates keep their original scale. */
+export function pdfRasterSize(width: number, height: number, pixelRatio: number) {
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) throw new Error("Invalid PDF page dimensions.");
+  const ratio = Number.isFinite(pixelRatio) && pixelRatio > 0 ? Math.min(pixelRatio, 2) : 1;
+  const scale = Math.min(ratio, Math.sqrt(8_000_000 / width / height), 8192 / width, 8192 / height);
+  return { scale, width: Math.max(1, Math.floor(width * scale)), height: Math.max(1, Math.floor(height * scale)) };
+}
 export function clampPaneZoom(value: number) {
   return Number.isFinite(value) ? Math.min(paneZoomLimits.max, Math.max(paneZoomLimits.min, value)) : 1;
 }

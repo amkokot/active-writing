@@ -2,7 +2,7 @@ import type { ManuscriptPurpose } from "./types.ts";
 export interface WorkspaceFolders {
   home: { path: string; link: string };
   code?: { path: string; link: string };
-  paper?: { id: string; name: string; path: string; link: string; mainFile?: string; manuscriptPurposes?: Record<string, ManuscriptPurpose>; manuscriptOverviewTargets?: Record<string, string> };
+  paper?: { id: string; name: string; path: string; link: string; mainFile?: string; manuscriptPurposes?: Record<string, ManuscriptPurpose>; manuscriptOverviewTargets?: Record<string, string>; manuscriptPins?: Partial<Record<ManuscriptPurpose, string>> };
   data?: { path: string; link: string };
   guidePath: string;
   canOpen: boolean;

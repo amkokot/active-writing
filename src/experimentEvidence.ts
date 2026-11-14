@@ -43,7 +43,7 @@ export function experimentEvidenceText(evidence: ReturnType<typeof experimentEvi
       if (markdown) parts.push(fence(markdown, "markdown"));
       for (const [mime, value] of Object.entries(output.data ?? {})) {
         if (mime === "text/plain" || mime === "text/markdown") continue;
-        if (mime === "image/png" || mime === "text/html" || /javascript|widget/i.test(mime)) parts.push(`Rich output ${JSON.stringify(mime)} is retained in the notebook companion; not executed here.`);
+        if (mime === "image/png" || mime === "text/html" || mime === "application/vnd.aw.html+json" || mime === "application/vnd.aw.animation+json" || /javascript|widget/i.test(mime)) parts.push(`Rich output ${JSON.stringify(mime)} is retained in the notebook companion; not executed here.`);
         else parts.push(`MIME ${JSON.stringify(mime)}:\n${fence(JSON.stringify(value, null, 2), "json")}`);
       }
       return `### Saved output ${index + 1} (${output.output_type})\n${parts.join("\n\n") || "No textual representation; inspect the notebook companion."}`;

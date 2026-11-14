@@ -12,7 +12,7 @@ export interface ProposedFile { path: string; sha256: string; method: "literal-t
 export interface Proposal extends Decisions { format: "aw-sync-reconciliation"; id: string; files: ProposedFile[]; remaining: string[]; liveImport: false; approvalGranted: false }
 export const syncConflictId = (conflict: SyncConflict) => syncHash(canonical(conflict));
 function text(record?: SyncRecord) {
-  if (!record || record.bytes > textMergeLimits.bytes) return undefined;
+  if (!record || record.external || record.bytes > textMergeLimits.bytes) return undefined;
   try {
     const bytes = Buffer.from(record.data, "base64"), result = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
     return !/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/.test(result) && Buffer.from(result).equals(bytes) ? result : undefined;
@@ -139,6 +139,7 @@ export async function readReconciliation(workspace: string, projectId: string, p
 }
 export async function prepareSyncReconciliation(workspace: string, projectId: string, planId: string, id: string, options: { afterCandidate?: (count: number) => void | Promise<void> } = {}) {
   const { plan, proposal, records } = await readReconciliation(workspace, projectId, planId, id), current = await checkSyncLocalState(workspace, projectId, plan.local);
+  if(plan.records.some(r=>r.external))throw new Error('Use exact file --output and guarded merge for streamed evidence, not a full detached bulk copy.');
   const folder = path.dirname(await privateSyncPath(workspace, `reconciled/${projectId}/${id}/review.json`, true));
   const candidates = [...plan.records, ...records];
   let count = 0;
@@ -148,7 +149,7 @@ export async function prepareSyncReconciliation(workspace: string, projectId: st
   }
   const review = { version: 1, projectId, planId, baseline: plan.base, local: plan.local, remote: plan.remote, proposal, deletions: plan.deletions, unresolved: plan.conflicts.filter(item => proposal.remaining.includes(syncConflictId(item))), candidateFiles: candidates.map(({ path: file, sha256 }) => ({ path: file, sha256 })), liveImport: false, approvalGranted: false };
   await saveImmutableSyncArtifact(await privateSyncPath(workspace, `reconciled/${projectId}/${id}/review.json`), Buffer.from(JSON.stringify(review, null, 2) + "\n"), syncLimits.packetBytes * 3);
-  if (syncStateHash(await captureSyncSnapshot(workspace, projectId)) !== syncStateHash(current)) throw new Error(`Local work changed during reconciliation. Detached copies kept at ${folder}; no live records changed.`);
+  if (syncStateHash(await captureSyncSnapshot(workspace, projectId,undefined,{forceFull:true})) !== syncStateHash(current)) throw new Error(`Local work changed during reconciliation. Detached copies kept at ${folder}; no live records changed.`);
   await saveImmutableSyncArtifact(await privateSyncPath(workspace, `reconciled/${projectId}/${id}/ready.json`), Buffer.from(JSON.stringify({ version: 1, projectId, planId, proposalId: id, stateHash: syncStateHash(current), liveImport: false, approvalGranted: false }) + "\n"), 2000);
   return { folder, projectId, planId, proposalId: id, candidateFiles: candidates.length, remaining: proposal.remaining.length, prepared: true, liveImport: false, approvalGranted: false };
 }

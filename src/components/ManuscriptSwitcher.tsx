@@ -1,14 +1,15 @@
 import { useRef, useState } from "react";
-import { Check, ChevronDown, FileText, Plus } from "lucide-react";
+import { Check, ChevronDown, FileText, Link, Plus } from "lucide-react";
 import { useDismissibleLayer } from "../useDismissibleLayer";
-import { manuscriptPurpose, manuscriptVersionLabel, nextManuscriptVersion, type ManuscriptKind } from "../manuscripts";
+import { manuscriptPurpose, manuscriptVersionLabel, nextManuscriptVersion, manuscriptRoles, manuscriptPurposeLabels, pinnedManuscripts, manuscriptLink, type ManuscriptKind } from "../manuscripts";
 import type { ManuscriptNode, ManuscriptPurpose, ProjectDocument } from "../types";
 
-export function ManuscriptSwitcher({ document, disabled, onSelect, onCreate, onVersion, onPurpose, section, onSectionFile }: {
+export function ManuscriptSwitcher({ document, disabled, onSelect, onCreate, onVersion, onPurpose, onPin, section, onSectionFile }: {
   document: ProjectDocument; disabled: boolean; onSelect: (file: string) => Promise<unknown>;
   onCreate: (file: string, title: string, kind: ManuscriptKind) => Promise<unknown>;
   onVersion: (file: string, fresh: boolean) => Promise<unknown>;
   onPurpose: (purpose: ManuscriptPurpose, targetFile?: string) => Promise<unknown>;
+  onPin: (purpose: ManuscriptPurpose, file: string) => Promise<unknown>;
   section?: ManuscriptNode; onSectionFile: (file: string, title: string, nodeId?: string) => Promise<unknown>;
 }) {
   const root = useRef<HTMLDetailsElement>(null);
@@ -16,28 +17,44 @@ export function ManuscriptSwitcher({ document, disabled, onSelect, onCreate, onV
   const [kind, setKind] = useState<ManuscriptKind>("notes"), [file, setFile] = useState("research-notes.tex"), [title, setTitle] = useState("Research notes");
   const [sectionForm, setSectionForm] = useState(false), [moveSection, setMoveSection] = useState(false), [sectionFile, setSectionFile] = useState("sections/new-section.tex"), [sectionTitle, setSectionTitle] = useState("New section");
   const [versioning, setVersioning] = useState(false), [versionFile, setVersionFile] = useState(nextManuscriptVersion(document.project).file), [fresh, setFresh] = useState(false);
+  const [search, setSearch] = useState(""), [copied, setCopied] = useState("");
   useDismissibleLayer(open, root, () => setOpen(false), "summary");
   const roots = [...new Set([document.project.mainFile, ...document.rootFiles])].sort((a, b) => {
     const va = document.project.manuscriptVersions?.find(v => v.file === a), vb = document.project.manuscriptVersions?.find(v => v.file === b);
     return (va?.family ?? a).localeCompare(vb?.family ?? b) || (va?.number ?? 1) - (vb?.number ?? 1);
   });
-  async function perform(action: () => Promise<unknown>) {
+  async function perform(action: () => Promise<unknown>, close = true) {
     setError("");
-    try { await action(); setOpen(false); setCreating(false); setSectionForm(false); setVersioning(false); }
+    try { await action(); if (close) { setOpen(false); setCreating(false); setSectionForm(false); setVersioning(false); } }
     catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
   }
+  const pins = pinnedManuscripts(document.project, roots);
+  const matches = roots.filter(file => `${file} ${manuscriptPurposeLabels[manuscriptPurpose(document.project, file)]}`.toLowerCase().includes(search.trim().toLowerCase()));
   return <details ref={root} className="manuscript-switcher" open={open} onToggle={event => setOpen(event.currentTarget.open)}>
     <summary aria-label="Switch manuscript" title={`Manuscript · ${document.project.mainFile}`}><FileText size={14} /><span>{document.project.mainFile} {manuscriptVersionLabel(document.project, document.project.mainFile)}</span><ChevronDown size={11} /></summary>
     <div className="manuscript-switcher-panel" aria-label="Manuscripts in this project" aria-busy={disabled}>
-      <strong>Manuscripts</strong><small>{document.project.name}</small>
-      <label>Writing purpose<select aria-label="Manuscript writing purpose" disabled={disabled} value={manuscriptPurpose(document.project)} onChange={event => { const purpose = event.target.value as ManuscriptPurpose; void perform(() => onPurpose(purpose)); }}><option value="notes">Research notes</option><option value="overview">Overview</option><option value="publication">Publication draft</option></select></label>
+      <header className="manuscript-menu-heading"><strong>Documents</strong><small title={document.project.mainFile}>Current · {manuscriptPurposeLabels[manuscriptPurpose(document.project)]}</small></header>
+      <div className="manuscript-pins" aria-label="Pinned project documents">
+        {manuscriptRoles.filter(role => pins[role]).map(role => <div className="manuscript-pin-actions" key={role}>
+          <button className="manuscript-pin-document" disabled={disabled} aria-pressed={pins[role] === document.project.mainFile} title={pins[role]} onClick={() => void perform(() => onSelect(pins[role]!))}><span><strong>{manuscriptPurposeLabels[role]}</strong><small>{pins[role]}</small></span>{pins[role] === document.project.mainFile && <Check size={14} />}</button>
+          <button className="manuscript-copy-link" disabled={disabled} title="Copy local Aw link (not a public sharing link)" aria-label={`Copy ${manuscriptPurposeLabels[role]} Aw link`} onClick={() => { void navigator.clipboard.writeText(manuscriptLink(window.location.href, document.project.id, pins[role]!, document.revision)).then(() => setCopied(role)).catch(() => setError("Could not copy the link.")); }}>{copied === role ? <Check size={14} /> : <Link size={14} />}</button>
+        </div>)}
+        {!Object.values(pins).some(Boolean) && <small>Choose preferred documents in Document settings.</small>}
+      </div>
+      <details className="manuscript-all"><summary>All manuscripts · {roots.length}</summary>
+        {roots.length > 5 && <input type="search" aria-label="Find manuscript" placeholder="Find a document…" value={search} onChange={event => setSearch(event.target.value)} />}
+        <div className="manuscript-file-list">{matches.map(path => { const version = document.project.manuscriptVersions?.find(item => item.file === path); return <button key={path} disabled={disabled} title={path} aria-pressed={path === document.project.mainFile} onClick={() => { void perform(() => onSelect(path)); }}><FileText size={14} /><span>{path}<small>{manuscriptPurposeLabels[manuscriptPurpose(document.project, path)]}{version && ` · v.${version.number}`}</small></span>{path === document.project.mainFile && <Check size={14} />}</button>; })}{!matches.length && <small>No matching documents.</small>}</div>
+      </details>
+      <details className="manuscript-settings"><summary>Document settings</summary>
+      <label>Writing purpose<select aria-label="Manuscript writing purpose" disabled={disabled} value={manuscriptPurpose(document.project)} onChange={event => { const purpose = event.target.value as ManuscriptPurpose; void perform(() => onPurpose(purpose), false); }}><option value="notes">Research notes</option><option value="overview">Overview</option><option value="publication">Publication draft</option></select></label>
       <small>{manuscriptPurpose(document.project) === "overview" ? "A short, clear introduction for collaborators. Link to the main manuscript for detail." : manuscriptPurpose(document.project) === "notes" ? "Full explanations welcome. Small-step review is optional." : "Small writing steps, human review, and settled wording locks."} Changing purpose does not clear existing reviews.</small>
       {manuscriptPurpose(document.project) === "overview" && <>
-        <label>Main manuscript<select aria-label="Overview main manuscript" disabled={disabled} value={document.project.manuscriptOverviewTargets?.[document.project.mainFile] ?? ""} onChange={event => { const file = event.target.value; void perform(() => onPurpose("overview", file)); }}><option value="">Choose manuscript</option>{roots.filter(file => file !== document.project.mainFile).map(file => <option key={file} value={file}>{file}</option>)}</select></label>
-        {document.project.manuscriptOverviewTargets?.[document.project.mainFile] && <button disabled={disabled} onClick={() => void perform(() => onSelect(document.project.manuscriptOverviewTargets![document.project.mainFile]))}>Open main manuscript</button>}
-        <small>This link opens the manuscript in Aw. For a shared copy, add its arXiv, repository or PDF link to the overview text.</small>
+        <label>Main manuscript<select aria-label="Overview main manuscript" disabled={disabled} value={document.project.manuscriptOverviewTargets?.[document.project.mainFile] ?? ""} onChange={event => { const file = event.target.value; void perform(() => onPurpose("overview", file), false); }}><option value="">Choose manuscript</option>{roots.filter(file => file !== document.project.mainFile).map(file => <option key={file} value={file}>{file}</option>)}</select></label>
       </>}
-      {roots.map(path => { const version = document.project.manuscriptVersions?.find(item => item.file === path); return <button key={path} disabled={disabled} title={version ? `${version.previousFile ? `From ${version.previousFile} · ` : ""}${new Date(version.createdAt).toLocaleString()}` : path} aria-pressed={path === document.project.mainFile} onClick={() => { void perform(() => onSelect(path)); }}><FileText size={14} /><span>{path}{version && <small> · v.{version.number} · {new Date(version.createdAt).toLocaleDateString()}</small>}</span>{path === document.project.mainFile && <Check size={14} />}</button>; })}
+      <strong>Choose pinned copies</strong>{manuscriptRoles.map(role => <label key={role}>{manuscriptPurposeLabels[role]}<select aria-label={`Pinned ${manuscriptPurposeLabels[role]}`} disabled={disabled} value={document.project.manuscriptPins?.[role] ?? ""} onChange={event => { const file = event.target.value; void perform(() => onPin(role, file), false); }}><option value="">Automatic · only if unambiguous</option>{roots.filter(file => manuscriptPurpose(document.project, file) === role).map(file => <option key={file} value={file}>{file}</option>)}</select></label>)}
+      <small>Links open local Aw. Share a PDF or Overleaf source ZIP from Compile ▾.</small>
+      </details>
+      <details className="manuscript-manage"><summary>Create & organize</summary>
       <button disabled={disabled} aria-expanded={versioning} onClick={() => { setVersioning(!versioning); setCreating(false); setSectionForm(false); }}><Plus size={14} /> New version</button>
       {versioning && <form onSubmit={event => { event.preventDefault(); void perform(() => onVersion(versionFile, fresh)); }}>
         <label>Filename<input required aria-label="New version filename" disabled={disabled} value={versionFile} maxLength={240} onChange={event => setVersionFile(event.target.value)} /></label>
@@ -63,8 +80,8 @@ export function ManuscriptSwitcher({ document, disabled, onSelect, onCreate, onV
         <small>Creates a separate LaTeX root in this project. Existing manuscripts and notebooks stay intact.</small>
         <button className="primary-button" disabled={disabled} type="submit">{disabled ? "Opening…" : "Create & open"}</button>
       </form>}
+      </details>
       {error && <p role="alert">{error}</p>}
-      <small>Each version keeps its notebook and reading position. The selected compilation root applies to this project in all windows.</small>
     </div>
   </details>;
 }

@@ -1,12 +1,13 @@
 /** Scoped chronology and guarded version creation. Never runs cells/models. */
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { manuscriptPurpose, manuscriptWritingPolicy, nextManuscriptVersion } from "../src/manuscripts.ts";
+import { manuscriptPurpose, manuscriptWritingPolicy, nextManuscriptVersion, pinnedManuscripts } from "../src/manuscripts.ts";
 import type { NotebookStore, ProjectDocument } from "../src/types.ts";
 
 export function versionsHelp() {
   return `Active Writing — manuscript versions
 node scripts/awVersions.ts inspect --workspace AW_HOME --project ID [--url LOOPBACK]
+node scripts/awVersions.ts pin --workspace AW_HOME --project ID --root MAIN.tex --revision SOURCE_HASH --purpose notes|overview|publication --file ROOT.tex|none --expected-file ROOT.tex|none [--commit]
 node scripts/awVersions.ts create --workspace AW_HOME --project ID --root MAIN.tex --revision SOURCE_HASH --notebook-revision NUMBER --file NEW.tex [--fresh] [--commit]
 node scripts/awVersions.ts purpose --workspace AW_HOME --project ID --root MAIN.tex --revision SOURCE_HASH --expected-purpose notes|overview|publication --purpose notes|overview|publication [--target MAIN.tex --expected-target MAIN.tex|none] [--commit]
 node scripts/awVersions.ts transfer --workspace AW_HOME --project ID --root MAIN.tex --revision SOURCE_HASH --notebook-revision NUMBER --entries ID,ID --target OTHER.tex --mode move|copy [--commit]
@@ -20,11 +21,11 @@ Inspect conflicts/prepared copies before retrying. See docs/AGENT_GUIDE.md, Manu
 export function versionsOptions(argv: string[]) {
   const [command, ...args] = argv;
   if (["--help", "help"].includes(command) || args.includes("--help")) return { command: "help", flags: {} as Record<string, string>, origin: "" };
-  if (!["inspect", "create", "purpose", "transfer"].includes(command)) throw new Error(versionsHelp());
+  if (!["inspect", "create", "purpose", "transfer", "pin"].includes(command)) throw new Error(versionsHelp());
   const flags: Record<string, string> = {};
   for (let i = 0; i < args.length; i++) {
     const key = args[i].replace(/^--/, "");
-    if (!args[i].startsWith("--") || !["workspace", "project", "url", "root", "revision", "notebook-revision", "file", "fresh", "commit", "purpose", "expected-purpose", "entries", "target", "mode", "expected-target"].includes(key) || key in flags) throw new Error(`Unknown/repeated option ${args[i]}.`);
+    if (!args[i].startsWith("--") || !["workspace", "project", "url", "root", "revision", "notebook-revision", "file", "fresh", "commit", "purpose", "expected-purpose", "entries", "target", "mode", "expected-target", "expected-file"].includes(key) || key in flags) throw new Error(`Unknown/repeated option ${args[i]}.`);
     if (["fresh", "commit"].includes(key)) flags[key] = "true";
     else { if (!args[i + 1] || args[i + 1].startsWith("--")) throw new Error(`Missing --${key}.`); flags[key] = args[++i]; }
   }
@@ -32,6 +33,8 @@ export function versionsOptions(argv: string[]) {
   const url = new URL(flags.url ?? "http://127.0.0.1:4173");
   if (url.protocol !== "http:" || !["localhost", "127.0.0.1", "[::1]"].includes(url.hostname) || url.username || url.password || url.pathname !== "/" || url.search || url.hash) throw new Error("Use the loopback Aw origin only.");
   if (command === "inspect" && Object.keys(flags).some(k => !["workspace", "project", "url"].includes(k))) throw new Error("Inspect is read-only.");
+  if (command === "pin" && (Object.keys(flags).some(k => !["workspace", "project", "url", "root", "revision", "purpose", "file", "expected-file", "commit"].includes(k)) || !flags.root || !/^[a-f0-9]{64}$/.test(flags.revision ?? "") || !["overview", "notes", "publication"].includes(flags.purpose) || !flags.file || !flags["expected-file"])) throw new Error("Pin needs the exact root/revision, role, file and --expected-file (none if unpinned).");
+  if (command !== "pin" && flags["expected-file"]) throw new Error("--expected-file belongs to pin.");
   if (command === "create" && (!flags.root || !flags.file || !/^[a-f0-9]{64}$/.test(flags.revision ?? "") || !/^(0|[1-9]\d*)$/.test(flags["notebook-revision"] ?? ""))) throw new Error("Create needs --root, --file and both exact revisions from inspect.");
   if (command === "create" && (flags.purpose || flags["expected-purpose"])) throw new Error("New versions inherit purpose. Change it explicitly with purpose.");
   if (command === "create" && (flags.entries || flags.target || flags.mode || flags["expected-target"])) throw new Error("Conversation selection belongs to transfer, not version creation.");
@@ -54,8 +57,15 @@ export async function versionsCommand(argv: string[], request: typeof fetch = fe
   const document = await api(`document?${query}`) as ProjectDocument, notebook = await api(`notebook?${query}`) as NotebookStore;
   if (document.project.id !== flags.project) throw new Error("The returned paper identity differs.");
   if (command === "inspect") return { workspace: health.workspaceRoot, projectId: flags.project, paperRoot: path.resolve(health.workspaceRoot, document.project.folder), mainFile: document.project.mainFile,
-    sourceRevision: document.revision, notebookRevision: notebook.revision, purpose: manuscriptPurpose(document.project), purposes: document.project.manuscriptPurposes ?? {}, overviewTargets: document.project.manuscriptOverviewTargets ?? {}, purposeSupported: !!health.features?.manuscriptPurpose, versions: document.project.manuscriptVersions ?? [], roots: document.rootFiles, suggested: nextManuscriptVersion(document.project),
+    sourceRevision: document.revision, notebookRevision: notebook.revision, purpose: manuscriptPurpose(document.project), purposes: document.project.manuscriptPurposes ?? {}, pins: document.project.manuscriptPins ?? {}, pinnedDocuments: pinnedManuscripts(document.project, document.rootFiles), overviewTargets: document.project.manuscriptOverviewTargets ?? {}, purposeSupported: !!health.features?.manuscriptPurpose, versions: document.project.manuscriptVersions ?? [], roots: document.rootFiles, suggested: nextManuscriptVersion(document.project),
     writingPolicy: manuscriptWritingPolicy(manuscriptPurpose(document.project)), transferSupported: !!health.features?.notebookTransfer, conversations: notebook.entries.map(e => ({ id: e.id, title: e.title, notebookId: e.experimentNotebookId ?? e.id, manuscriptFile: e.manuscriptFile, continuedFrom: e.continuedFrom })), supported: !!health.features?.manuscriptVersions };
+  if (command === "pin") {
+    const role = flags.purpose as "notes" | "overview" | "publication", file = flags.file === "none" ? "" : flags.file, expectedFile = flags["expected-file"] === "none" ? "" : flags["expected-file"];
+    if (flags.root !== document.project.mainFile || flags.revision !== document.revision || (document.project.manuscriptPins?.[role] ?? "") !== expectedFile) throw new Error("Saved scope or pin changed. Inspect before retrying.");
+    if (file && (!document.rootFiles.includes(file) || manuscriptPurpose(document.project, file) !== role)) throw new Error("Choose an existing root with the matching purpose.");
+    const input = { projectId: flags.project, mainFile: flags.root, revision: flags.revision, purpose: role, file, expectedFile };
+    return flags.commit ? api("manuscripts/pin", input) : { preview: true, ...input, sourceWrites: false, purposeChanges: false };
+  }
   if (command === "purpose") {
     if (!health.features?.manuscriptPurpose) throw new Error("The running Aw service needs its writing-purpose update. Do not restart an occupied service.");
     if (flags.root !== document.project.mainFile || flags.revision !== document.revision || flags["expected-purpose"] !== manuscriptPurpose(document.project)) throw new Error("The root, source or purpose changed. Inspect before retrying.");

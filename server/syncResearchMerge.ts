@@ -11,14 +11,21 @@ import { mergeLiteralText } from "./syncText.ts";
 import { checkCollectionFootprint, notebookCollectionEvidence } from "./syncCollect.ts";
 import { settledSyncEntry } from "./syncConversationCollect.ts";
 import { readNotebook, validateNotebookEntries, writeNotebook } from "./notebookStore.ts";
-import { readExperiments, writeExperiments } from "./experiments.ts";
+import { readExperiments, writeExperiments, serializeExperimentNotebook } from "./experiments.ts";
 import { validateExperimentNotebook } from "../src/experiments.ts";
 import { getProject } from "./projects.ts";
 import { projectStorage } from "./projectStorage.ts";
 import { manuscriptRoots } from "./manuscriptRoots.ts";
 import { checkedProjectPath } from "./projectFiles.ts";
 import { guardedFileHash, guardedTarget, saveGuardedFile } from "./guardedFile.ts";
+import {materializeBlob,guardedBulkHash} from './syncBlobs.ts';
+import {verifyExternalRecord} from './syncStructuredBlobs.ts';
+import {coldProject,verifyColdAvailability,coldEligible,coldClaim,coldFilePath,saveColdAliases} from './syncColdRefs.ts';
+import {desktopFirstEnabled} from './syncColdStore.ts';
 import { acquireRecordLock, withRecordLock } from "./recordLock.ts";
+import { mergeCommentStores, blankReviewStore, normalizedReviewContent } from "./syncComments.ts";
+import { writeWorkbench } from "./workbenchStore.ts";
+import { assistanceArtifactPath, validateAssistanceArtifact } from "./syncAssistanceArtifacts.ts";
 import { rememberSyncHead, semanticSyncHash, semanticReviewContent } from "./syncExchange.ts";
 import type { NotebookEntry, NotebookStore } from "../src/types.ts";
 
@@ -37,14 +44,14 @@ const ordinaryFields = new Set(["title", "question", "notes", "reply", "proposal
 export interface ResearchMergeDecision { conflictId: string; choice: "local" | "remote" | "text"; text?: string }
 export interface ResearchMergeOptions { proposalId?: string; decisions?: ResearchMergeDecision[] }
 export interface Held { id: string; path: string; field: string; reason: string; ordinary: boolean; base?: unknown; local?: unknown; remote?: unknown }
-export interface Change { path: string; kind: SyncRecord["kind"]; before: string; after: string; bytes: number }
+export interface Change { path: string; kind: SyncRecord["kind"]; before: string; after: string; bytes: number; external?:true;desktopBacked?:true }
 interface MergeBody { format: "aw-research-merge"; version: 1; projectId: string; planId: string; options: ResearchMergeOptions; deviceId: string; localStateHash: string;
   selection: { paperRoot: string; mainFile: string; engine: string }; changes: Change[]; held: Held[]; newEntries: string[]; owners: string[]; catalogueRevision: number }
 interface Journal { format: "aw-research-merge-journal"; version: 1; body: MergeBody; backupId: string }
 async function optional(target: string) { try { const stat = await lstat(target); if (stat.isSymbolicLink() || !stat.isFile() && !stat.isDirectory()) throw new Error("Linked/special destination preserved."); return stat; } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; } }
 async function selection(workspace: string, projectId: string) { const { project, root } = await getProject(workspace, projectId); return { paperRoot: root, mainFile: project.mainFile, engine: project.engine ?? "auto" }; }
-function utf8(record?: SyncRecord) {
-  if (!record || record.bytes > 512 * 1024) return undefined;
+function utf8(record?: SyncRecord,maximum=512*1024) {
+  if (!record || record.external || record.bytes > maximum) return undefined;
   try { const bytes = Buffer.from(record.data, "base64"), text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes); return Buffer.from(text).equals(bytes) && !/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/.test(text) ? text : undefined; } catch { return undefined; }
 }
 function normalizeOptions(options: ResearchMergeOptions) {
@@ -60,6 +67,11 @@ function normalizeOptions(options: ResearchMergeOptions) {
 }
 async function context(workspace: string, projectId: string, planId: string, input: ResearchMergeOptions = {}) {
   const options = normalizeOptions(input), staged = await stagedPlan(workspace, projectId, planId), [base, local, remote] = staged.inputs;
+  // Index this exact preview's validated inputs once. Repeated linear searches
+  // across thousands of unchanged desktop references made small merges quadratic.
+  // No cross-preview cache: a fresh snapshot always gets fresh indexes.
+  const indexes = new Map(staged.inputs.map(snapshot => [snapshot, new Map(snapshot.records.map(record => [record.path, record]))]));
+  const at = (snapshot: SyncSnapshot, name: string) => indexes.get(snapshot)?.get(name);
   const cats = staged.inputs.map(catalogue), currentSelection = await selection(workspace, projectId), held: Held[] = [], resolved = new Set<string>(), records: SyncRecord[] = [];
   const decisions = new Map((options.decisions ?? []).map(item => [item.conflictId, item]));
   const hold = (name: string, field: string, reason: string, ordinary = false, variants?: unknown[]) => {
@@ -72,17 +84,53 @@ async function context(workspace: string, projectId: string, planId: string, inp
   // have their own workflows, even for one-sided changes.
   for (const name of [...new Set([...local.records, ...remote.records, ...base.records].map(record => record.path))].sort()) {
     if (name === catPath || /^data\/experiments\/[^/]+\/(?:notebook\.ipynb|runs\/[^/]+\.json)$/.test(name)) continue;
-    const [b, l, r] = staged.inputs.map(snapshot => at(snapshot, name)); if (r?.sha256 === b?.sha256 || l?.sha256 === r?.sha256) continue;
+    let [b, l, r] = staged.inputs.map(snapshot => at(snapshot, name)); if (r?.sha256 === b?.sha256 || l?.sha256 === r?.sha256) continue;
     if (name==="data/workbench.json" && (semanticReviewContent(r)===semanticReviewContent(b) || semanticReviewContent(r)===semanticReviewContent(l))) continue;
-    const source = name.startsWith("source/"), note = /^data\/research\/.+\.(?:md|txt|tex)$/.test(name), figure = /\.(?:png|jpe?g|webp|gif|pdf|eps)$/.test(name) && (source || name.startsWith("data/research/"));
-    if (!source && !note && !figure || source && !/\.(?:tex|bib|md|txt|png|jpe?g|webp|gif|pdf|eps)$/.test(name)) { hold(name, "", "protected record or executable/configuration file"); continue; }
+    if (name === "data/workbench.json") {
+      if (!r || b && !l) { hold(name,"","Review-store deletion/restoration remains protected"); continue; }
+      const comments=mergeCommentStores(projectId,b?json(b):blankReviewStore(),l?json(l):blankReviewStore(),json(r));
+      for(const issue of comments.held)hold(name,issue.field,issue.reason);
+      if(comments.changed)records.push(syncRecord(name,"review",Buffer.from(JSON.stringify(comments.store))));
+      continue;
+    }
+    if(assistanceArtifactPath(name)){
+      if(!r || b || l){hold(name,'','Helper artifacts are append-only; edits/deletions/collisions need review');continue;}
+      // Private helper input/cache files may be retained as opaque raw artifacts.
+      // This does NOT validate them as model receipts or import a reply/request.
+      if(r.external&&await desktopFirstEnabled(workspace)){
+       try{if(r.bytes>300000)throw new Error('Opaque helper payload exceeds its bounded size.');
+        const value=JSON.parse((await readSyncBytes(await verifyExternalRecord(workspace,r),300000)).toString('utf8')),owner=(name.includes('/local-assistance/')?value.request:value)?.owner;
+        if(owner?.project!==projectId||!cats.some(c=>c.entries.some(e=>e.id===owner.entry&&ownerOf(e)===owner.notebook)))throw new Error('Opaque helper owner does not match this project/conversation.');
+        records.push(r);
+       }catch(error){hold(name,'',(error as Error).message);}
+       continue;
+      }
+      try{
+        if(r.bytes>300000)throw Error('Helper artifact exceeds the bounded receipt limit');
+        const material=r.external?syncRecord(r.path,r.kind,await readSyncBytes(await verifyExternalRecord(workspace,r),300000)):r;
+        validateAssistanceArtifact(material,projectId,cats);records.push(material);
+      }catch(error){hold(name,'',(error as Error).message);}
+      continue;
+    }
+    const source = name.startsWith("source/"), note = /^data\/research\/.+\.(?:md|txt|tex)$/.test(name), figure = /\.(?:png|jpe?g|webp|gif|svg|pdf|eps|csv|npy|npz|zip)$/.test(name) && (source || name.startsWith("data/research/")) || /^data\/research\/.+\.results\.json$/.test(name) || !!r&&coldEligible(r);
+    // These are inert research artifacts, never app state or executable requests.
+    // Transfer an exact one-sided text version; competing code/config stays held.
+    const inertResearch=name.startsWith('data/research/')&&r&&l?.sha256===b?.sha256&&/\.(?:json|py|mjs|ts|sh|yaml|yml|log|aux|out|stdout|diff|html|before-online|v1|exit-status)$/.test(name);
+    const extractedText=name.startsWith('data/research/')&&r&&l?.sha256===b?.sha256&&/\.(?:txt|log|stdout|out|aux|diff)$/.test(name);
+    if (!source && !note && !figure&&!inertResearch || source && !/\.(?:tex|bib|md|txt|png|jpe?g|webp|gif|pdf|eps)$/.test(name)) { hold(name, "", "protected record or executable/configuration file"); continue; }
     if (!r || b && !l) { hold(name, "", "deletion or restoration requires explicit review"); continue; }
     if (source && (publication || locks.unknown || locks.files.has(name))) { hold(name, "", "publication or locked wording requires its writing workflow"); continue; }
+    if(note)[b,l,r]=await Promise.all([b,l,r].map(async record=>record?.external&&record.bytes<=512*1024?syncRecord(record.path,record.kind,await readSyncBytes(await verifyExternalRecord(workspace,record),512*1024)):record));
     let candidate = pathMap.get(name);
+    if((inertResearch||extractedText)&&candidate){try{const bytes=candidate.external?await readSyncBytes(await verifyExternalRecord(workspace,candidate),syncLimits.fileBytes):Buffer.from(candidate.data,'base64');
+      const valid=extractedText?!bytes.includes(0)&&new TextDecoder('utf-8',{fatal:true}).decode(bytes)!==undefined:utf8(syncRecord(candidate.path,candidate.kind,bytes),syncLimits.fileBytes)!==undefined;
+      if(bytes.length>syncLimits.fileBytes||syncHash(bytes)!==candidate.sha256||!valid)throw new Error('Research artifact is not exact bounded UTF-8 text.');
+    }catch(error){hold(name,'',(error as Error).message);continue;}}
     if (!candidate && !figure && b && l && r && [b, l, r].every(item => utf8(item) !== undefined)) {
       const result = mergeLiteralText(utf8(b)!, utf8(l)!, utf8(r)!); if (result.status === "combined") candidate = syncRecord(name, l.kind, Buffer.from(result.text!));
     }
-    if (!candidate || candidate.kind !== r.kind || candidate.kind !== (l ?? r).kind || !figure && utf8(candidate) === undefined) { hold(name, "", "overlap, binary change or oversized text needs a scoped proposal", !figure); continue; }
+    const oneSided=l?.sha256===b?.sha256&&candidate?.sha256===r?.sha256;
+    if (!candidate || candidate.kind !== r!.kind || candidate.kind !== (l ?? r)!.kind || !figure && !extractedText && !((note||inertResearch)&&candidate.external) && utf8(candidate,oneSided?syncLimits.fileBytes:512*1024) === undefined) { hold(name, "", "overlap, binary change or oversized text needs a scoped proposal", !figure); continue; }
     if (source) checkedProjectPath(name.slice(7));
     if (candidate.sha256 !== l?.sha256) records.push(candidate);
   }
@@ -102,7 +150,7 @@ async function context(workspace: string, projectId: string, planId: string, inp
         if (newEntries.length >= 8 || takenOwners.has(ownerOf(incoming)) || !roots.includes(incoming.manuscriptFile ?? incoming.source?.rootFile ?? currentSelection.mainFile)) throw new Error("New conversation needs a distinct owner, available manuscript and bounded bundle.");
         const tasks = [...new Set([...incoming.handoffs.map(h => h.id), ...(incoming.study?.turns.map(t => t.id) ?? [])])]; if (tasks.some(id => takenTasks.has(id))) throw new Error("Task identity collision; no remapping.");
         const prefix = `data/experiments/${ownerOf(incoming)}/`; if ([base, local].some(snapshot => snapshot.records.some(item => item.path.startsWith(prefix)))) throw new Error("New owner has orphan/shared evidence.");
-        if (at(remote, `${prefix}notebook.ipynb`)) notebookCollectionEvidence(staged, `${prefix}notebook.ipynb`);
+        if (at(remote, `${prefix}notebook.ipynb`)) await notebookCollectionEvidence(staged, `${prefix}notebook.ipynb`,workspace);
         entries.push(structuredClone(incoming)); newEntries.push(incoming.id); takenOwners.add(ownerOf(incoming)); tasks.forEach(id => takenTasks.add(id));
       } catch (error) { hold(catPath, incoming.id, (error as Error).message); }
       continue;
@@ -135,13 +183,13 @@ async function context(workspace: string, projectId: string, planId: string, inp
     if (incoming?.sha256 === at(base, name)?.sha256 || incoming?.sha256 === old?.sha256) continue;
     if (!acceptedOwners.has(owner) || !portable(owner) || owners.length >= 16) { hold(name, "", "owner not accepted or collection bound exceeded"); continue; }
     try {
-      const evidence = notebookCollectionEvidence(staged, name), previous = old ? json(old) : undefined;
+      const evidence = await notebookCollectionEvidence(staged, name,workspace), previous = old ? old.external?JSON.parse((await readSyncBytes(await verifyExternalRecord(workspace,old),syncLimits.fileBytes)).toString()):json(old) : undefined;
       if (previous) { validateExperimentNotebook(previous); for (const cell of previous.cells) { const next = evidence.notebook.cells.find(item => item.id === cell.id); if (!next || next.cell_type !== cell.cell_type || ["filed", "deleted"].some(key => cell.metadata.paperfocus?.[key] && !next.metadata.paperfocus?.[key])) throw new Error("Cell deletion, type change or resurrection remains held."); } }
       for (const cell of evidence.notebook.cells) {
         const runId = cell.metadata.paperfocus?.runId, priorId = previous?.cells.find(item => item.id === cell.id)?.metadata.paperfocus?.runId;
         if (runId && runId !== priorId && !evidence.runs.some(item => item.path === `data/experiments/${owner}/runs/${runId}.json` && json(item).cellId === cell.id)) throw new Error("Output run provenance is unresolved.");
       }
-      records.push(syncRecord(name, "experiment", Buffer.from(JSON.stringify(evidence.notebook, null, 2)))); owners.push(owner);
+      records.push(syncRecord(name, "experiment", Buffer.from(serializeExperimentNotebook(evidence.notebook)))); owners.push(owner);
       for (const run of evidence.runs) if (!at(local, run.path)) records.push(run);
     } catch (error) { hold(name, "", (error as Error).message); }
   }
@@ -158,12 +206,19 @@ async function context(workspace: string, projectId: string, planId: string, inp
   for (const r of remote.records.filter(item => item.kind === "run")) if (r.sha256 !== at(local, r.path)?.sha256 && !handled.has(r.path) && !records.some(item => item.path === r.path)) hold(r.path, "", "uncollected run stays with its original owner");
   for (const b of base.records.filter(item => item.kind === "experiment" || item.kind === "run")) if (!at(remote, b.path) && at(local, b.path) && !handled.has(b.path)) hold(b.path, "", "experiment deletion remains held");
   for (const decision of decisions.values()) if (!resolved.has(decision.conflictId)) throw new Error("A decision is not an exact current ordinary-note conflict.");
-  return { staged, records: records.filter(item => item.sha256 !== at(local, item.path)?.sha256), held: held.filter(item => !resolved.has(item.id)), newEntries, owners, catalogueRevision: afterCatalogue.revision, options, selection: currentSelection };
+  const finalRecords=records.filter(item => item.sha256 !== at(local, item.path)?.sha256),metadataPaths=new Set<string>();
+  if(await desktopFirstEnabled(workspace)){const pins=new Set((await coldProject(workspace,projectId)).files.filter(f=>f.pinned).map(f=>f.record.path));
+   for(const r of finalRecords)if(coldEligible(r)&&!pins.has(r.path)&&await coldClaim(workspace,r,projectId,r.path)&&!await optional(await coldFilePath(workspace,projectId,r.path)))metadataPaths.add(r.path);
+  }
+  return { staged, records: finalRecords,metadataPaths, held: held.filter(item => !resolved.has(item.id)), newEntries, owners, catalogueRevision: afterCatalogue.revision, options, selection: currentSelection };
 }
 function describe(ctx: Awaited<ReturnType<typeof context>>, before: SyncSnapshot, selected = ctx.selection): MergeBody {
   if (before.device.id !== ctx.staged.inputs[1].device.id || syncStateHash(before) !== syncStateHash(ctx.staged.inputs[1])) throw new Error("Local work changed; compare a new checkpoint.");
-  const changes = ctx.records.map(item => ({ path: item.path, kind: item.kind, before: at(before, item.path)?.sha256 ?? "", after: item.sha256, bytes: item.bytes }));
-  if (changes.length > 300 || changes.reduce((sum, item) => sum + item.bytes, 0) > 48 * 1024 * 1024) throw new Error("Merge exceeds 300 files / 48 MB; use selected collection.");
+  const originals = new Map(before.records.map(record => [record.path, record]));
+  const changes = ctx.records.map(item => ({ path: item.path, kind: item.kind, before: originals.get(item.path)?.sha256 ?? "", after: item.sha256, bytes: item.bytes, ...(item.external?{external:true as const}:{}),...(ctx.metadataPaths.has(item.path)?{desktopBacked:true as const}:{}) }));
+  const resident=changes.filter(item=>!item.desktopBacked),bulkReferences=ctx.metadataPaths.size>0;
+  const residentBytes=resident.reduce((sum,item)=>sum+item.bytes,0),inlineBytes=changes.reduce((sum, item) => sum + (item.external?0:item.bytes), 0);
+  if (changes.length > (bulkReferences?20000:300) || resident.length>(bulkReferences?5000:300) || residentBytes>256*1024**2 || inlineBytes > 48 * 1024 * 1024) throw new Error(`Merge exceeds bounded limits: ${changes.length} changes, ${resident.length} resident files, ${residentBytes} resident bytes, ${inlineBytes} inline bytes; use selected collection.`);
   checkCollectionFootprint(before, changes);
   return { format: "aw-research-merge", version: 1, projectId: before.projectId, planId: ctx.staged.id, options: ctx.options, deviceId: before.device.id, localStateHash: syncStateHash(before), selection: selected,
     changes, held: ctx.held, newEntries: ctx.newEntries, owners: ctx.owners, catalogueRevision: ctx.catalogueRevision };
@@ -175,7 +230,7 @@ async function targets(workspace: string, body: MergeBody, create = false) {
 }
 async function checkNewDestinations(workspace: string, body: MergeBody, before: SyncSnapshot) {
   const roots = await targets(workspace, body);
-  for (const change of body.changes) if (!change.before) { const source = change.path.startsWith("source/"); if (await guardedFileHash(source ? roots.source : workspace, source ? change.path.slice(7) : `.paperfocus/project-data/${body.projectId}/${change.path.slice(5)}`)) throw new Error("New destination already exists, including excluded work; preserved."); }
+  for (const change of body.changes) if (!change.before) { const source = change.path.startsWith("source/"); if (await guardedBulkHash(source ? roots.source : workspace, source ? change.path.slice(7) : `.paperfocus/project-data/${body.projectId}/${change.path.slice(5)}`)) throw new Error("New destination already exists, including excluded work; preserved."); }
   for (const owner of body.owners) if (!at(before, `data/experiments/${owner}/notebook.ipynb`)) {
     const folder = path.dirname(await guardedTarget(workspace, `.paperfocus/project-data/${body.projectId}/experiments/${owner}/notebook.ipynb`));
     if (await optional(folder)) throw new Error("New owner folder already exists, including hidden orphan work; preserved.");
@@ -184,12 +239,13 @@ async function checkNewDestinations(workspace: string, body: MergeBody, before: 
 export async function previewResearchMerge(workspace: string, projectId: string, planId: string, options: ResearchMergeOptions = {}) {
   const ctx = await context(workspace, projectId, planId, options), before = await checkSyncLocalState(workspace, projectId, ctx.staged.plan.local), body = describe(ctx, before);
   await checkNewDestinations(workspace, body, before);
+  const changedPaths = new Set(ctx.records.map(record => record.path));
   return { mergeId: mergeId(body), projectId, planId, changes: body.changes, held: body.held.map(({ base: _b, local: _l, remote: _r, ...item }) => item), newEntries: body.newEntries,
-    afterSemanticHash: semanticSyncHash({ ...before, records: [...before.records.filter(item => !ctx.records.some(record => record.path === item.path)), ...ctx.records] }),
+    afterSemanticHash: semanticSyncHash({ ...before, records: [...before.records.filter(item => !changedPaths.has(item.path)), ...ctx.records] }),
     complete: body.held.length === 0, planned: true, liveImport: false, codeExecuted: false, approvalGranted: false, tasksCompleted: false, note: "Save all editor drafts before commit. Ordinary saved research/source only; protected or ambiguous changes remain held." };
 }
 export async function researchMergeDetails(workspace: string, projectId: string, planId: string, options: ResearchMergeOptions = {}) {
-  const ctx = await context(workspace, projectId, planId, options); return { projectId, planId, held: ctx.held, liveImport: false };
+  const ctx = await context(workspace, projectId, planId, options); return { projectId, planId, held: ctx.held,statistics:{changes:ctx.records.length,desktopReferences:ctx.metadataPaths.size,residentFiles:ctx.records.filter(r=>!ctx.metadataPaths.has(r.path)).length,residentBytes:ctx.records.reduce((n,r)=>n+(ctx.metadataPaths.has(r.path)?0:r.bytes),0),inlineBytes:ctx.records.reduce((n,r)=>n+(r.external?0:r.bytes),0)}, liveImport: false };
 }
 export async function researchMergeFile(workspace: string, projectId: string, planId: string, name: string) {
   const ctx = await context(workspace, projectId, planId), record = ctx.records.find(item => item.path === name), original = at(ctx.staged.inputs[1], name);
@@ -203,14 +259,14 @@ export async function researchMergeCandidate(workspace: string, projectId: strin
 }
 async function journal(workspace: string, projectId: string, id: string) {
   if (!digest.test(id)) throw new Error("Use an exact merge review ID."); const file = await privateSyncPath(workspace, `merges/${projectId}/${id}/journal.json`);
-  if (!await optional(file)) return undefined; const value: Journal = JSON.parse((await readSyncBytes(file, 4 * 1024 * 1024)).toString()); validateSyncJson(value);
+  if (!await optional(file)) return undefined; const value: Journal = JSON.parse((await readSyncBytes(file, 8 * 1024 * 1024)).toString()); validateSyncJson(value);
   if (value.format !== "aw-research-merge-journal" || value.version !== 1 || value.body.projectId !== projectId || mergeId(value.body) !== id || !digest.test(value.backupId)) throw new Error("Damaged merge journal; preserved."); return value;
 }
 export async function researchMergeStatus(workspace: string, projectId: string, id: string) {
   const saved = await journal(workspace, projectId, id); if (!saved) throw new Error("Merge journal not found.");
   const ready = await privateSyncPath(workspace, `merges/${projectId}/${id}/ready.json`), folder = path.dirname(ready);
   if (!await optional(ready)) return { mergeId: id, folder, completed: false, partial: true, liveWritesPossible: true, note: "Repeat the identical commit only after inspecting current work; partial writes are preserved." };
-  const result = JSON.parse((await readSyncBytes(ready, 100000)).toString()); validateSyncJson(result);
+  const result = JSON.parse((await readSyncBytes(ready, 8*1024**2)).toString()); validateSyncJson(result);
   const { receiptHash, ...body } = result;
   if (syncHash(canonical(body)) !== receiptHash || result.mergeId !== id || result.projectId !== projectId || result.planId !== saved.body.planId || result.codeExecuted !== false || result.tasksCompleted !== false || result.approvalGranted !== false || !digest.test(result.stateHash) || !digest.test(result.head) || result.historyJoined !== (saved.body.held.length === 0)) throw new Error("Merge receipt changed; preserve and inspect.");
   return { ...result, folder, completed: true, partial: false };
@@ -233,12 +289,26 @@ export async function commitResearchMerge(workspace: string, projectId: string, 
       // Preview checks noncaptured destinations before creating the journal.
       await checkNewDestinations(workspace, body, before);
       await saveImmutableSyncArtifact(await privateSyncPath(workspace, `${relative}/before.json`, true), Buffer.from(JSON.stringify(before) + "\n"), syncLimits.packetBytes);
-      saved = { format: "aw-research-merge-journal", version: 1, body, backupId: before.id }; await saveImmutableSyncArtifact(await privateSyncPath(workspace, `${relative}/journal.json`), Buffer.from(JSON.stringify(saved) + "\n"), 4 * 1024 * 1024);
+      saved = { format: "aw-research-merge-journal", version: 1, body, backupId: before.id }; await saveImmutableSyncArtifact(await privateSyncPath(workspace, `${relative}/journal.json`), Buffer.from(JSON.stringify(saved) + "\n"), 8 * 1024 * 1024);
     }
-    const body = saved.body, release: Array<() => Promise<void>> = [], roots = await targets(workspace, body, true);
-    const check = async () => { if (!equal(await selection(workspace, projectId), body.selection)) throw new Error("Root/compiler selection changed; retained merge requires inspection."); return fence(await captureSyncSnapshot(workspace, projectId), before, body); };
+    const body = structuredClone(saved.body), release: Array<() => Promise<void>> = [], roots = await targets(workspace, body, true);
+    // Reviews use a host-local monotonically increasing native save counter.
+    // The staged checkpoint may predate harmless queue/counter housekeeping.
+    // Derive the exact native result from the immutable before-image, never
+    // from a newer live store, so partial retries expect the same bytes.
+    ctx.records=ctx.records.map(record=>{
+      if(record.kind!=='review')return record;
+      const value=json(record),previous=at(before,record.path),revision=previous?json(previous).revision:0;
+      const native={version:1,revision:revision+1,...(value.queueLastActiveAt?{queueLastActiveAt:value.queueLastActiveAt}:{}),attentionTasks:value.attentionTasks,rewriteSessions:value.rewriteSessions,handoffDrafts:value.handoffDrafts,recoveredDrafts:value.recoveredDrafts};
+      if(!equal(normalizedReviewContent(native),normalizedReviewContent(value)))throw new Error('Native review formatting would change protected content; preserved.');
+      const prepared=syncRecord(record.path,record.kind,Buffer.from(JSON.stringify(native))),change=body.changes.find(c=>c.path===record.path);
+      if(!change||change.after!==record.sha256)throw new Error('Review is not in the exact saved merge scope.');
+      change.after=prepared.sha256;change.bytes=prepared.bytes;return prepared;
+    });
+    const check = async () => { if (!equal(await selection(workspace, projectId), body.selection)) throw new Error("Root/compiler selection changed; retained merge requires inspection."); return fence(await captureSyncSnapshot(workspace, projectId,undefined,{forceFull:true}), before, body); };
     try {
-      await check(); await hooks.afterBackup?.(); await check();
+      await check();
+      if(hooks.afterBackup){await hooks.afterBackup();await check();}
       for (const owner of [...body.owners].sort()) {
         const folder = path.dirname(await guardedTarget(roots.data, `experiments/${owner}/notebook.ipynb`, true));
         if (!at(before, `data/experiments/${owner}/notebook.ipynb`)) {
@@ -250,16 +320,35 @@ export async function commitResearchMerge(workspace: string, projectId: string, 
         }
         release.push(await acquireRecordLock(path.join(folder, "python-run"), 0));
       }
-      await check();
+      if(body.owners.length)await check();
+      const virtual=ctx.records.filter(r=>body.changes.some(c=>c.path===r.path&&c.desktopBacked));
+      if(virtual.length){
+       const leases:Array<()=>Promise<void>>=[];
+       try{
+        const updates:Array<{record:SyncRecord;before:string}>=[];
+        for(const r of virtual){const change=body.changes.find(c=>c.path===r.path)!;
+         const target=await coldFilePath(workspace,projectId,r.path);
+         // Parents for the short-lived lease only; no placeholder data files.
+         const relative=path.relative(workspace,target).replaceAll('\\','/');
+         await guardedTarget(workspace,relative+'.aw-lock',true);
+         leases.push(await acquireRecordLock(target,0));
+         if(await optional(await coldFilePath(workspace,projectId,r.path)))throw new Error('A local artifact appeared during reference collection; preserved.');
+         updates.push({record:r,before:change.before});
+        }
+        await saveColdAliases(workspace,projectId,updates);
+       }finally{for(const release of leases.reverse())await release();}
+      }
       const sorted = [...ctx.records].sort((a, b) => (a.kind === "catalogue" ? 3 : a.kind === "experiment" ? 1 : a.kind === "run" ? 0 : 2) - (b.kind === "catalogue" ? 3 : b.kind === "experiment" ? 1 : b.kind === "run" ? 0 : 2) || a.path.localeCompare(b.path));
       for (const record of sorted) {
         const change = body.changes.find(item => item.path === record.path)!, source = record.path.startsWith("source/"), root = source ? roots.source : roots.data, name = record.path.slice(source ? 7 : 5);
-        const currentHash = await guardedFileHash(root, name); if (currentHash === change.after) continue;
+        if(change.desktopBacked){await hooks.afterFile?.(record.path);if(hooks.afterFile)await check();continue;}
+        let currentHash = record.external?await guardedBulkHash(root,name):await guardedFileHash(root, name);if(record.external&&!currentHash){const alias=(await coldProject(workspace,projectId)).files.find(f=>f.record.path===record.path);if(alias){await verifyColdAvailability(workspace,alias.record,projectId);currentHash=alias.record.sha256;}}if (currentHash === change.after) continue;
         if (currentHash !== change.before) throw new Error(`Merge destination changed: ${record.path}`);
         if (record.kind === "catalogue") await check(); // Evidence must be intact before cards are published.
         if (record.kind === "experiment") { const owner = record.path.split("/")[2]; await writeExperiments(workspace, projectId, owner, change.before, json(record)); }
         else if (record.kind === "catalogue") { const value = json(record); await writeNotebook(workspace, projectId, catalogue(before).revision, value.entries, change.before); await hooks.afterCatalogue?.(); }
-        else { if (record.kind === "run") await saveImmutableSyncArtifact(await guardedTarget(root, name, true), Buffer.from(record.data, "base64"), syncLimits.fileBytes); else await saveGuardedFile(root, name, change.before, Buffer.from(record.data, "base64")); }
+        else if (record.kind === "review") { const value=json(record); await writeWorkbench(workspace,projectId,value.revision-1,value,change.before); }
+        else { if(record.external)await materializeBlob(workspace,root,name,record,change.before);else if (record.kind === "run") await saveImmutableSyncArtifact(await guardedTarget(root, name, true), Buffer.from(record.data, "base64"), syncLimits.fileBytes); else await saveGuardedFile(root, name, change.before, Buffer.from(record.data, "base64")); }
         await hooks.afterFile?.(record.path);
         if (hooks.afterFile) await check();
       }
@@ -275,7 +364,7 @@ export async function commitResearchMerge(workspace: string, projectId: string, 
       await rememberSyncHead(workspace, projectId, head.id);
       const receipt = { version: 1, mergeId: id, projectId, planId, backupPath: backupFile, changes: body.changes.map(item => item.path), held: body.held.map(item => ({ id: item.id, path: item.path, field: item.field, reason: item.reason })), stateHash: syncStateHash(current),
         head: head.id, headPath: headFile, historyJoined: body.held.length === 0, completedAt: new Date().toISOString(), liveImport: true, complete: body.held.length === 0, codeExecuted: false, tasksCompleted: false, approvalGranted: false };
-      await saveImmutableSyncArtifact(await privateSyncPath(workspace, `${relative}/ready.json`), Buffer.from(JSON.stringify({ ...receipt, receiptHash: syncHash(canonical(receipt)) }) + "\n"), 100000);
+      await saveImmutableSyncArtifact(await privateSyncPath(workspace, `${relative}/ready.json`), Buffer.from(JSON.stringify({ ...receipt, receiptHash: syncHash(canonical(receipt)) }) + "\n"), 8*1024**2);
       return { ...receipt, folder: path.dirname(backupFile), completed: true, partial: false, alreadyComplete: false };
     } catch (error) { throw new Error(`${(error as Error).message} Merge retained at ${path.dirname(backupFile)}; partial live changes may exist. Inspect or resume the exact review, never force or roll back newer work.`); }
     finally { const errors: unknown[] = []; for (const done of release.reverse()) try { await done(); } catch (error) { errors.push(error); } if (errors.length) throw new AggregateError(errors, "Some merge leases changed; all other owned leases released. Inspect before retry."); }

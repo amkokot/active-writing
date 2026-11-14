@@ -9,7 +9,7 @@ import { notebookCollectionEvidence, checkCollectionFootprint, type CollectionDe
 import { acquireRecordLock, withRecordLock } from "./recordLock.ts";
 import { getProject } from "./projects.ts";
 import { projectDataPath, projectStorage } from "./projectStorage.ts";
-import { readExperiments, writeExperiments } from "./experiments.ts";
+import { readExperiments, writeExperiments, serializeExperimentNotebook } from "./experiments.ts";
 import { validateNotebookEntries, writeNotebook } from "./notebookStore.ts";
 import { manuscriptRoots } from "./manuscriptRoots.ts";
 import type { NotebookEntry, NotebookStore } from "../src/types.ts";
@@ -75,7 +75,7 @@ async function context(workspace: string, projectId: string, planId: string, ent
   if (Object.keys(sources).length > 500) throw new Error("Use a project with at most 500 TeX files for this bounded import.");
   const roots = manuscriptRoots(sources, true), currentSelection = await selection(workspace, projectId);
   for (const entry of entries) if (!roots.includes(entry.manuscriptFile ?? entry.source?.rootFile ?? currentSelection.mainFile)) throw new Error("A conversation's manuscript root is not available locally. Source collection is separate; do not reassign its root.");
-  const evidence = owners.map(owner => notebookCollectionEvidence(staged, `data/experiments/${owner}/notebook.ipynb`));
+  const evidence = await Promise.all(owners.map(owner => notebookCollectionEvidence(staged, `data/experiments/${owner}/notebook.ipynb`,workspace)));
   let runBytes = 0, runCount = 0;
   for (const item of evidence) {
     const prefix = `data/experiments/${item.notebookId}/`;
@@ -95,10 +95,10 @@ function describe(ctx: Awaited<ReturnType<typeof context>>, before: SyncSnapshot
   const body: ConversationCollectionDescription = { format: "aw-conversation-collection", version: 1, projectId: ctx.projectId, planId: ctx.planId, entries: ctx.entries.map(entry => entry.id), deviceId: before.device.id,
     localStateHash: syncStateHash(before), beforeCatalogueHash: recordAt(before, cataloguePath)?.sha256 ?? "", afterCatalogueHash: syncHash(Buffer.from(JSON.stringify(after, null, 2))),
     beforeCatalogueRevision: original.revision, afterCatalogueRevision: after.revision, entryHashes: ctx.entries.map(entry => ({ id: entry.id, sha256: syncHash(canonical(entry)) })), selection: selected,
-    owners: ctx.evidence.map(item => ({ id: item.notebookId, path: item.candidate.path, afterRevision: syncHash(Buffer.from(JSON.stringify(item.notebook, null, 2))), candidateHash: item.candidate.sha256,
+    owners: ctx.evidence.map(item => ({ id: item.notebookId, path: item.candidate.path, afterRevision: syncHash(Buffer.from(serializeExperimentNotebook(item.notebook))), candidateHash: item.candidate.sha256,
       runs: item.runs.map(({ path: name, sha256, bytes }) => ({ path: name, sha256, bytes })) })) };
   checkCollectionFootprint(before, [{ path: cataloguePath, bytes: Buffer.byteLength(JSON.stringify(after, null, 2)) },
-    ...ctx.evidence.flatMap(item => [{ path: item.candidate.path, bytes: Buffer.byteLength(JSON.stringify(item.notebook, null, 2)) }, ...item.runs])]);
+    ...ctx.evidence.flatMap(item => [{ path: item.candidate.path, bytes: Buffer.byteLength(serializeExperimentNotebook(item.notebook)) }, ...item.runs])]);
   return { body, after };
 }
 export async function previewConversationCollection(workspace: string, projectId: string, planId: string, entryIds: string[]) {
@@ -162,7 +162,7 @@ export async function commitConversationCollection(workspace: string, projectId:
     try {
       const check = async () => {
         if (canonical(await selection(workspace, projectId)) !== canonical(body.selection)) throw new Error("Manuscript/root selection changed. Inspect the retained bundle.");
-        return fence(await captureSyncSnapshot(workspace, projectId), before, body);
+        return fence(await captureSyncSnapshot(workspace, projectId,undefined,{forceFull:true}), before, body);
       };
       await projectStorage(workspace, projectId);
       await check(); await hooks.afterBackup?.(); if (hooks.afterBackup) await check();

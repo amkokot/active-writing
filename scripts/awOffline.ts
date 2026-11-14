@@ -11,7 +11,7 @@ import { validateLaunchWorkspace } from "./desktopLauncher.mjs";
 import { readSyncBytes, syncStatus } from "../server/deviceSync.ts";
 import { appCodeRoot } from "../server/appPaths.ts";
 
-const supported = new Set(["discover", "bind", "inspect", "cell", "output", "inputs", "manifest", "put", "batch", "organize", "finish", "run", "job"]);
+const supported = new Set(["visual", "discover", "bind", "inspect", "cell", "output", "inputs", "manifest", "put", "batch", "organize", "finish", "run", "job"]);
 /** Local adapter for records and explicitly authorized fresh Python. No fetch/listener. */
 export async function offlineResearchRequest(command: string, flags: Record<string, string>, expectedOwner?: string) {
   if (!supported.has(command)) throw new Error(`Offline mode does not support ${command}. Use the live service deliberately for sessions, preflight, evidence or phase rollover. Nothing started.`);

@@ -6,6 +6,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { DatabaseSync } from "node:sqlite";
 import { randomBytes, pbkdf2Sync, createHash } from "node:crypto";
+import { spawnSync } from "node:child_process";
 import { configuration, buildWorker, prepare } from "./project.mjs";
 
 const source = await readFile(new URL("./reader/worker.js", import.meta.url), "utf8");
@@ -13,6 +14,14 @@ const options = { name: "aw-test", account: "a".repeat(32), subdomain: "test-acc
 const map = new Map([["index.html", Buffer.from("<h1>PRIVATE</h1>")], ["overview.pdf", Buffer.from("%PDF-PRIVATE")], ["assets/image.png", randomBytes(15000)]]);
 const manifest = { format: "active-writing-reader", version: 1, files: [...map].map(([name, b]) => ({ name, sha256: createHash("sha256").update(b).digest("hex") })) };
 const files = new Map([...map, ["reader.json", Buffer.from(JSON.stringify(manifest))], ["reader.zip", Buffer.from("PK-private")]]);
+
+test("shared PDF titles follow their project, remove stale XMP and preserve originals", t => {
+  const python = process.env.AW_SHARE_PDF_PYTHON ?? process.env.PAPERFOCUS_PYTHON ?? (process.platform === "win32" ? "python" : "python3");
+  const probe = spawnSync(python, ["-c", "import pypdf"], { encoding: "utf8", windowsHide: true, timeout: 10000 });
+  if (probe.status !== 0) { t.skip("pypdf is not installed for the selected Python"); return; }
+  const result = spawnSync(python, ["-B", "scripts/awSharePdfChecks.py"], { encoding: "utf8", windowsHide: true, timeout: 30000 });
+  assert.equal(result.status, 0, result.stderr || result.error?.message);
+});
 
 test("new project configuration is read-only, private by gate, and shares only the named D1", () => {
   const c = configuration(options);

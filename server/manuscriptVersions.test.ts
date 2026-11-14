@@ -11,8 +11,8 @@ import { readNotebook, writeNotebook } from "./notebookStore.ts";
 import { readExperiments, writeExperiments } from "./experiments.ts";
 import { newExperimentCell, newExperimentNotebook } from "../src/experiments.ts";
 import { notebookAttentionTasks } from "../src/notebookSync.ts";
-import { manuscriptPurpose, manuscriptWritingPolicy, newManuscript, notebookForManuscript, nextManuscriptVersion } from "../src/manuscripts.ts";
-import { setManuscriptPurpose } from "./manuscriptPurpose.ts";
+import { manuscriptPurpose, manuscriptWritingPolicy, newManuscript, notebookForManuscript, nextManuscriptVersion, pinnedManuscripts, manuscriptLink } from "../src/manuscripts.ts";
+import { setManuscriptPurpose, setManuscriptPin } from "./manuscriptPurpose.ts";
 import { createSourceMonitor } from "./sourceMonitor.ts";
 import { notebookPacket } from "../src/notebook.ts";
 import { externalStudyPacket, studyPacket } from "../src/study.ts";
@@ -59,6 +59,46 @@ async function transferFixture() {
   const input = { projectId: f.project.id, mainFile: "main.tex", revision: document.revision, notebookRevision: notes.revision, entryIds: [f.entry.id], targetFile: "other.tex", mode: "copy" as const };
   return { ...f, entry: (await readNotebook(f.workspace, f.project.id)).entries[0], document, notes, input };
 }
+
+test("preferred documents are guarded metadata, never purpose changes, source edits or review decisions", async () => {
+  const f = await transferFixture(), before = await parseProject(f.workspace, f.project.id);
+  const notes = await readNotebook(f.workspace, f.project.id), workbench = await readWorkbench(f.workspace, f.project.id);
+  const input = { projectId: f.project.id, mainFile: before.project.mainFile, revision: before.revision, purpose: "notes" as const, file: "other.tex", expectedFile: "" };
+  const result = await setManuscriptPin(f.workspace, input);
+  assert.equal(result.document.project.manuscriptPins?.notes, "other.tex");
+  assert.equal(result.document.project.mainFile, before.project.mainFile);
+  assert.deepEqual(result.document.project.manuscriptPurposes, before.project.manuscriptPurposes);
+  assert.equal(result.document.revision, before.revision);
+  assert.deepEqual(await readNotebook(f.workspace, f.project.id), notes);
+  assert.deepEqual(await readWorkbench(f.workspace, f.project.id), workbench);
+  for (const patch of [{ expectedFile: "" }, { expectedFile: "other.tex", file: "main.tex" }, { expectedFile: "other.tex", file: "../outside.tex" }, { expectedFile: "other.tex", file: "sections/body.tex" }, { expectedFile: "other.tex", revision: "0".repeat(64) }]) await assert.rejects(setManuscriptPin(f.workspace, { ...input, ...patch }));
+  assert.equal((await createSourceMonitor()(f.workspace, f.project.id)).pins, JSON.stringify({ notes: "other.tex" }));
+  const pins = pinnedManuscripts(result.document.project, before.rootFiles);
+  assert.equal(pins.notes, "other.tex"); assert.equal(pins.publication, "main.tex"); assert.equal(pins.overview, undefined);
+  const ambiguous = { ...before.project, manuscriptPurposes: {}, manuscriptPins: {} };
+  assert.equal(pinnedManuscripts(ambiguous, ["main.tex", "other.tex"]).notes, undefined);
+  assert.equal(pinnedManuscripts({ ...ambiguous, manuscriptPins: { notes: "missing.tex" } }, ["other.tex"]).notes, "other.tex");
+  const url = new URL(manuscriptLink("http://127.0.0.1:4173/?awNotebook=old#old", f.project.id, "other.tex"));
+  assert.equal(url.searchParams.get("awRoot"), "other.tex"); assert.equal(url.searchParams.get("awPanel"), "paper"); assert.equal(url.searchParams.has("awNotebook"), false);
+});
+
+test("pin CLI previews and commits without switching roots and rejects foreign origins", async () => {
+  const f = await transferFixture(), middleware = latexMiddleware(f.workspace);
+  const server = createServer((req, res) => { void middleware(req, res, () => { res.statusCode = 404; res.end(); }); });
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const origin = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
+    const scope = ["--workspace", f.workspace, "--project", f.project.id, "--url", origin];
+    const inspected = await versionsCommand(["inspect", ...scope]);
+    const args = ["pin", ...scope, "--root", "main.tex", "--revision", inspected.sourceRevision, "--purpose", "notes", "--file", "other.tex", "--expected-file", "none"];
+    assert.equal((await versionsCommand(args)).preview, true);
+    assert.equal((await versionsCommand([...args, "--commit"])).document.project.manuscriptPins.notes, "other.tex");
+    assert.equal((await versionsCommand(["inspect", ...scope])).pinnedDocuments.notes, "other.tex");
+    await assert.rejects(versionsCommand([...args, "--commit"]), /changed/);
+    assert.equal((await fetch(`${origin}/api/paperfocus/manuscripts/pin`)).status, 405);
+    assert.equal((await fetch(`${origin}/api/paperfocus/manuscripts/pin`, { method: "POST", headers: { Origin: "https://example.com" }, body: "{}" })).status, 403);
+  } finally { await new Promise<void>(resolve => server.close(() => resolve())); }
+});
 
 test("notebook copy preserves complete independent evidence and original passage links without source changes", async () => {
   const f = await transferFixture();

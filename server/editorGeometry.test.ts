@@ -25,6 +25,61 @@ import { anchoredScrollTop, viewportParagraph } from "../src/sourceViewport.ts";
 import { boundedPaneShare } from "../src/editorGeometry.ts";
 import { sourceLineStarts, lineAtOffset } from "../src/sourceLines.ts";
 import { readFile } from "node:fs/promises";
+import { layoutSchedule } from "../src/editorGeometry.ts";
+import { bindReadingLayout } from "../src/usePaneLayout.ts";
+
+test('closing a hidden comment inspector restores the visible passage through zero-size layout and repeated reflow',()=>{
+  const names=['window','document','ResizeObserver','requestAnimationFrame','cancelAnimationFrame'] as const;
+  const previous=new Map(names.map(name=>[name,Object.getOwnPropertyDescriptor(globalThis,name)]));
+  let resize=()=>{},serial=0,shown=true,width=600,documentY=380;
+  const frames=new Map<number,FrameRequestCallback>(),events=new Map<string,()=>void>();
+  const rect=()=>({top:documentY-pane.scrollTop+50,bottom:documentY-pane.scrollTop+250});
+  const element={getBoundingClientRect:rect,isConnected:true};
+  const pane={scrollTop:400,get clientWidth(){return shown?width:0;},get clientHeight(){return shown?500:0;},getClientRects:()=>shown?[{}]:[],
+    getBoundingClientRect:()=>({top:50}),querySelectorAll:()=>[element],contains:(item:unknown)=>item===element,
+    addEventListener:(name:string,fn:()=>void)=>events.set(name,fn),removeEventListener:(name:string)=>events.delete(name)};
+  const flush=()=>{while(frames.size){const batch=[...frames.values()];frames.clear();for(const fn of batch)fn(0);}};
+  const surface={addEventListener(){},removeEventListener(){}};
+  try{
+    Object.assign(globalThis,{window:surface,document:surface,ResizeObserver:class{constructor(fn:()=>void){resize=fn;}observe(){}disconnect(){}},
+      requestAnimationFrame:(fn:FrameRequestCallback)=>{frames.set(++serial,fn);return serial;},cancelAnimationFrame:(id:number)=>frames.delete(id)});
+    const close=bindReadingLayout(pane as unknown as HTMLElement);
+    shown=false;pane.scrollTop=0;resize();events.get('scroll')?.();flush();
+    shown=true;resize();flush();assert.equal(pane.scrollTop,400,'Hidden zero must not replace the reading anchor');
+    width=900;documentY=600;resize();flush();assert.equal(pane.scrollTop,620,'Source reflow keeps the same passage offset');
+    width=600;documentY=380;resize();flush();assert.equal(pane.scrollTop,400);
+    pane.scrollTop=450;events.get('scroll')?.();flush();
+    shown=false;pane.scrollTop=0;resize();flush();shown=true;resize();flush();assert.equal(pane.scrollTop,450,'A deliberate new reading position becomes the next return point');
+    close();assert.equal(events.size,0);assert.equal(frames.size,0);
+  }finally{for(const name of names){const descriptor=previous.get(name);if(descriptor)Object.defineProperty(globalThis,name,descriptor);else Reflect.deleteProperty(globalThis,name);}}
+});
+
+test("typing coalesces line layout without starving updates or running after unmount", async (t) => {
+  t.mock.timers.enable({apis:["setTimeout"]});
+  let measurements = 0;
+  const layout = layoutSchedule(() => measurements++);
+  for (let key = 0; key < 10; key++) { layout.request(); t.mock.timers.tick(10); }
+  assert.equal(measurements, 1);
+  layout.request(); layout.cancel(); t.mock.timers.tick(200);
+  assert.equal(measurements, 1);
+  layout.request(); t.mock.timers.tick(100);
+  assert.equal(measurements, 2);
+});
+
+test("typing keeps pane observers and unrelated rendered math stable without stale click handlers", async () => {
+  const layout = await readFile(new URL("../src/usePaneLayout.ts", import.meta.url), "utf8");
+  const passage = await readFile(new URL("../src/components/RenderedPassage.tsx", import.meta.url), "utf8");
+  const preview = await readFile(new URL("../src/components/Preview.tsx", import.meta.url), "utf8");
+  assert.ok(layout.indexOf("binding.current?.pane === ref.current") < layout.indexOf("pane.querySelectorAll"));
+  assert.match(layout, /binding.current\?\.close\(\)/);
+  assert.match(passage, /useStableEvent/);
+  assert.match(passage, /onReference=\{props.onReference \|\| props.onPassageReference \? onReference : undefined\}/);
+  assert.match(preview, /contentsCache.current.key !== contentsKey/);
+  assert.match(passage, /export default memo\(function RenderedPassage/);
+  assert.match(preview, /useDeferredValue\(props\)/);
+  assert.match(preview, /navigation \? props : deferred/);
+  assert.doesNotMatch(preview, /onReference=\{onReference \? token =>/);
+});
 
 test("source navigation, full-document reel scrollbar and divider stay in the shared editor", async () => {
   const app = await readFile(new URL("../src/App.tsx", import.meta.url), "utf8");
@@ -107,4 +162,18 @@ test("scope restoration retains pixel offsets across removed headings and reel s
   // Partly visible paragraphs and top-of-document clamping remain valid.
   assert.equal(anchoredScrollTop(500, 170, 100, -70), 640);
   assert.equal(anchoredScrollTop(0, 120, 100, 300), 0);
+});
+import {sameBlockAnnotations} from '../src/editorGeometry.ts';
+test('unrelated comment-map replacements keep source blocks stable; own comments, heading notes and wording locks update',()=>{
+ const ids=['heading','p'],marker={taskId:'draft',label:'Review draft text',locked:false};
+ assert.ok(sameBlockAnnotations(ids,{p:1},{p:1,other:8},{p:marker},{p:{...marker}}));
+ assert.equal(sameBlockAnnotations(ids,{p:1},{p:2},undefined,undefined),false);
+ assert.equal(sameBlockAnnotations(ids,{}, {heading:1},undefined,undefined),false);
+ assert.equal(sameBlockAnnotations(ids,{}, {},{p:marker},{p:{...marker,locked:true}}),false);
+ assert.equal(sameBlockAnnotations(ids,{}, {},{p:marker},{}),false);
+});
+test('source layout is contained without clipping controls below the editing box',async()=>{
+ const css=await readFile(new URL('../src/styles.css',import.meta.url),'utf8');
+ assert.match(css,/\.source-editor-shell \{ contain: layout; \}/);
+ assert.doesNotMatch(css,/\.source-editor-shell \{ contain: (?:paint|strict|content);/);
 });

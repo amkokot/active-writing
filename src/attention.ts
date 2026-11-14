@@ -175,6 +175,52 @@ export function attentionHistory(tasks: AttentionTask[]) {
   return tasks.filter((task) => task.status === "reviewed" || task.queueHiddenAt).sort((a, b) => (b.queueHiddenAt ?? b.updatedAt).localeCompare(a.queueHiddenAt ?? a.updatedAt) || a.id.localeCompare(b.id));
 }
 
+/** Queue presentation only: saved replies remain independent, syncable records.
+ * Resolve links within the owning project, including namespaced cross-project IDs.
+ * Missing parents and malformed cycles stay visible rather than losing comments. */
+export function attentionThreads<T extends AttentionTask>(tasks: T[], now = Date.now()) {
+  const key = (task: T, id: string) => JSON.stringify([task.sourceSnapshot?.projectId ?? (task as T & { projectId?: string }).projectId ?? "", id]);
+  const localId = (task: T) => (task as T & { taskId?: string }).taskId ?? task.id;
+  const byId = new Map(tasks.map(t => [t.id, t]));
+  const comments = new Map(tasks.filter(t => t.review?.kind === "comment").map(t => [key(t, localId(t)), t]));
+  const roots = new Map<string, T>();
+  for (const task of tasks) {
+    let root = task;
+    const path = new Set<string>();
+    while (root.review?.kind === "comment" && root.review.replyTo) {
+      if (path.has(root.id)) {
+        const ids = [...path];
+        root = ids.slice(ids.indexOf(root.id)).map(id => byId.get(id)!).sort((a, b) => a.id.localeCompare(b.id))[0];
+        break;
+      }
+      path.add(root.id);
+      const parent = comments.get(key(root, root.review.replyTo));
+      if (!parent) break;
+      root = parent;
+    }
+    roots.set(task.id, root);
+  }
+  const replies = new Map<string, T[]>();
+  for (const task of tasks) {
+    const root = roots.get(task.id)!;
+    if (root.id === task.id) continue;
+    const list = replies.get(root.id) ?? [];
+    list.push(task); replies.set(root.id, list);
+  }
+  for (const list of replies.values()) list.sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
+  // Preserve the parent's manual rank. An archived parent with open replies uses
+  // its first queued reply's rank, without changing the parent's saved status.
+  const seen = new Set<string>();
+  const queue = attentionQueue(tasks, now).flatMap(task => {
+    const root = roots.get(task.id)!;
+    if (task.id !== root.id && root.status !== "reviewed" && !root.queueHiddenAt) return [];
+    if (seen.has(root.id)) return [];
+    seen.add(root.id); return [root];
+  });
+  const history = attentionHistory(tasks).filter(task => roots.get(task.id)?.id === task.id && !seen.has(task.id));
+  return { queue, history, replies, roots };
+}
+
 /** Explicit human queue clearing preserves all records and does not pretend any work was reviewed. */
 export function setAsideCurrentQueue(tasks: AttentionTask[], now = new Date().toISOString()) {
   if (!Number.isFinite(Date.parse(now))) throw new Error("Use a valid queue-clearing time.");

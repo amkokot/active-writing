@@ -1,5 +1,6 @@
 import { ArrowLeft, ArrowRight, ArrowUpRight, MessageSquareText, X } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
+import { CommentField } from "./CommentField";
 import type { AttentionTask, ProjectDocument, HandoffDraft, ReviewComment } from "../types";
 import { reviewComments, reviewCommentTitle, defaultReviewInstructions, reviewCommentTarget, reviewCommentLocation, adjacentReviewComment, nextCommentOutsideBlock } from "../review";
 import { checkTaskSource } from "../taskSource";
@@ -28,8 +29,6 @@ export function ReviewPanel({ onReply, blockComments, onAllComments, onOutsideCo
   const open = reviewComments(blockComments ?? attentionQueue(tasks)), resolved = reviewComments(tasks, true);
   const selected = tasks.find(t => t.id === selectedId && t.review?.kind === "comment");
   const comment = selected?.review as ReviewComment | undefined;
-  const noteField = useRef<HTMLTextAreaElement>(null);
-  useEffect(() => { if (selected?.review?.kind === "comment" && selected.review.author === "human" && !selected.review.body) noteField.current?.focus(); }, [selected?.id]);
   const source = selected && checkTaskSource(selected.sourceSnapshot, document, edits);
   const location = selected && reviewCommentLocation(selected, document, edits);
   const otherManuscript = Boolean(selected?.sourceSnapshot && (selected.sourceSnapshot.projectId !== document.project.id || selected.sourceSnapshot.rootFile !== document.project.mainFile));
@@ -61,7 +60,7 @@ export function ReviewPanel({ onReply, blockComments, onAllComments, onOutsideCo
       <small>{location ? `${document.nodes.find(node => node.id === location.nodeId)?.title ?? "Passage"} · ${document.paragraphs.find(p => p.id === location.paragraphId)?.file ?? document.project.mainFile}` : otherManuscript ? `In ${selected.sourceSnapshot?.rootFile}. Jump opens its project and manuscript before checking the location.` : "The original passage could not be located safely. Its saved quote is shown below."}</small>
       {location?.changedBlock && <small>The text was edited. Jump returns to its saved block, not an exact quoted range.</small>}
       <blockquote>{comment.quote}</blockquote>
-      <textarea ref={noteField} aria-label="Review comment" placeholder="What needs attention? Saved as you type." maxLength={6000} rows={4} value={comment.body} onChange={event => onEdit(selected.id, event.target.value)} />
+      <CommentField key={selected.id} projectId={document.project.id} id={selected.id} body={comment.body} autoFocus={comment.author === "human" && !comment.body} onEdit={onEdit} />
       <small>{location?.changedBlock ? "The remembered block is available, but the original quoted range no longer matches." : source?.message} The saved quote is kept even if its location changes.</small>
       {comment.replyTo && <button onClick={() => { const parent = tasks.find(t => t.id === comment.replyTo); if (parent) onSelect(parent); }}>Original comment →</button>}
       {tasks.some(t => t.review?.kind === "comment" && t.review.replyTo === selected.id) && <div className="comment-thread-replies" aria-label="Replies to this comment"><strong>Replies</strong>{rows(tasks.filter(t => t.review?.kind === "comment" && t.review.replyTo === selected.id))}</div>}

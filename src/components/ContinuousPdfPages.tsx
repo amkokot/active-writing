@@ -5,6 +5,8 @@ import { safeLink } from "../references";
 import { windowStateCache } from "../windowCache";
 import type { parseReadingPosition, ReadingPosition } from "../readingPosition";
 import { PdfTextLayer } from "./PdfTextLayer";
+import { readingPaneVisible } from "../editorGeometry";
+import { pdfRasterSize } from "../paneZoom";
 
 export type PdfScrollTo = (page: number, y?: number, x?: number) => void;
 interface Props {
@@ -15,6 +17,7 @@ interface Props {
   resume?: ReturnType<typeof parseReadingPosition>;
   onPage: (page: number) => void;
   onPosition?: (position: ReadingPosition) => void;
+  pageIdentity?: (page: number) => Pick<ReadingPosition, "sectionId" | "sectionPage">;
   onDestination: (destination: string | unknown[]) => void;
   onSourcePosition?: (page: number, x: number, y: number) => void;
 }
@@ -31,9 +34,10 @@ export function ContinuousPdfPages(props: Props) {
   const initialized = useRef(false);
   const anchor = useRef<{ page: number; y: number; x: number } | undefined>(undefined);
   const previousScale = useRef(scale);
+  const wasActive = useRef(active);
   const locate = (page: number) => scrollRef.current?.querySelector<HTMLElement>(`[data-pdf-page="${page}"]`);
   const position = () => {
-    const pane = scrollRef.current; if (!pane || !sizes.length) return;
+    const pane = scrollRef.current; if (!active || !pane || !sizes.length || !readingPaneVisible(pane)) return;
     const line = pane.getBoundingClientRect().top + 2;
     const slots = Array.from(pane.querySelectorAll<HTMLElement>("[data-pdf-page]"));
     const slot = slots.find(item => item.getBoundingClientRect().bottom > line) ?? slots.at(-1);
@@ -44,7 +48,7 @@ export function ContinuousPdfPages(props: Props) {
   };
   const scrollTo: PdfScrollTo = (page, y = 0, x) => {
     const slot = locate(page), pane = scrollRef.current;
-    if (!slot || !pane) { pending.current = { page, y, x }; return; }
+    if (!slot || !pane || !active || !readingPaneVisible(pane)) { pending.current = { page, y, x }; return; }
     const offset = slot.getBoundingClientRect().top - pane.getBoundingClientRect().top + pane.scrollTop;
     pane.scrollTop = Math.max(0, offset + y * scale);
     if (x !== undefined) pane.scrollLeft = Math.max(0, x * scale - pane.clientWidth / 2);
@@ -93,7 +97,8 @@ export function ContinuousPdfPages(props: Props) {
 
   useLayoutEffect(() => {
     navigator.current = scrollTo;
-    if (!sizes.length) return;
+    const returning = active && !wasActive.current; wasActive.current = active;
+    if (!active || !sizes.length || !scrollRef.current || !readingPaneVisible(scrollRef.current)) return;
     if (!initialized.current) {
       initialized.current = true;
       const resume = live.current.resume;
@@ -103,12 +108,12 @@ export function ContinuousPdfPages(props: Props) {
       pending.current = undefined;
     } else if (pending.current) {
       const target = pending.current; pending.current = undefined; scrollTo(target.page, target.y, target.x);
-    } else if (previousScale.current !== scale && anchor.current) {
+    } else if ((returning || previousScale.current !== scale) && anchor.current) {
       scrollTo(anchor.current.page, anchor.current.y);
       if (scrollRef.current) scrollRef.current.scrollLeft = anchor.current.x * scale;
     }
     previousScale.current = scale;
-  }, [sizes, scale]);
+  }, [sizes, scale, active]);
 
   useEffect(() => {
     const pane = scrollRef.current; if (!pane || !sizes.length) return;
@@ -125,18 +130,19 @@ export function ContinuousPdfPages(props: Props) {
     pane.querySelectorAll("[data-pdf-page]").forEach(slot => observer.observe(slot));
     let timer: ReturnType<typeof setTimeout> | undefined;
     const save = () => {
-      clearTimeout(timer); const at = position(); if (!at || !active) return;
+      clearTimeout(timer); const at = position() ?? anchor.current; if (!at || !active) return;
       try {
-        const value = JSON.stringify({ revision: live.current.url, page: at.page, top: Math.max(0, at.y * scale), left: pane.scrollLeft, scale });
+        const value = JSON.stringify({ revision: live.current.url, page: at.page, top: Math.max(0, at.y * scale), left: at.x * scale, scale, ...live.current.pageIdentity?.(at.page) });
         windowStateCache().writeSnapshot(live.current.recoveryKey, value, value);
       } catch { /* Reading position is optional, never an authority for drafts. */ }
     };
     const scrolled = () => {
-      anchor.current = position();
+      const at = position(); if (!at) return;
+      anchor.current = at;
       if (anchor.current) {
         live.current.onPage(anchor.current.page);
         live.current.onPosition?.({ revision: live.current.url, page: anchor.current.page,
-          top: Math.max(0, anchor.current.y * scale), left: pane.scrollLeft, scale });
+          top: Math.max(0, anchor.current.y * scale), left: anchor.current.x * scale, scale, ...live.current.pageIdentity?.(anchor.current.page) });
       }
       clearTimeout(timer); timer = setTimeout(save, 300);
     };
@@ -168,8 +174,8 @@ function ContinuousPdfCanvas({ document, pageNumber, scale, onDestination, onSou
       if (cancelled || !canvasRef.current) return;
       const viewport = page.getViewport({ scale }), canvas = canvasRef.current, context = canvas.getContext("2d");
       if (!context) return;
-      const outputScale = Math.min(window.devicePixelRatio || 1, 2);
-      canvas.width = Math.floor(viewport.width * outputScale); canvas.height = Math.floor(viewport.height * outputScale);
+      const raster = pdfRasterSize(viewport.width, viewport.height, window.devicePixelRatio || 1), outputScale = raster.scale;
+      canvas.width = raster.width; canvas.height = raster.height;
       canvas.style.width = `${viewport.width}px`; canvas.style.height = `${viewport.height}px`;
       task = page.render({ canvas, canvasContext: context, viewport, transform: outputScale === 1 ? undefined : [outputScale, 0, 0, outputScale, 0, 0] });
       await task.promise;

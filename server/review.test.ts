@@ -108,7 +108,8 @@ test("resolving a parent closes nested replies, keeps history, and never closes 
     const saved = after.attentionTasks.find(t => t.id === item.id)!;
     assert.equal(saved.status, "reviewed");
     assert.deepEqual(saved.sourceSnapshot, item.sourceSnapshot);
-    assert.deepEqual({ ...saved.review, resolvedAt: undefined }, { ...item.review, resolvedAt: undefined });
+    assert.deepEqual({ ...saved.review, resolvedAt: undefined, humanDecision: undefined }, { ...item.review, resolvedAt: undefined, humanDecision: undefined });
+    assert.equal(saved.review?.kind === 'comment' && saved.review.humanDecision?.action, 'resolve');
   }
   assert.equal(after.attentionTasks.find(t => t.id === other.id), other);
   assert.equal(resolveReviewComment(after, parent.id), after, "repeated resolution is idempotent");

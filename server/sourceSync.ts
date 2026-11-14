@@ -4,7 +4,7 @@ import { gunzipSync } from "node:zlib";
 import { inside, type ParsedProject } from "./projects.ts";
 import { run } from "./commands.ts";
 
-export interface CompiledSourceRange { paragraphId: string; file: string; startLine: number; endLine: number }
+export interface CompiledSourceRange { paragraphId: string; file: string; startLine: number; endLine: number; text?: string }
 export function sourceLine(text: string, offset: number) { return text.slice(0, offset).split(/\r?\n/).length; }
 export function sourcePath(file: string) {
   const resolved = path.resolve(file);
@@ -13,14 +13,46 @@ export function sourcePath(file: string) {
 
 export function compiledSourceRanges(parsed: ParsedProject, shadow?: string): CompiledSourceRange[] {
   if (!shadow) return parsed.spans.filter(span => span.text).map(span => ({ paragraphId: span.id, file: span.file,
-    startLine: sourceLine(parsed.sources[span.file], span.start), endLine: sourceLine(parsed.sources[span.file], span.end) }));
+    startLine: sourceLine(parsed.sources[span.file], span.start), endLine: sourceLine(parsed.sources[span.file], span.end), text: span.text }));
   const markers = [...shadow.matchAll(/^% aw-sync:([^\s]+)\r?$/gm)];
   return markers.map((marker, index) => {
     const paragraph = parsed.paragraphs.find(p => p.id === marker[1]);
     const startLine = sourceLine(shadow, marker.index!) + 1;
-    return { paragraphId: marker[1], file: ".paperfocus-focus", startLine,
+    return { paragraphId: marker[1], file: paragraph?.file ?? ".paperfocus-focus", startLine, text: paragraph?.text,
       endLine: Math.min(startLine + (paragraph?.text.split(/\r?\n/).length ?? 1) - 1, sourceLine(shadow, markers[index + 1]?.index ?? shadow.length) - 1) };
   });
+}
+
+/** Read-only, approximate alignment against the PDF's saved paragraph snapshot.
+ * Exact unique text anchors survive inserts and changed ordinal-based IDs.
+ * Between anchors, interpolate by paragraph order; never require a new build. */
+export function correspondingRange(id: string, from: CompiledSourceRange[], to: CompiledSourceRange[]) {
+  const target = from.find(range => range.paragraphId === id); if (!target) return;
+  const legacy = to.find(range => range.paragraphId === id);
+  if (target.file === ".paperfocus-focus" || legacy?.file === ".paperfocus-focus") return legacy;
+  const sameFile = (a: CompiledSourceRange, b: CompiledSourceRange) => sourcePath(a.file) === sourcePath(b.file);
+  const source = from.filter(range => sameFile(range, target));
+  const destination = to.filter(range => sameFile(range, target)); if (!destination.length) return;
+  const normalize = (text?: string) => text?.replace(/\s+/g, " ").trim();
+  const positions = new Map<string, number[]>();
+  destination.forEach((range, index) => { const key = normalize(range.text); if (key) positions.set(key, [...(positions.get(key) ?? []), index]); });
+  const sourceCounts = new Map<string, number>();
+  source.forEach(range => { const key = normalize(range.text); if (key) sourceCounts.set(key, (sourceCounts.get(key) ?? 0) + 1); });
+  const anchor = (range: CompiledSourceRange) => { const key = normalize(range.text), matches = key && positions.get(key); return matches && matches.length === 1 && sourceCounts.get(key!) === 1 ? matches[0] : undefined; };
+  const exact = anchor(target); if (exact !== undefined) return destination[exact];
+  const index = source.indexOf(target);
+  let before: [number, number] | undefined, after: [number, number] | undefined;
+  for (let i = index - 1; i >= 0; i--) { const match = anchor(source[i]); if (match !== undefined) { before = [i, match]; break; } }
+  for (let i = index + 1; i < source.length; i++) { const match = anchor(source[i]); if (match !== undefined) { after = [i, match]; break; } }
+  if (before || after) {
+    const lo = before ?? [-1, -1], hi = after ?? [source.length, destination.length];
+    // Reordered sections may give crossing anchors: use a neighbor, not a negative interval.
+    if (hi[1] <= lo[1]) return destination[lo[1]] ?? destination[hi[1]];
+    const mapped = Math.round(lo[1] + (index - lo[0]) * (hi[1] - lo[1]) / (hi[0] - lo[0]));
+    return destination[Math.max(0, Math.min(destination.length - 1, mapped))];
+  }
+  return destination.find(range => range.paragraphId === id)
+    ?? destination[Math.min(destination.length - 1, Math.floor(index * destination.length / source.length))];
 }
 
 /** Index only file/line/page membership; SyncTeX itself handles geometric queries. */

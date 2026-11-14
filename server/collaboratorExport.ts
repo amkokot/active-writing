@@ -12,20 +12,26 @@ import { experimentSweep, sweepMime } from "../src/experimentSweep.ts";
 import { orderedNotebookEntries } from "../src/notebookCatalogue.ts";
 import { locateSavedPassage } from "../src/sourceRefresh.ts";
 import { mathParts } from "../src/mathText.ts";
+import { readingLabelNumbers } from "../src/latexReading.ts";
 import { readingFigures } from "../src/readingFigures.ts";
 import type { ProjectDocument, NotebookEntry } from "../src/types.ts";
-import { parseProject, getProject, projectFiles, projectRevision } from "./projects.ts";
+import { parseProject, getProject, projectFiles, projectRevision, type ParsedProject } from "./projects.ts";
 import { readNotebook } from "./notebookStore.ts";
 import { readExperiments } from "./experiments.ts";
 import { sourceEntries, zipEntries } from "./sourceZip.ts";
 import { projectFileContent } from "./projectFiles.ts";
 import { renderSharingPdf, sharingPdfHtml } from "./sharingPdf.ts";
 import { compactReaderFiles, overviewBody, portableReaderLinks, portableReadingMarkdown, repositoryLink } from "./readerPages.ts";
+import { nativeVisualExport } from "./visualExport.ts";
+import { geometryMime, animationMime } from "../src/experimentVisual.ts";
+import { explorerMime } from "../src/experimentExplorer.ts";
+import {readCorpus,corpusDocument} from './researchCorpus.ts';
+import {corpusReadingCss,renderCorpusPdf} from './corpusPresentation.ts';
 
 type File = { name: string; data: Buffer };
 const e = (text: unknown) => String(text ?? "").replace(/[&<>"']/g, char => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[char]!));
 const pre = (text: string) => `<pre>${e(text)}</pre>`;
-const md = (text: string) => renderToStaticMarkup(createElement(ReplyMarkdown, { text }));
+const md = (text: string, referenceLabels?: ReadonlyMap<string, string>) => renderToStaticMarkup(createElement(ReplyMarkdown, { text, referenceLabels }));
 const fence = (text: string, language = "") => { const marks = "`".repeat(Math.max(3, ...[...text.matchAll(/`+/g)].map(match => match[0].length + 1))); return `${marks}${language}\n${text}\n${marks}`; };
 function uncomment(text: string) {
   // A reading copy is not a source-code dump. Verbatim/listing blocks retain
@@ -49,17 +55,21 @@ const palette = ["#2563a6", "#b06d25", "#38815c", "#775bb1", "#ac4f54", "#357f8b
 function plotFigure(value: unknown) {
   const plot = experimentPlot(value); if (!plot) return "";
   const xs = plot.series.flatMap(series => series.points.map(point => plot.xScale === "log" ? Math.log10(point[0]) : point[0]));
-  const ys = plot.series.flatMap(series => series.points.map(point => plot.yScale === "log" ? Math.log10(point[1]) : point[1]));
+  const ys = plot.series.flatMap(series => [...series.points.map(point => point[1]), ...(series.band ? [...series.band.lower, ...series.band.upper] : [])].map(y => plot.yScale === "log" ? Math.log10(y) : y));
   if (!xs.length) return "";
   let xmin = Infinity, xmax = -Infinity, ymin = Infinity, ymax = -Infinity;
   xs.forEach(n => { xmin = Math.min(xmin, n); xmax = Math.max(xmax, n); }); ys.forEach(n => { ymin = Math.min(ymin, n); ymax = Math.max(ymax, n); });
   const scaled = (n: number, min: number, max: number) => min === max ? 0.5 : (n / 2 - min / 2) / (max / 2 - min / 2);
-  const lines = plot.series.map((series, index) => `<polyline fill="none" stroke="${palette[index]}" stroke-width="2" points="${series.points.map(([x, y]) => `${(60 + scaled(plot.xScale === "log" ? Math.log10(x) : x, xmin, xmax) * 620).toFixed(3)},${(280 - scaled(plot.yScale === "log" ? Math.log10(y) : y, ymin, ymax) * 235).toFixed(3)}`).join(" ")}"/>`).join("");
-  const values = `<div class="table-scroll"><table><thead><tr><th>Series</th><th>${e(plot.xLabel)} · original values</th><th>${e(plot.yLabel)} · original values</th></tr></thead><tbody>${plot.series.flatMap(series => series.points.map(([x, y]) => `<tr><td>${e(series.name)}</td><td>${x}</td><td>${y}</td></tr>`)).join("")}</tbody></table></div>`;
+  let lines = plot.series.map((series, index) => `<polyline fill="none" stroke="${palette[index]}" stroke-width="2" points="${series.points.map(([x, y]) => `${(60 + scaled(plot.xScale === "log" ? Math.log10(x) : x, xmin, xmax) * 620).toFixed(3)},${(280 - scaled(plot.yScale === "log" ? Math.log10(y) : y, ymin, ymax) * 235).toFixed(3)}`).join(" ")}"/>`).join("");
+  const bands = plot.series.map((series, index) => !series.band ? "" : `<polygon fill="${palette[index]}" opacity=".18" points="${[...series.points.map(([x], i) => [x, series.band!.lower[i]]), ...series.points.map(([x], i) => [x, series.band!.upper[i]]).reverse()].map(([x, y]) => `${(60 + scaled(plot.xScale === "log" ? Math.log10(x) : x, xmin, xmax) * 620).toFixed(3)},${(280 - scaled(plot.yScale === "log" ? Math.log10(y) : y, ymin, ymax) * 235).toFixed(3)}`).join(" ")}"><title>${e(series.band.label)}</title></polygon>`).join("");
+  lines = bands + lines;
+  const values = `<p>${plot.series.filter(s => s.band).map(s => `${e(s.name)}: ${e(s.band!.label)} (supplied bounds)`).join(" · ")}</p><div class="table-scroll"><table><thead><tr><th>Series</th><th>${e(plot.xLabel)} · original values</th><th>${e(plot.yLabel)} · original values</th><th>Lower</th><th>Upper</th></tr></thead><tbody>${plot.series.flatMap(series => series.points.map(([x, y], i) => `<tr><td>${e(series.name)}</td><td>${x}</td><td>${y}</td><td>${series.band?.lower[i] ?? ""}</td><td>${series.band?.upper[i] ?? ""}</td></tr>`)).join("")}</tbody></table></div>`;
   return `<figure><figcaption>${e(plot.title)}</figcaption><svg viewBox="0 0 720 330" role="img" aria-label="${e(plot.title)}"><path d="M60 40V280H690" fill="none" stroke="#999"/>${lines}<text x="370" y="320" text-anchor="middle">${e(plot.xLabel)}${plot.xScale === "log" ? " (log)" : ""}</text><text x="12" y="160" transform="rotate(-90 12 160)" text-anchor="middle">${e(plot.yLabel)}${plot.yScale === "log" ? " (log)" : ""}</text><text x="60" y="300">${e(plot.xScale === "log" ? 10 ** xmin : xmin)}</text><text x="680" y="300" text-anchor="end">${e(plot.xScale === "log" ? 10 ** xmax : xmax)}</text><text x="55" y="45" text-anchor="end">${e(plot.yScale === "log" ? 10 ** ymax : ymax)}</text><text x="55" y="280" text-anchor="end">${e(plot.yScale === "log" ? 10 ** ymin : ymin)}</text></svg><p class="legend">${plot.series.map((series, i) => `<span style="color:${palette[i]}">${e(series.name)}</span>`).join(" · ")}</p><details><summary>Complete saved values</summary>${values}</details></figure>`;
 }
 function outputDisplay(output: ExperimentCell["outputs"] extends Array<infer T> | undefined ? T : never, prefix: string, files: File[]) {
   const data = output.data ?? {}, pieces: string[] = [];
+  const native = nativeVisualExport(data, prefix);
+  if (native) { pieces.push(native.html); files.push(...native.files); }
   const png = mimeText(data["image/png"]);
   if (png) {
     const bytes = Buffer.from(png.replace(/\s/g, ""), "base64");
@@ -75,12 +85,12 @@ function outputDisplay(output: ExperimentCell["outputs"] extends Array<infer T> 
   const sweep = experimentSweep(data[sweepMime]);
   if (sweep) pieces.push(`<figure><figcaption>${e(sweep.title)} · ${sweep.frames.length} saved frames</figcaption>${sweep.frames.map((frame, i) => `<details${i === (sweep.initial ?? 0) ? " open" : ""}><summary>${e(sweep.parameter)} = ${frame.value}</summary>${plotFigure(frame.plot)}</details>`).join("")}</figure>`);
   const markdown = mimeText(data["text/markdown"]); if (markdown) pieces.push(md(markdown));
-  const text = outputText(output); if (text) pieces.push(pre(text));
+  const text = outputText(output); if (text && !native) pieces.push(pre(text));
   if (data["application/json"] !== undefined) pieces.push(`<details><summary>Saved data</summary>${pre(JSON.stringify(data["application/json"], null, 2))}</details>`);
   if (Object.keys(data).some(key => !safeMime(key))) pieces.push('<p class="muted">Executable or unsupported rich output omitted from this sharing copy.</p>');
   return pieces.join("") || '<p class="muted">No portable saved output.</p>';
 }
-function safeMime(mime: string) { return ["text/plain", "text/markdown", "image/png", "application/json", "application/vnd.paperfocus.plot+json", heatmapMime, sweepMime].includes(mime); }
+function safeMime(mime: string) { return ["text/plain", "text/markdown", "image/png", "application/json", "application/vnd.paperfocus.plot+json", heatmapMime, sweepMime, explorerMime, geometryMime, animationMime].includes(mime); }
 function sharedCell(cell: ExperimentCell) {
   const info = cell.metadata.paperfocus;
   // Runtime paths identify the author's machine, not portable evidence. Keep
@@ -103,6 +113,7 @@ export function collaborationPages(document: ProjectDocument, entries: NotebookE
     }
   }
   const manuscriptHtml: string[] = [], manuscriptMarkdown: string[] = [];
+  const referenceLabels = readingLabelNumbers(document);
   // Returning from a theorem/proof resumes its enclosing section. A change in
   // paragraph owner is not a new section: emit each structural node only once.
   const shownNodes = new Set<string>();
@@ -115,7 +126,7 @@ export function collaborationPages(document: ProjectDocument, entries: NotebookE
     const links = passageLinks.get(p.id) ?? [];
     const figures = [...uncomment(p.text).matchAll(/\\includegraphics(?:\[[^\]]*\])?\{([^{}]+)\}/g)].map(match => manuscriptFigures.get(`${p.file ?? document.project.mainFile}:${match[1]}`)).filter(Boolean);
     const visualText = figures.length ? readingFigures(uncomment(p.text), { projectId: document.project.id, revision: document.revision, files: document.files }).text.replace(/!\[Project figure\]\(#aw-reading-figure-\d+\)/g, "") : p.text;
-    manuscriptHtml.push(`<div id="${paragraphAnchors.get(p.id)}" class="passage">${md(readingText(visualText))}${figures.map(src => `<figure><img src="${src}" alt="Manuscript figure" loading="lazy"/></figure>`).join("")}${links.length ? `<p class="muted">${links.join(" · ")}</p>` : ""}</div>`);
+    manuscriptHtml.push(`<div id="${paragraphAnchors.get(p.id)}" class="passage">${md(readingText(visualText), referenceLabels)}${figures.map(src => `<figure><img src="${src}" alt="Manuscript figure" loading="lazy"/></figure>`).join("")}${links.length ? `<p class="muted">${links.join(" · ")}</p>` : ""}</div>`);
     manuscriptMarkdown.push(readingText(p.text));
   }
   let omittedCells = 0;
@@ -161,13 +172,17 @@ export function collaborationPages(document: ProjectDocument, entries: NotebookE
 
 const css = `:root{color-scheme:light}*{box-sizing:border-box}html{scroll-behavior:smooth;scroll-padding-top:1rem}body{margin:0;background:#f4f3ef;color:#243139;font:16px/1.65 system-ui,sans-serif}header,main,footer{max-width:1000px;margin:auto;padding:32px}header{padding-bottom:18px}h1{font-size:2rem;margin:.3em 0}h2{border-bottom:1px solid #d0d5d2;padding-bottom:8px;margin-top:2em}h3,h4{line-height:1.4}a{color:#2563a6;text-underline-offset:3px}.brand,.muted{color:#657079;font-size:.85rem}nav{max-width:936px;margin:auto;display:flex;gap:16px;flex-wrap:wrap;padding:14px 0;border-block:1px solid #d0d5d2}main{padding-top:0}.conversation{background:#fff;border:1px solid #dce1df;border-radius:10px;padding:24px;margin:20px 0}.cell{border-top:1px solid #e0e4e2;padding-top:12px;margin-top:24px}.passage{font-family:Georgia,serif}.passage p{margin:1em 0}details{margin:12px 0}summary{cursor:pointer;font-size:.9rem;color:#47606d}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#f2f4f5;padding:12px;border-radius:6px;font:12px/1.55 Consolas,monospace}code{font-size:.85em}table{border-collapse:collapse;font-size:13px}td,th{border:1px solid #d8dddf;padding:6px 9px;text-align:left}.table-scroll,.reply-table-scroll{overflow:auto}img,svg{max-width:100%;height:auto}figure{margin:18px 0}figcaption{font-weight:600;font-size:.9rem}.legend{font-size:.8rem}.warning{background:#fff0d7;padding:10px;border-radius:4px;font-size:.85rem}.katex{font-size:1.03em}.katex-display{overflow:auto;padding:5px;margin:.8em 0}.contents{columns:2}footer{font-size:.8rem;color:#657079}svg text{font:12px system-ui}.output{margin-top:10px}@media(max-width:650px){header,main,footer{padding:20px}nav{margin:0 20px}.conversation{padding:16px}.contents{columns:1}}@media print{body{background:white}details{break-inside:avoid}nav,footer{display:none}.conversation{border:none;padding:0}a{color:inherit}}`;
 const require = createRequire(import.meta.url);
-export async function collaboratorExport(workspace: string, request: { projectId: string; mainFile: string; revision: string; notebookRevision: number; entryId?: string; includeNotebook?: boolean; includeFiled?: boolean; includeSource?: boolean; format?: "pdf" | "html" | "zip" | "web" | "overview"; overviewFile?: string; noteFiles?: string[]; repositoryUrl?: string }, pdfRenderer = renderSharingPdf) {
+export async function collaboratorExport(workspace: string, request: { projectId: string; mainFile: string; revision: string; notebookRevision: number; corpusRevision?: string; entryId?: string; includeNotebook?: boolean; includeFiled?: boolean; includeSource?: boolean; format?: "pdf" | "html" | "zip" | "web" | "overview"; overviewFile?: string; noteFiles?: string[]; repositoryUrl?: string }, pdfRenderer = renderSharingPdf) {
   if (!request || !/^[A-Za-z0-9_-]{1,64}$/.test(request.projectId) || !Number.isSafeInteger(request.notebookRevision) || request.entryId !== undefined && !/^[A-Za-z0-9_-]{1,64}$/.test(request.entryId) || [request.includeNotebook, request.includeFiled, request.includeSource].some(value => value !== undefined && typeof value !== "boolean")) throw new Error("Choose a valid saved project and sharing options.");
   if (request.includeNotebook === false && request.entryId) throw new Error("Choose no notebook or a conversation, not both.");
   if (request.format !== undefined && !["pdf", "html", "zip", "web", "overview"].includes(request.format)) throw new Error("Choose PDF, HTML or ZIP, or a project reader.");
   const format = request.format ?? "pdf";
   const reader = format === "web" || format === "overview";
-  const document = await parseProject(workspace, request.projectId), notebook = await readNotebook(workspace, request.projectId);
+  const corpus=await readCorpus(workspace,request.projectId);
+  if(corpus && request.corpusRevision!==corpus.revision)throw Error('The audience selection changed or was not confirmed. Reopen Share list before downloading.');
+  if(corpus && (request.entryId || request.noteFiles?.length || request.includeSource || format==='zip'))throw Error('Research-list sharing includes only the selected summaries. Use PDF, HTML or Private reader without source or notebooks.');
+  const selectCorpus=(doc:ParsedProject)=>corpus?corpusDocument(doc,corpus.corpus):doc;
+  const document = selectCorpus(await parseProject(workspace, request.projectId)), notebook = await readNotebook(workspace, request.projectId);
   if (document.project.mainFile !== request.mainFile || document.revision !== request.revision || notebook.revision !== request.notebookRevision) throw new Error("Manuscript or notes changed. Wait for saves to finish, then export again.");
   const repo = reader ? repositoryLink(request.repositoryUrl) : undefined;
   if (request.noteFiles !== undefined && (!Array.isArray(request.noteFiles) || request.noteFiles.length > 8 || request.noteFiles.some(file => typeof file !== "string" || !document.rootFiles.includes(file)) || new Set(request.noteFiles).size !== request.noteFiles.length)) throw new Error("Choose up to eight distinct notes manuscripts in this project.");
@@ -176,9 +191,9 @@ export async function collaboratorExport(workspace: string, request: { projectId
   const overviewFile = request.overviewFile ?? (document.project.manuscriptPurposes?.[request.mainFile] === "overview" ? request.mainFile : undefined);
   const readingFile = reader && overviewFile === request.mainFile ? document.project.manuscriptOverviewTargets?.[request.mainFile] ?? request.mainFile : request.mainFile;
   if (!document.rootFiles.includes(readingFile)) throw new Error("The Overview's linked manuscript is missing. Choose its main manuscript before sharing.");
-  const readingDocument = readingFile === request.mainFile ? document : await parseProject(workspace, request.projectId, false, readingFile);
+  const readingDocument = readingFile === request.mainFile ? document : selectCorpus(await parseProject(workspace, request.projectId, false, readingFile));
   const scope = request.entryId ? notebook.entries : notebookForManuscript(notebook.entries, readingFile);
-  const entries = request.includeNotebook === false ? [] : orderedNotebookEntries(scope).filter(entry => !entry.recoveryKey && (request.entryId ? entry.id === request.entryId : request.includeFiled || !entry.filed));
+  const entries = corpus || request.includeNotebook === false ? [] : orderedNotebookEntries(scope).filter(entry => !entry.recoveryKey && (request.entryId ? entry.id === request.entryId : request.includeFiled || !entry.filed));
   if (entries.length > 100) throw new Error("Share at most 100 conversations at once; choose the current conversation for a smaller export.");
   const stores = new Map<string, ExperimentStore>(); let bytes = 0;
   for (const entry of format === "overview" ? [] : entries) {
@@ -188,7 +203,7 @@ export async function collaboratorExport(workspace: string, request: { projectId
     stores.set(owner, store);
   }
   const figures = new Map<string, string>();
-  const overview = reader && overviewFile ? overviewFile === request.mainFile ? document : await parseProject(workspace, request.projectId, false, overviewFile) : undefined;
+  const overview = reader && overviewFile ? overviewFile === request.mainFile ? document : selectCorpus(await parseProject(workspace, request.projectId, false, overviewFile)) : undefined;
   const notes = reader ? await Promise.all((request.noteFiles ?? []).filter(file => file !== overviewFile && file !== readingFile).map(file => parseProject(workspace, request.projectId, false, file))) : [];
   for (const doc of [...(format === "overview" ? [] : [readingDocument]), ...(overview ? [overview] : []), ...notes]) for (const p of doc.paragraphs) for (const match of uncomment(p.text).matchAll(/\\includegraphics(?:\[[^\]]*\])?\{([^{}]+)\}/g)) {
     const key = `${p.file ?? doc.project.mainFile}:${match[1]}`; if (figures.has(key)) continue;
@@ -211,12 +226,21 @@ export async function collaboratorExport(workspace: string, request: { projectId
   }
   const htmlOnly = format !== "zip" && format !== "web";
   if (format === "zip" && request.includeSource !== false) for (const file of await sourceEntries(workspace, request.projectId)) files.push({ name: `source/${file.name}`, data: file.data });
-  const body = htmlOnly ? pages.body.replace(/<a href="(?:manuscript\.md|notebook\.md)"[^>]*>[^<]*<\/a>/g, "").replace(/<p><a href="notebooks\/[^"]+" download>[^<]*<\/a><\/p>/g, "") : pages.body;
+  const body = htmlOnly ? pages.body.replace(/<a href="(?:manuscript\.md|notebook\.md)"[^>]*>[^<]*<\/a>/g, "").replace(/<p><a href="notebooks\/[^"]+" download>[^<]*<\/a><\/p>/g, "").replace(/<a href="figures\/[^"]+-visual\.json" download>[^<]*<\/a>/g, "Complete visual data are retained in Aw and available in a ZIP sharing copy") : pages.body;
   const wrap = (body: string, title = document.project.name) => Buffer.from(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; font-src data:; img-src data:; script-src 'none'; connect-src 'none'; base-uri 'none'; form-action 'none'"><title>${e(title)} · shared reading copy</title><style>/* KaTeX stylesheet and fonts: ${katexLicense.toString().replaceAll("*/", "* /")} */\n${mathCss}\n${css}</style></head><body>${body}</body></html>`);
-  const html = wrap(body);
+  const visibleCorpusProjects=corpus?new Set(document.paragraphs.filter(p=>p.file!==corpus.corpus.mainFile).map(p=>p.file)).size:0;
+  let corpusColumns:1|2=visibleCorpusProjects<=4?1:2;
+  const directoryBody=(summary:string,columns:1|2=corpusColumns)=>{
+    const clean=summary.replace(/<details class="reader-contents">[\s\S]*?<\/details>/,'').replace(/^<h2>Document<\/h2>/,'');
+    const groups=clean.split(/(?=<h2>)/).map(part=>part.startsWith('<h2>')?`<section class="corpus-project">${part}</section>`:part).join('');
+    return `<style>${corpusReadingCss}</style><main class="corpus-${columns===1?'single':'double'}">${groups}</main>`;
+  };
+  const corpusPdf=async(summary:string)=>{const result=await renderCorpusPdf(columns=>Buffer.from(sharingPdfHtml(wrap(directoryBody(summary,columns)).toString())),pdfRenderer,visibleCorpusProjects);corpusColumns=result.columns;return result.pdf;};
+  const corpusSummary=corpus?pages.body.match(/<section id="manuscript">([\s\S]*?)<\/section>/)?.[1]?.replace(/^<h2>Manuscript<\/h2>/,'')??'':'';
+  const html = wrap(corpus?directoryBody(portableReaderLinks(corpusSummary)):body);
   // Render before the final revision checks: even a slow print must not send
   // an earlier manuscript paired with notebook data that changed meanwhile.
-  let pdf = format === "pdf" ? await pdfRenderer(Buffer.from(sharingPdfHtml(html.toString()))) : undefined;
+  let pdf = format === "pdf" ? corpus?await corpusPdf(portableReaderLinks(corpusSummary)):await pdfRenderer(Buffer.from(sharingPdfHtml(html.toString()))) : undefined;
   if (reader) {
     files = files.filter(file => entries.length || file.name !== "notebook.md").map(file => file.name.endsWith(".md") ? { ...file, data: Buffer.from(portableReadingMarkdown(file.data.toString())) } : file);
     const summary = overview ? collaborationPages(overview, [], new Map(), false, createdAt, figures).body.match(/<section id="manuscript">([\s\S]*?)<\/section>/)?.[1]?.replace(/^<h2>Manuscript<\/h2>/, "") ?? "" : "";
@@ -241,10 +265,10 @@ export async function collaboratorExport(workspace: string, request: { projectId
       if (url.searchParams.get("awRevision") !== doc.revision) return undefined;
       const paragraph = doc.paragraphs.findIndex(p => p.id === id); return paragraph < 0 ? undefined : `${file}#passage-${paragraph}`;
     };
-    const overviewHtml = wrap(`${overviewBody(document.project.name, portableReaderLinks(summary, true, resolve), resources, repo)}<nav aria-label="Downloads"><a href="overview.pdf" download>Download overview PDF</a><a href="reader.zip" download>Download reading bundle</a></nav>`);
     // Offline overview names its resources but contains no local/project links.
-    const offlineOverview = wrap(overviewBody(document.project.name, portableReaderLinks(summary), resources.map(({ title, detail }) => ({ title, detail })), repo));
-    pdf = await pdfRenderer(Buffer.from(sharingPdfHtml(offlineOverview.toString())));
+    const offlineOverview = wrap(corpus?directoryBody(portableReaderLinks(summary)):overviewBody(document.project.name, portableReaderLinks(summary), resources.map(({ title, detail }) => ({ title, detail })), repo));
+    pdf = corpus?await corpusPdf(portableReaderLinks(summary)):await pdfRenderer(Buffer.from(sharingPdfHtml(offlineOverview.toString())));
+    const overviewHtml = wrap(`${corpus?directoryBody(portableReaderLinks(summary,true,resolve)):overviewBody(document.project.name, portableReaderLinks(summary, true, resolve), resources, repo)}<nav aria-label="Downloads"><a href="overview.pdf" download>Download overview PDF</a><a href="reader.zip" download>Download reading bundle</a></nav>`);
     if (format === "web") {
       const readingBody = pages.body.replace(/<details(?: open)?><summary>Read notes, replies & experiments/g, "<details open><summary>Read notes, replies & experiments")
         .replace(entries.length ? /$^/ : /<a href="(?:#notebook|notebook\.md)">[\s\S]*?<\/a>|<section id="notebook">[\s\S]*?<\/section>/g, "");
@@ -262,6 +286,7 @@ export async function collaboratorExport(workspace: string, request: { projectId
   if (!reader) files.push({ name: "START_HERE.html", data: html });
   files.push({ name: "README.txt", data: Buffer.from("Extract this ZIP, then open START_HERE.html in a browser. No Aw installation, login or internet is required.\n\nManuscript: reading approximation, not exact TeX typesetting.\nNotebook: selected conversations and saved displays. Code is folded and never runs in this page.\nMarkdown files: editable reading copies. notebooks/: ordinary Jupyter copies; review before executing; Aw display helpers may be required. source/: ordinary project files, when selected.\nThis is a sharing copy, not a complete Aw backup/import. Recovery notes, trashed cells, archived prompt packets and local workspace paths are not exported. Unsupported executable rich outputs are omitted. User-authored text/code can still contain private information; review before forwarding.\n") });
   // Fail instead of mixing an earlier manuscript with a later notebook or run.
+  if(corpus && (await readCorpus(workspace,request.projectId))?.revision!==corpus.revision)throw Error('The audience selection changed during export. Prepare the sharing copy again.');
   const latest = await getProject(workspace, request.projectId);
   if (latest.project.mainFile !== request.mainFile || await projectRevision(latest.root, await projectFiles(latest.root)) !== request.revision || (await readNotebook(workspace, request.projectId)).revision !== notebook.revision) throw new Error("The workspace changed during export. Try again after saves finish.");
   for (const [owner, store] of stores) if ((await readExperiments(workspace, request.projectId, owner)).revision !== store.revision) throw new Error("An experiment finished or changed during export. Try again to include its latest result.");

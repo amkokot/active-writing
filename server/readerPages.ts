@@ -15,7 +15,7 @@ export function portableReaderLinks(html: string, localFiles = false, resolve?: 
     const resolved = localFiles ? resolve?.(decoded) : undefined;
     if (resolved) return `<a${before.replace(/\s+target="[^"]*"/g, "")}href="${escape(resolved)}"${after.replace(/\s+target="[^"]*"/g, "")}>${text}</a>`;
     if (decoded.startsWith("#")) return all;
-    if (localFiles && /^(?:notebooks\/[\w.-]+\.ipynb|figures\/[\w.-]+\.png|notes\/note-\d+\.html|(?:index|reading)\.html|overview\.pdf|reader\.zip|(?:manuscript|notebook)\.md)(?:#[\w.-]+)?$/.test(decoded)) return all;
+    if (localFiles && /^(?:notebooks\/[\w.-]+\.ipynb|figures\/[\w.-]+\.(?:png|json)|notes\/note-\d+\.html|(?:index|reading)\.html|overview\.pdf|reader\.zip|(?:manuscript|notebook)\.md)(?:#[\w.-]+)?$/.test(decoded)) return all;
     try {
       const url = new URL(decoded);
       if (url.protocol === "https:" && !url.username && !url.password && !["localhost", "127.0.0.1", "[::1]"].includes(url.hostname) && !url.searchParams.has("awProject")) return `<a${before}href="${escape(url.href)}"${after} rel="noreferrer">${text}</a>`;

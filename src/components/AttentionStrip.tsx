@@ -2,7 +2,7 @@ import { useEffect, useState, type CSSProperties } from "react";
 import { Check, ChevronDown, ClipboardPaste, Copy, GripVertical, RotateCcw, X } from "lucide-react";
 import type { AppState, AttentionTask } from "../types";
 import type { WorkSuggestion } from "../notebook";
-import { attentionHistory, attentionQueue, canFinishWithoutImport, queueColorPageSize, queueColorVariables, queueWaitLabel, queueWarmth, taskStatusLabel } from "../attention";
+import { attentionQueue, attentionThreads, canFinishWithoutImport, queueColorPageSize, queueColorVariables, queueWaitLabel, queueWarmth, taskStatusLabel } from "../attention";
 import type { QueueScope } from "../projectQueue";
 
 export interface AttentionStripProps {
@@ -39,21 +39,21 @@ export function AttentionStrip({ settings, tasks, suggestion, onSettings, onNext
   const [page, setPage] = useState(0);
   const [confirmComments, setConfirmComments] = useState<string[]>();
   useEffect(() => { setConfirmComments(undefined); }, [resolveCommentsProjectId, scope]);
-  const queue = attentionQueue(tasks, now);
+  const { queue, history, replies } = attentionThreads(tasks, now);
   const eligibleComments = new Set(resolvableCommentIds);
-  const commentIds = queue.filter(task => task.review?.kind === "comment" && eligibleComments.has(task.id)).map(task => task.id);
+  const commentIds = attentionQueue(tasks, now).filter(task => task.review?.kind === "comment" && eligibleComments.has(task.id)).map(task => task.id);
   const pages = Math.max(1, Math.ceil(queue.length / queueColorPageSize));
   const visiblePage = Math.min(page, pages - 1);
   const visibleQueue = queue.slice(visiblePage * queueColorPageSize, (visiblePage + 1) * queueColorPageSize);
   const tones = queueWarmth(queue, now);
   const warmth = new Map(queue.map((task, index) => [task.id, tones[index]]));
-  const history = attentionHistory(tasks);
   const ready = queue.filter((t) => t.status === "ready");
   // The toolbar's split queue control is the single entry point.
   if (settings.minimized) return null;
   function move(id: string, target: string, after = false) { onMove?.(id, target, after); setAnnouncement("Queue order saved."); }
   function row(task: AttentionTask, archived = false) {
     const label = taskLabel(task);
+    const threadReplies = replies.get(task.id) ?? [];
     return <div className={`work-task${archived ? " is-history" : ""}${dropTarget === task.id ? " is-drop-target" : ""}`} key={task.id} data-task-id={task.id} style={queueColorVariables(warmth.get(task.id) ?? 0) as CSSProperties}
       onDragOver={event => { if (!archived && dragging && dragging !== task.id) { event.preventDefault(); event.dataTransfer.dropEffect = "move"; setDropTarget(task.id); } }}
       onDrop={event => { if (!archived && dragging) { event.preventDefault(); const bounds = event.currentTarget.getBoundingClientRect(); move(dragging, task.id, event.clientY > bounds.top + bounds.height / 2); setDragging(undefined); setDropTarget(undefined); } }}>
@@ -70,6 +70,15 @@ export function AttentionStrip({ settings, tasks, suggestion, onSettings, onNext
         {task.packet && <button className="queue-prompt-toggle" aria-label={`Saved prompt for ${task.title}`} title="Saved prompt" aria-expanded={expandedId === task.id} onClick={() => setExpandedId(expandedId === task.id ? undefined : task.id)}><ChevronDown size={12} /></button>}
       </div>
       {task.error && <small className="work-task-error" role="status">{task.error}</small>}
+      {threadReplies.length > 0 && <details className="queue-thread">
+        <summary>{threadReplies.length} {threadReplies.length === 1 ? "reply" : "replies"}</summary>
+        {task.review?.kind === "comment" && <p className="queue-thread-original">{task.review.body}</p>}
+        {threadReplies.map(reply => <article key={reply.id} className="queue-thread-reply">
+          <small>{reply.review?.kind === "comment" && reply.review.author === "human" ? "You" : "Assistant · unchecked"}{reply.status === "reviewed" ? " · resolved" : ""}</small>
+          <p>{reply.review?.kind === "comment" ? reply.review.body : reply.title}</p>
+          <button onClick={() => onReturn(reply)} aria-label={`Open reply: ${reply.title}`}>Open reply</button>
+        </article>)}
+      </details>}
       {task.packet && expandedId === task.id && <div className="work-saved-prompt"><textarea aria-label={`Saved prompt text for ${task.title}`} readOnly value={task.ticket?.copyText ?? task.packet} rows={5} /><small>{task.handoffPath ?? "Saved with this question"}</small></div>}
     </div>;
   }

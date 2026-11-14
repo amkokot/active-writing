@@ -72,7 +72,8 @@ export function latexStructure(text: string, options: ReadingStructureOptions = 
   const lists: string[] = []; let cursor = 0, result = "";
   for (const item of directives(text)) {
     let replacement: string | undefined;
-    if (headingNames.includes(item.name)) replacement = `\n\n${"#".repeat(Math.min(6, headingNames.indexOf(item.name) + 1))} ${item.argument}\n\n`;
+    if (item.name==='paragraph'||item.name==='subparagraph') replacement = `**${item.argument}** `;
+    else if (headingNames.includes(item.name)) replacement = `\n\n${"#".repeat(Math.min(6, headingNames.indexOf(item.name) + 1))} ${item.argument}\n\n`;
     else if (item.name === "tableofcontents") replacement = `\n\n### Contents\n\n${contents}\n\n`;
     else if (["newpage", "clearpage", "cleardoublepage", "pagebreak"].includes(item.name)) replacement = "\n\n---\n\n";
     else if (item.name === "label") replacement = "";

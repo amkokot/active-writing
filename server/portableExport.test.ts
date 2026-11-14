@@ -19,6 +19,15 @@ import { preparePublicAw } from "../scripts/preparePublicAw.mjs";
 const appRoot = process.cwd();
 let base: Awaited<ReturnType<typeof portableEntries>>;
 async function files() { return base ??= await portableEntries(appRoot); }
+test('public application imports include every relative runtime and build helper',async()=>{
+ const {entries}=await files(),names=new Set(entries.map(e=>e.name));
+ for(const entry of entries.filter(e=>/\.(ts|tsx|mjs)$/.test(e.name)&&!e.name.includes('.test.'))){
+  for(const match of entry.data.toString().matchAll(/(?:from\s*|import\s*\()(['"])(\.[^'"]+)\1/g)){
+   const target=path.posix.normalize(path.posix.join(path.posix.dirname(entry.name),match[2].split('?')[0]));
+   assert.ok([target,target+'.ts',target+'.tsx',target+'.mjs',target+'.js',target+'/index.ts'].some(name=>names.has(name)),`${entry.name} needs ${target}`);
+  }
+ }
+});
 async function fixture() {
   const parent = path.join(appRoot, ".paperfocus", "trials"); await mkdir(parent, { recursive: true });
   const root = await mkdtemp(path.join(parent, "portable-aw-"));
@@ -41,8 +50,11 @@ function unzip(data: Buffer) {
 
 test("clean app package includes instructions/tools and a new example, not private workspace or development history", async () => {
   const { entries, manifest } = await files(), names = entries.map(entry => entry.name);
-  for (const name of ["AGENTS.md", "docs/AGENT_GUIDE.md", "docs/RESEARCH_WORKFLOW.md", "scripts/awResearch.ts", "scripts/awOffline.ts", "scripts/awWriting.ts", "scripts/awVersions.ts", "server/experiment_runner.py", "scripts/research-requirements.txt", "Set up Aw.cmd", "Start Aw.cmd", "aw-distribution.json"]) assert.ok(names.includes(name), name);
+  for (const name of ["AGENTS.md", "docs/AGENT_GUIDE.md", "docs/RESEARCH_WORKFLOW.md", "scripts/awResearch.ts", "scripts/awOffline.ts", "scripts/awVisualImport.ts", "docs/RESEARCH_VISUALS.md", "scripts/examples/research_visuals.py", "server/research_visuals.py", "src/experimentVisual.ts", "scripts/awWriting.ts", "scripts/awVersions.ts", "server/experiment_runner.py", "scripts/research-requirements.txt", "Set up Aw.cmd", "Start Aw.cmd", "aw-distribution.json"]) assert.ok(names.includes(name), name);
   assert.equal(manifest.privateWorkspaceIncluded, false);
+  for(const name of ['scripts/awModules.mjs','scripts/SyncCoordinatorHost.cs','scripts/awSyncJournal.ts','scripts/awSyncPool.ts','scripts/readingWorkspaceLauncher.mjs','scripts/awCorpus.ts','scripts/awLinkReading.mjs','docs/WRITING_PREFERENCES.md','docs/OUTSIDE_REVIEW.md','docs/MAINTENANCE.md','docs/MODULES.md','docs/RESEARCH_CORPUS.md'])assert.ok(names.includes(name),name);
+  assert.equal(entries.find(e=>e.name==='AGENTS.md')!.data.toString(),await readFile('distribution/AGENTS.md','utf8'));
+  assert.doesNotMatch(entries.find(e=>e.name==='docs/RESEARCH_WORKFLOW.md')!.data.toString(),/authorized bounded.*Antigravity|The Antigravity pass/);
   assert.ok(names.every(name => !/^(?:\.paperfocus|\.codex|node_modules|dist|papers|output|tmp|problem-lab)\//.test(name)));
   assert.equal(entries.find(entry => entry.name === "README.md")!.data.toString(), await readFile("distribution/README.md", "utf8"));
   assert.match(entries.find(entry => entry.name === "demo-paper/main.tex")!.data.toString(), /fresh example, not the sender's research/);
@@ -54,7 +66,7 @@ test("clean app package includes instructions/tools and a new example, not priva
 
 test("strict app allowlist excludes private decoys even in an otherwise valid installation", async () => {
   const root = await fixture(), sentinel = `private-${randomUUID()}`;
-  for (const name of [".paperfocus/projects.json", ".paperfocus/project-data/private/notebook.json", ".codex/auth.json", "papers/secret.tex", "src/.env", "scripts/private-research.py", "docs/PRIVATE.md", "demo-paper/main.tex", "README.md"]) {
+  for (const name of ["AGENTS.md", ".paperfocus/projects.json", ".paperfocus/project-data/private/notebook.json", ".codex/auth.json", "papers/secret.tex", "src/.env", "scripts/private-research.py", "docs/PRIVATE.md", "demo-paper/main.tex", "README.md"]) {
     const target = path.join(root, name); await mkdir(path.dirname(target), { recursive: true }); await writeFile(target, sentinel);
   }
   const result = await portableEntries(root);

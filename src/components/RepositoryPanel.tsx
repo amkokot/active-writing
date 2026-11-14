@@ -32,6 +32,8 @@ export function RepositoryPanel({ document: selectedDocument, pendingEdits, init
   const document = selectedDocument ?? emptyDocument;
   const [tab, setTab] = useState<"project" | "add" | "publish">(selectedDocument ? "project" : "add");
   const [projects, setProjects] = useState<PaperProject[]>([]);
+  const [projectsLoading,setProjectsLoading]=useState(true);
+  const [linkedHomes,setLinkedHomes]=useState<Array<{projectId:string;name:string;mainFile:string;folder:string;kind?:string}>>([]);
   const [paperQuery, setPaperQuery] = useState("");
   const [storedStatus, setStoredStatus] = useState<RepoStatus>();
   const [statusProjectId, setStatusProjectId] = useState<string>();
@@ -78,11 +80,13 @@ export function RepositoryPanel({ document: selectedDocument, pendingEdits, init
 
   async function refresh() {
     setDiff(undefined);
+    setProjectsLoading(true);
     const projectId = document.project.id;
     const sequence = ++refreshSequence.current;
     const current = () => projectId === activeProjectId.current && sequence === refreshSequence.current;
     await Promise.allSettled([
-      request<{ projects: PaperProject[] }>("/projects").then((result) => { if (current()) setProjects(result.projects); }).catch(reason => { if (current()) setError(reason.message); }),
+      request<{links:typeof linkedHomes}>("/linked-workspaces").then(result=>{if(current())setLinkedHomes(result.links);}).catch(reason=>{if(current())setError('The shared project list could not load: '+reason.message);}),
+      request<{ projects: PaperProject[] }>("/projects").then((result) => { if (current()) setProjects(result.projects); }).catch(reason => { if (current()) setError(reason.message); }).finally(()=>{if(current())setProjectsLoading(false);}),
       (selectedDocument ? request<RepoStatus>(`/git?projectId=${projectId}`).then((result) => {
         if (!current()) return;
         setStatus(result);
@@ -100,6 +104,7 @@ export function RepositoryPanel({ document: selectedDocument, pendingEdits, init
       void request<{ projects: PaperProject[] }>("/projects").then(result => {
         if (live && current === sequence) setProjects(result.projects);
       }).catch(() => { /* Keep the existing list if a disk is temporarily unavailable. */ });
+      void request<{links:typeof linkedHomes}>("/linked-workspaces").then(result=>{if(live&&current===sequence)setLinkedHomes(result.links);}).catch(()=>{/* Keep the last shared list while its disk is unavailable. */});
     };
     window.addEventListener("focus", refreshActivity);
     return () => { live = false; window.removeEventListener("focus", refreshActivity); };
@@ -183,6 +188,12 @@ export function RepositoryPanel({ document: selectedDocument, pendingEdits, init
             <span className="repository-caption" title="Recently active first, including file edits outside Aw">1 · Choose a paper</span>
             <input className="paper-search" aria-label="Find a paper" placeholder="Find a paper…" autoFocus value={paperQuery} onChange={event => setPaperQuery(event.target.value)} />
             <button disabled={Boolean(busy)} className={tab === "add" ? "is-active" : ""} onClick={() => setTab("add")}><Plus size={15} /><span>New / open project</span></button>
+            {projectsLoading&&<small role="status">Loading projects…</small>}
+            {linkedHomes.filter(project=>`${project.name} ${project.folder}`.toLowerCase().includes(paperQuery.trim().toLowerCase())).map(project=><button key={'reading-'+project.projectId} disabled={Boolean(busy)} title="Open this project workspace" onClick={()=>void perform('Opening project…',async()=>{
+              if(selectedDocument)await onBeforeNavigate();
+              const opened=await request<{url:string}>("/linked-workspaces",{projectId:project.projectId});
+              window.location.assign(opened.url);
+            })}><FolderGit2 size={15}/><span>{project.name}<small>{project.kind==='project'?'Project':'Reading copy'} · {project.mainFile}</small></span></button>)}
             {projects.filter(project => `${project.name} ${project.folder}`.toLowerCase().includes(paperQuery.trim().toLowerCase())).map((project) => (
               <button key={project.id} aria-pressed={project.id === document.project.id && tab === "project"} disabled={Boolean(busy)} className={project.id === document.project.id && tab === "project" ? "is-active" : ""} onClick={() => void perform("Opening paper…", async () => {
                 await navigate({ action: "select", projectId: project.id });

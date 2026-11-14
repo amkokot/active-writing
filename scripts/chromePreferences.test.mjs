@@ -5,9 +5,32 @@ import { chromePreferencesKey, defaultChromePreferences, loadChromePreferences, 
 import { createHoverIntent, hoverRevealDelayMs } from "../src/hoverIntent.ts";
 import { compiledPdfDownloadUrl, pdfDownloadName } from "../src/pdfLinks.ts";
 
+test("manuscript menu prioritizes reading copies and hides configuration and creation clutter", async () => {
+  const menu = await readFile("src/components/ManuscriptSwitcher.tsx", "utf8");
+  assert.match(menu, /manuscriptRoles\.filter\(role => pins\[role\]\)/);
+  assert.match(menu, /aria-label="Find manuscript"/);
+  assert.match(menu, /className="manuscript-settings"><summary>Document settings/);
+  assert.match(menu, /className="manuscript-manage"><summary>Create & organize/);
+  assert.ok(menu.indexOf('className="manuscript-settings"') < menu.indexOf('aria-label="Manuscript writing purpose"'));
+  assert.ok(menu.indexOf('className="manuscript-manage"') < menu.indexOf('aria-expanded={versioning}'));
+  assert.match(menu, /onPin\(role, file\), false/);
+  assert.equal((menu.match(/<p role="alert">/g) ?? []).length, 1);
+});
+
+test("preferred-document navigation consumes startup links and keeps role choices compact", async () => {
+  const app = await readFile("src/App.tsx", "utf8"), chooser = await readFile("src/components/ManuscriptSwitcher.tsx", "utf8");
+  const switcher = app.slice(app.indexOf("async function switchManuscript("), app.indexOf("async function pinManuscript("));
+  assert.match(switcher, /linkedSourceAutoAttempt\.current = true;\s*activateDocument/);
+  assert.match(chooser, /aria-label="Pinned project documents"/);
+  assert.match(chooser, /Choose pinned copies/); assert.match(chooser, /All manuscripts ·/);
+  assert.match(chooser, /not a public sharing link/);
+});
+
 test("queue toolbar separates current-location and next navigation from completion", async () => {
   const source = await readFile("src/components/PriorityQueue.tsx", "utf8");
-  assert.match(source, /const currentTask = queue\.find\(task => task\.id === props\.activeId\) \?\? queue\[0\]/);
+  assert.match(source, /const \{ queue, roots \} = attentionThreads\(props.tasks, now\)/);
+  assert.match(source, /const activeRoot = props\.activeId && roots\.get\(props\.activeId\)\?\.id/);
+  assert.match(source, /const currentTask = queue\.find\(task => task\.id === activeRoot\) \?\? queue\[0\]/);
   assert.match(source, /nextQueueTask\(queue, currentTask\?\.id\)/);
   const current = source.slice(source.indexOf('<button className="queue-current"'), source.indexOf('<button className="queue-main"'));
   assert.match(current, /aria-label="Go to current priority task"/);
@@ -40,8 +63,12 @@ test("compiled PDF pages are reachable without opening the LaTeX options menu", 
   const viewer = await readFile("src/components/PdfViewer.tsx", "utf8");
   assert.match(viewer, /const pagination = <>[\s\S]*aria-label="Previous page"[\s\S]*aria-label="PDF page number"[\s\S]*aria-label="Next page"/);
   assert.match(viewer, /!renderControls && pagination/);
-  assert.match(viewer, /renderControls && <nav className="pdf-controls pdf-pagination" aria-label="PDF page navigation">\s*\{pagination\}/);
-  assert.match(viewer, /One page at a time/);
+  const navigation = viewer.slice(viewer.indexOf('renderControls && <nav className="pdf-pagination"'), viewer.indexOf('</nav>', viewer.indexOf('renderControls && <nav className="pdf-pagination"')));
+  assert.match(navigation, /aria-label="PDF page navigation"/);
+  assert.match(navigation, /<details className="pdf-page-picker"/);
+  assert.match(navigation, /open page controls/);
+  assert.match(navigation, /className="pdf-page-picker-controls">\{pagination\}/);
+  assert.doesNotMatch(navigation, /renderControls\(/);
 });
 
 test("PDF canvases retain double-click source navigation without disruptive hover titles", async () => {
@@ -81,7 +108,9 @@ test("PDF double-click locates a passage without the scope-changing outline navi
   assert.match(sync, /locateSourcePassage\(current, paragraph.nodeId, paragraphId, manuscriptNodes\)/);
   assert.doesNotMatch(sync, /navigateNode\(/);
   assert.match(sync, /setJumpTarget/);
-  assert.match(app, /currentSource.project.mainFile !== document.project.mainFile \|\| currentSource.revision !== document.revision/);
+  assert.match(app, /currentSource.project.mainFile !== document.project.mainFile \|\| currentSource.project.engine !== document.project.engine/);
+  const pdfJump = app.slice(app.indexOf('async function syncPdf('), app.indexOf('function syncToPreview('));
+  assert.doesNotMatch(pdfJump, /currentSource\.revision !== document\.revision/, "autosave cannot cancel read-only approximate navigation");
 });
 
 test("highlight action bars wait for pointer release without erasing the selection", async () => {
@@ -116,7 +145,7 @@ test("opening manuscripts restores their own PDFs and automatically builds missi
   assert.match(app, /manuscriptBuildCache.current.read\(next\)/);
   assert.match(app, /result.mainFile !== document.project.mainFile \|\| result.engine !== document.project.engine/);
   assert.match(app, /finally\(\(\) => \{ if \(!cancelled\) setRootCompileReady\(identity\)/);
-  assert.match(app, /pendingRootCompile.current = undefined;[\s\S]*void compileLatex\("focus", false, true\)/);
+  assert.match(app, /pendingRootCompile.current = undefined;[\s\S]*void compileLatex\("full", false, true\)/);
   assert.match(app, /previewFormat !== "pdf" \|\| effectivePreviewMode === "hidden"/);
   assert.match(app, /manuscriptBuildIdentity\(current\) !== manuscriptBuildIdentity\(saved\)/);
   assert.match(app, /compileInFlight.current = true/); assert.match(app, /compileInFlight.current = false/);
@@ -134,7 +163,10 @@ test("manuscript PDF scrolling includes every selected page with bounded nearby 
   assert.match(pages, /cancelled \|\| !canvasRef.current/);
   assert.match(pages, /onSourcePosition\?\.\(pageNumber/);
   assert.match(viewer, /continuousNavigator.current\?\.\(index \+ 1, y\)/);
-  assert.match(pages, /previousScale.current !== scale && anchor.current/);
+  assert.match(pages, /\(returning \|\| previousScale.current !== scale\) && anchor.current/);
+  assert.match(pages, /if \(!active \|\| !sizes.length[\s\S]*!readingPaneVisible/);
+  assert.match(viewer, /const updateFit = async \(\) => \{\s*if \(cancelled \|\| liveDocument.current !== document \|\| !readingPaneVisible\(scroll\)\) return;/);
+  assert.match(viewer, /await document.getPage\([\s\S]*?if \(cancelled \|\| liveDocument.current !== document \|\| !readingPaneVisible\(scroll\)\) return;\s*const natural/);
   assert.match(pages, /resume.top \/ \(resume.scale/);
   assert.match(css, /\.pdf-page-stack \{ display: flex; flex-direction: column/);
 });
@@ -324,9 +356,9 @@ test("plain-source selection retains visible passage actions but no top environm
 test("top bar and sidebar choices persist independently of manuscript storage", () => {
   const stored = new Map();
   const storage = { getItem: key => stored.get(key), setItem: (key, value) => stored.set(key, value) };
-  const choices = { autoHideTopbar: true, hideTopbarByDefault: true, sidebarPinned: true, theme: "dark", darkPdf: true, automaticCompilation: true, interfaceSize: "comfortable", compactAwLinks: false };
+  const choices = { autoHideTopbar: true, hideTopbarByDefault: true, sidebarPinned: true, theme: "dark", darkPdf: true, automaticCompilation: true, sectionPdf: true, interfaceSize: "comfortable", compactAwLinks: false };
   assert.equal(saveChromePreferences(choices, storage), true);
-  assert.deepEqual(loadChromePreferences(storage), choices);
+  assert.deepEqual(loadChromePreferences(storage), { ...choices, sectionPdf: false });
   assert.deepEqual([...stored.keys()], [chromePreferencesKey]);
   assert.equal(chromePreferencesKey.startsWith("paperfocus.prototype"), false);
   for (const value of ["oops", "null", '{"sidebarPinned":"false","autoHideTopbar":1}']) {
@@ -339,6 +371,17 @@ test("temporary top-bar hiding never changes the next startup default", () => {
   assert.equal(loadChromePreferences({ getItem: () => '{"autoHideTopbar":true}' }).autoHideTopbar, false);
   assert.equal(loadChromePreferences({ getItem: () => '{"autoHideTopbar":false,"hideTopbarByDefault":true}' }).autoHideTopbar, true);
   assert.equal(loadChromePreferences({ getItem: () => '{"hideTopbarByDefault":"true"}' }).autoHideTopbar, false);
+});
+
+test("legacy section-PDF settings migrate to the standard incremental compiler", async () => {
+  assert.equal(loadChromePreferences({ getItem: () => '{"sectionPdf":true}' }).sectionPdf, false);
+  const app = await readFile("src/App.tsx", "utf8");
+  assert.doesNotMatch(app, /aria-label="PDF layout"|Section PDF · cache each section/);
+  assert.match(app, /sectionPdf: false/);
+  const button = app.slice(app.indexOf('className="primary-button compile-main"'), app.indexOf('className="primary-button compile-menu-button"'));
+  assert.match(button, /compileLatex\("full"\)/);
+  const scopeEffect = app.slice(app.indexOf("if (!scopeCompileRequest || !document)"), app.indexOf("useIdleCompilation({"));
+  assert.match(scopeEffect, /matchingManuscriptBuild\(compileResult, document\) && compileResult\?\.mode === "full"\) return/);
 });
 
 test("project opens use split PDF and refresh phase hydration does not force Notebook", async () => {
@@ -366,7 +409,7 @@ test("automatic compilation is opt-in in Advanced and waits for visible, unblock
   assert.match(app, /Block window waits for 4 seconds/);
   assert.match(app, /enabled: !state.turbo.enabled && chromePreferences.automaticCompilation && previewFormat === "pdf" && effectivePreviewMode !== "hidden"/);
   assert.match(app, /autoSaveError \|\| incomingSource \|\| pendingSelection/);
-  assert.match(app, /compileLatex\("focus", false, true\)/);
+  assert.match(app, /compileLatex\("full", false, true\)/);
   assert.match(app, /if \(!automatic\) setToast/);
   assert.match(hook, /\["scroll", "wheel", "keydown", "beforeinput"\]/);
   assert.match(hook, /document.visibilityState === "visible"/);
@@ -648,7 +691,7 @@ test("scope switches retain source viewport anchors and automatically update the
   assert.match(effect, /compileInFlight.current/);
   assert.match(effect, /incomingSource \|\| autoSaveError \|\| pendingSelection/);
   assert.match(effect, /setScopeCompileRequest\(undefined\)/);
-  assert.match(effect, /void compileLatex\("focus", false, true\)/);
+  assert.match(effect, /void compileLatex\("full", false, true\)/);
   assert.equal(effect.includes("chromePreferences.automaticCompilation"), false);
   assert.match(app, /requestedScope !== renderedCompileScope.current\) return/);
   const compile = app.slice(app.indexOf("async function compileLatex"), app.indexOf("async function dispatchLatexAssistant"));
@@ -814,7 +857,8 @@ test("comment navigation is scope-preserving, with a visible focus exit, compact
   assert.doesNotMatch(app, />Show all sections · Exit focused view<\/button>/);
   assert.match(app, /nextCommentAfterResolve\(reviewBlockId \? blockComments\[reviewBlockId\] \?\? \[\] : latestState.current.attentionTasks, id, latestState.current.attentionTasks\)/);
   assert.match(app, /if \(next\) openReview\(next, reviewBlockId\)/);
-  assert.match(app, /void compileLatex\("focus", false, true\).then\(show\)/);
+  assert.match(app, /if \(compileResult\?\.success[^\n]+show\(compileResult\)/);
+  assert.doesNotMatch(app, /void compileLatex\("full", false, true\).then\(show\)/);
   assert.match(app, /sequence === forwardSyncSequence.current/);
   assert.match(panel, /Your comment/); assert.doesNotMatch(panel, /Human comment/);
   assert.match(command, /<MessageSquareText size=\{14\} \/><\/button>/);
@@ -829,7 +873,7 @@ test("annotated blocks expose a right-margin comment count, while empty blocks h
   assert.match(button, /data-comment-block=\{blockId\}/);
   assert.match(button, /onClick=\{\(\) => onOpen\(blockId\)\}/);
   assert.match(manuscript, /commentCount=\{blockCommentCounts\?\.\[paragraph.id\]\}/);
-  assert.match(manuscript, /before.blockCommentCounts !== after.blockCommentCounts/);
+  assert.match(manuscript, /sameBlockAnnotations\([\s\S]*before.blockCommentCounts, after.blockCommentCounts/);
   assert.match(panel, /aria-label="Comments on this block"/);
   assert.match(panel, /rows\(blockComments\)/);
   assert.match(app, /if \(first\) openReview\(first, id\)/);

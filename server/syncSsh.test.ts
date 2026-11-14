@@ -14,7 +14,7 @@ import { previewSshPeer, commitSshPeer, sshPeerCommand, reconnectSshPeer, handle
 import { latexMiddleware } from "./latexPlugin.ts";
 import { emptyWorkbench } from "../src/workbench.ts";
 import { writeWorkbench } from "./workbenchStore.ts";
-import { previewPairedSync, commitPairedSync, pairedSyncStatus, pendingPairedSyncs } from "./syncPaired.ts";
+import { previewPairedSync, commitPairedSync, pairedSyncStatus, pendingPairedSyncs,supersedePairedSync } from "./syncPaired.ts";
 import { readNotebook, writeNotebook } from "./notebookStore.ts";
 import { newExperimentNotebook } from "../src/experiments.ts";
 import { writeExperiments, readExperiments } from "./experiments.ts";
@@ -70,6 +70,15 @@ async function pairedFixture() {
   const runner = async (_host: string,_command: string,input: Buffer) => Buffer.from(JSON.stringify(await handleExchangeMessage(f.desktop,f.projectId,JSON.parse(input.toString()))));
   const preview = await previewPairedSync(f.laptop,f.projectId,f.peerId,{ runner }); assert.equal(preview.paired,true); if (!("syncId" in preview)) throw new Error("Expected a complete paired preview"); return { ...f,remoteRoot,runner,preview };
 }
+test('a newer completed join can supersede an interrupted operation without forging its completion',async()=>{
+ const f=await pairedFixture();await assert.rejects(commitPairedSync(f.laptop,f.projectId,f.preview.syncId,{runner:f.runner,afterLocal:()=>{throw Error('disconnect');}}),/retained/);
+ await assert.rejects(supersedePairedSync(f.laptop,f.projectId,f.preview.syncId,f.preview.syncId),/Complete/);
+ await writeFile(path.join(f.root,'main.tex'),(await readFile(path.join(f.root,'main.tex'),'utf8'))+'\nNew saved note.\n');
+ const next=await previewPairedSync(f.laptop,f.projectId,f.peerId,{runner:f.runner});if(!('syncId' in next))throw Error('Expected a new reviewed join');
+ await assert.rejects(supersedePairedSync(f.laptop,f.projectId,f.preview.syncId,next.syncId),/Complete/);
+ await commitPairedSync(f.laptop,f.projectId,next.syncId,{runner:f.runner});await supersedePairedSync(f.laptop,f.projectId,f.preview.syncId,next.syncId);
+ assert.deepEqual(await pendingPairedSyncs(f.laptop,f.projectId),[]);assert.equal((await pairedSyncStatus(f.laptop,f.projectId,f.preview.syncId)).completed,false);
+});
 test("one reviewed operation collects both saved copies, joins history and remembers agreement", async () => {
   const f = await pairedFixture(), result = await commitPairedSync(f.laptop,f.projectId,f.preview.syncId,{ runner:f.runner }); assert.equal(result.completed,true); assert.equal(result.aligned,true); assert.equal(result.codeExecuted,false);
   const local = await readFile(path.join(f.root,"main.tex"),"utf8"), remote = await readFile(path.join(f.remoteRoot,"main.tex"),"utf8"); assert.equal(local,remote); assert.match(local,/Human offline edit/); assert.match(local,/Desktop independent continuation/);

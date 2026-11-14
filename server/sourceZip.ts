@@ -8,6 +8,7 @@ import { readerSnapshotPaths } from "./readerFolder.ts";
 const compress = promisify(deflateRaw);
 const ignoredFolders = new Set(["node_modules", "dist", "build", "out", "target", "__pycache__", "venv", "env"]);
 const generated = /\.(?:aux|log|toc|lof|lot|out|fls|fdb_latexmk|synctex(?:\.gz)?|nav|snm|vrb|bcf|run\.xml|blg|pyc|aw-lock)$/i;
+export function journalSourceEligible(name:string){const parts=name.split('/');return !parts.some(p=>p.startsWith('.'))&&!parts.slice(0,-1).some(p=>ignoredFolders.has(p.toLowerCase()))&&!generated.test(name);}
 const crcTable = Array.from({ length: 256 }, (_, n) => {
   let c = n;
   for (let bit = 0; bit < 8; bit++) c = (c >>> 1) ^ (c & 1 ? 0xedb88320 : 0);
@@ -41,10 +42,11 @@ export async function zipEntries(entries: Array<{ name: string; data: Buffer }>)
   return Buffer.concat([...local, ...central, end]);
 }
 
-async function inventory(root: string, mainFile: string) {
+async function inventory(root: string, mainFile: string, bulk=false,retainCompiledPdf=false, readingTextOnly=false, readingAssets: string[] = []) {
   const files: Array<{ name: string; size: number; mtimeMs: number; ctimeMs: number }> = [];
   const readerPaths = await readerSnapshotPaths(root);
-  let total = 0, visited = 0;
+  let total = 0, visited = 0, assetBytes = 0;
+  const assets = new Set(readingAssets);
   async function walk(relative: string, depth: number) {
     if (depth > 32) throw new Error("Project folders are too deeply nested to export.");
     const folder = path.join(root, relative), info = await lstat(folder);
@@ -56,21 +58,25 @@ async function inventory(root: string, mainFile: string) {
       if (readerPaths.has(name)) continue;
       if (entry.isDirectory()) { if (!ignoredFolders.has(entry.name.toLowerCase())) await walk(name, depth + 1); continue; }
       if (!entry.isFile() || generated.test(name)) continue;
+      const asset = readingTextOnly && !/\.(tex|bib|md|txt)$/i.test(name);
+      if (asset && !assets.has(name)) continue;
       const target = path.join(root, name), stat = await lstat(target);
       if (stat.isSymbolicLink() || !stat.isFile() || !inside(root, await realpath(target))) throw new Error("A project file moved during export. Try again.");
-      if (stat.size > 20 * 1024 * 1024 || (total += stat.size) > 100 * 1024 * 1024 || files.length >= 5000) throw new Error("Source export supports 5,000 files, 20 MB per file and 100 MB in total.");
+      if (asset) { if (stat.size > 2*1024**2 || assetBytes+stat.size > 8*1024**2) continue; assetBytes += stat.size; }
+      if (stat.size > (bulk?8*1024**3:20 * 1024 * 1024) || (total += stat.size) > (bulk?128*1024**3:100 * 1024 * 1024) || files.length >= (bulk?50000:5000)) throw new Error(bulk?"Bulk source collection exceeds its bounded file/byte limits.":"Source export supports 5,000 files, 20 MB per file and 100 MB in total.");
       files.push({ name, size: stat.size, mtimeMs: stat.mtimeMs, ctimeMs: stat.ctimeMs });
     }
   }
   await walk("", 0);
   // A PDF figure may have a companion .tex diagram; keep those assets.
   const compiledPdf = mainFile.replace(/\.tex$/i, ".pdf").toLowerCase();
-  return files.filter(file => file.name.toLowerCase() !== compiledPdf).sort((a, b) => a.name.localeCompare(b.name));
+  return files.filter(file => retainCompiledPdf||file.name.toLowerCase() !== compiledPdf).sort((a, b) => a.name.localeCompare(b.name));
 }
 
-export async function sourceEntries(workspace: string, projectId: string) {
+export async function sourceEntries(workspace: string, projectId: string,options:{retainCompiledPdf?:boolean}={}) {
   const { root, project } = await getProject(workspace, projectId);
-  const before = await inventory(root, project.mainFile), entries: Array<{ name: string; data: Buffer }> = [];
+  const {coldProject,coldFilePath}=await import('./syncColdRefs.ts');for(const f of (await coldProject(workspace,projectId)).files){if(!f.record.path.startsWith('source/'))continue;try{await lstat(await coldFilePath(workspace,projectId,f.record.path));}catch(e){if((e as NodeJS.ErrnoException).code==='ENOENT')throw new Error('Fetch desktop-backed source assets before downloading the complete source ZIP.');throw e;}}
+  const before = await inventory(root, project.mainFile,false,options.retainCompiledPdf), entries: Array<{ name: string; data: Buffer }> = [];
   for (const file of before) {
     let target = root;
     for (const part of file.name.split("/")) {
@@ -93,8 +99,10 @@ export async function sourceEntries(workspace: string, projectId: string) {
       entries.push({ name: file.name, data: data.subarray(0, length) });
     } finally { await handle.close(); }
   }
-  if (JSON.stringify(before) !== JSON.stringify(await inventory(root, project.mainFile))) throw new Error("Source changed during export. Try again.");
+  if (JSON.stringify(before) !== JSON.stringify(await inventory(root, project.mainFile,false,options.retainCompiledPdf))) throw new Error("Source changed during export. Try again.");
   return entries;
 }
+
+export async function sourceInventory(workspace:string,projectId:string,options:{retainCompiledPdf?:boolean;readingTextOnly?:boolean;readingAssets?:string[]}={}) { const {root,project}=await getProject(workspace,projectId);return {root,files:await inventory(root,project.mainFile,true,options.retainCompiledPdf,options.readingTextOnly,options.readingAssets)}; }
 
 export async function sourceZip(workspace: string, projectId: string) { return zipEntries(await sourceEntries(workspace, projectId)); }

@@ -1,23 +1,26 @@
 import { useEffect, useRef, useState } from "react";
+import {DesktopFiles} from './DesktopFiles';
+import {syncAttention,type SyncHealth} from '../syncAttention';
 
 interface Staged { id: string; device: { id: string; label: string }; createdAt: string; parents: string[]; files: number; ready: boolean }
 interface Merge { mergeId: string; changes: Array<{ path: string; kind: string }>; held: Array<{ id: string; path: string; field: string; reason: string }>; complete: boolean }
-interface Status { stage: "preview-only"; device?: { id: string; label: string }; stagingSupported?: boolean; exchangeSupported?: boolean; snapshots?: Staged[];
+interface Status { stage: "preview-only"; device?: { id: string; label: string }; stagingSupported?: boolean; exchangeSupported?: boolean; snapshots?: Staged[]; setupInstructions?:string;bulk?:boolean;automatic?:SyncHealth&{config?:{enabled:boolean;intervalSeconds:number;peerId?:string};state?:{status:string;checkedAt:string;detail?:string}};
   exchange?: { localHead?: string; commonHead?: string; received: Record<string, { head: string }> }; peers?: Array<{ id: string; host: string; deviceId: string }>; pendingSyncs?: Array<{ id: string; peerId: string; startedAt: string }> }
 interface Comparison { id: string; summary: { automatic: number; conflicts: number; retainedRuns: number }; conflicts: Array<{ path: string; field: string; reason: string }>; merge?: Merge; mergeError?: string; syncId?: string; remoteMerge?: Merge }
 const snapshotLabel = (item: Staged) => `${item.device.label} · ${item.parents.length ? new Date(item.createdAt).toLocaleString() : "Starting copy"} · ${item.id.slice(0, 8)}`;
-export function DeviceSyncPreparation({ projectId, onSaveDrafts }: { projectId?: string; onSaveDrafts?: () => Promise<void> }) {
+export function DeviceSyncPreparation({ projectId, onSaveDrafts,openRequest }: { projectId?: string; onSaveDrafts?: () => Promise<void>;openRequest?:number }) {
   const [open, setOpen] = useState(false), [status, setStatus] = useState<Status>(), [label, setLabel] = useState(""), [error, setError] = useState(""), [notice, setNotice] = useState(""), [busy, setBusy] = useState(false);
   const controller = useRef<AbortController | undefined>(undefined);
   const [localId, setLocalId] = useState(""), [remoteId, setRemoteId] = useState(""), [peerId, setPeerId] = useState(""), [comparison, setComparison] = useState<Comparison>(), [preparedFolder, setPreparedFolder] = useState(""), [savedDrafts, setSavedDrafts] = useState(false);
   const [filePreview, setFilePreview] = useState<{ path: string; before: string; after: string }>();
   const [peerForm, setPeerForm] = useState({ host: "", platform: "windows", tool: "", workspace: "", deviceId: "" }), [peerReview, setPeerReview] = useState("");
+  useEffect(()=>{if(openRequest)setOpen(true);},[openRequest]);
   const clearReview = () => { setComparison(undefined); setPreparedFolder(""); setSavedDrafts(false); setFilePreview(undefined); };
   async function statusRequest(signal: AbortSignal) {
     const response = await fetch(`/api/paperfocus/device-sync${projectId ? `?projectId=${encodeURIComponent(projectId)}` : ""}`, { signal });
     const data = response.headers.get("Content-Type")?.includes("application/json") ? await response.json() : undefined;
     if (!response.ok || !data || data.stage !== "preview-only") throw new Error(data?.error ?? "Use the offline awSync tool, or update the service after saved work settles.");
-    if (!signal.aborted) { setStatus(data); return data as Status; }
+    if (!signal.aborted) { setStatus(data);if(data.automatic?.config?.peerId)setPeerId(data.automatic.config.peerId);else if(data.peers?.length===1)setPeerId(data.peers[0].id); return data as Status; }
   }
   useEffect(() => {
     if (!open) return;
@@ -63,9 +66,12 @@ export function DeviceSyncPreparation({ projectId, onSaveDrafts }: { projectId?:
     clearReview(); setRemoteId(result.head); const next = await statusRequest(signal); if (next?.exchange?.localHead) setLocalId(next.exchange.localHead);
     if (!signal.aborted) setNotice("Other copy received. Compare next; your manuscript and notes have not changed.");
   }
-  return <details className="device-sync-preparation" onToggle={event => { if (event.target === event.currentTarget) setOpen(event.currentTarget.open); }}>
+  return <details className="device-sync-preparation" open={open} onToggle={event => { if (event.target === event.currentTarget) setOpen(event.currentTarget.open); }}>
     <summary>Two computers</summary>
-    <small>Work locally, exchange saved changes when connected. Nothing syncs in the background.</small>
+    <DesktopFiles key={projectId} projectId={projectId}/>
+    <small>Keep notes editable here. {status?.automatic?.config?.enabled?`Saved changes sync automatically · ${status.automatic.state?.status??"waiting for first check"}.`:status?.peers?.length?'Sync saved changes when connected.':'Pair a desktop to exchange saved changes when connected.'}</small>
+    {status&&syncAttention(status.automatic??{},status.pendingSyncs??[])&&<div className="workspace-folder-error" role="status"><p>{status.automatic?.state?.detail??syncAttention(status.automatic??{},status.pendingSyncs??[])?.detail}</p><button type="button" onClick={()=>void operation(async()=>{await navigator.clipboard.writeText(`Inspect the saved Aw sync problem in this workspace for project ${projectId}. Read docs/DEVICE_SYNC.md and use the guarded awSync/awSyncWatch tools. Preserve both copies, original packets and partial journals; do not execute research, approve wording, close comments, steal locks or force a conflicting file.\n\n${JSON.stringify({projectId,automatic:status.automatic,pendingSyncs:status.pendingSyncs},null,2)}`);setNotice('Sync help copied. Give it to your folder-aware assistant.');})}>Copy sync help</button></div>}
+    {status?.setupInstructions&&<details><summary>Set up a desktop copy</summary><small>One guided setup keeps the documents, notebooks and evidence together. Existing laptop files stay here.</small><button type="button" disabled={busy} onClick={()=>void operation(async()=>{await onSaveDrafts?.();await navigator.clipboard.writeText(status.setupInstructions!);setNotice('Setup instructions copied. Give them to your folder-aware assistant.');})}>Copy setup instructions</button></details>}
     {status?.device ? <p role="status">This computer: <strong>{status.device.label}</strong></p> : status && <form onSubmit={event => { event.preventDefault(); void operation(async signal => { await post("", { label }, signal); await statusRequest(signal); }); }}>
       <label>Name this computer<input aria-label="Sync device name" placeholder="Laptop or Desktop" maxLength={60} value={label} onChange={event => setLabel(event.target.value)} /></label>
       <button type="submit" disabled={busy || !label.trim()}>Save name</button>
@@ -73,7 +79,7 @@ export function DeviceSyncPreparation({ projectId, onSaveDrafts }: { projectId?:
     {projectId && status?.device && status.exchangeSupported && <div className="device-sync-actions">
       <button type="button" disabled={busy} onClick={() => void operation(exportFile)}>Download exchange</button>
       <label className="device-sync-file">Receive exchange<input aria-label="Receive exchange" type="file" accept=".aw-sync,application/gzip" disabled={busy} onChange={event => { const file = event.target.files?.[0]; event.target.value = ""; if (file) void operation(signal => receiveFile(file, signal)); }} /></label>
-      {!!status.peers?.length && <><select aria-label="Desktop connection" disabled={busy} value={peerId} onChange={event => setPeerId(event.target.value)}><option value="">Choose a connection</option>{status.peers.map(peer => <option key={peer.id} value={peer.id}>{peer.host}</option>)}</select>
+      {!!status.peers?.length && <><select aria-label="Desktop connection" disabled={busy} value={peerId} onChange={event => setPeerId(event.target.value)}><option value="">Choose a connection</option>{status.peers.filter(peer=>!status.automatic?.config?.peerId||peer.id===status.automatic.config.peerId).map(peer => <option key={peer.id} value={peer.id}>{peer.host}</option>)}</select>
         <button type="button" disabled={busy || !peerId} onClick={() => void operation(async signal => { await onSaveDrafts?.(); const result = await post("sync-preview", { projectId, peerId }, signal); if (signal.aborted) return; clearReview(); setLocalId(result.localHead); setRemoteId(result.remoteHead); if (!result.alreadyAligned) setComparison({ id: result.planId, merge: result.merge, syncId: result.syncId, remoteMerge: result.remoteMerge, summary: { automatic: result.merge.changes.length, conflicts: result.merge.held.length, retainedRuns: 0 }, conflicts: [] }); await statusRequest(signal); if (!signal.aborted) setNotice(result.paired ? "Both proposals agree. Review the incoming changes, then sync both saved copies." : result.note); })}>Sync now</button></>}
     </div>}
     {!!status?.pendingSyncs?.length && <details className="device-sync-inspection"><summary>Interrupted syncs ({status.pendingSyncs.length})</summary>

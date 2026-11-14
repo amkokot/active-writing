@@ -57,9 +57,9 @@ const components: Components = {
 };
 
 /** CommonMark/GFM reader; raw HTML is escaped, never activated. No model or network call. */
-export interface ReplyMarkdownProps extends ReadingStructureOptions { text: string; onReference?: (token: ReferenceToken) => void; onHeading?: (id: string) => void; figureContext?: ReadingFigureContext }
-export const ReplyMarkdown = memo(function ReplyMarkdown({ text, onReference, contents, onHeading, figureContext }: ReplyMarkdownProps) {
-  const adapted = onReference ? readingReferences(text) : undefined;
+export interface ReplyMarkdownProps extends ReadingStructureOptions { text: string; onReference?: (token: ReferenceToken) => void; referenceLabels?: ReadonlyMap<string, string>; onHeading?: (id: string) => void; figureContext?: ReadingFigureContext }
+export const ReplyMarkdown = memo(function ReplyMarkdown({ text, onReference, referenceLabels, contents, onHeading, figureContext }: ReplyMarkdownProps) {
+  const adapted = onReference || referenceLabels ? readingReferences(text, referenceLabels) : undefined;
   const figureReading = readingFigures(adapted?.text ?? text, figureContext);
   const scopedComponents: Components = { ...components,
     img: ({ src, alt }) => {
@@ -67,8 +67,9 @@ export const ReplyMarkdown = memo(function ReplyMarkdown({ text, onReference, co
       return figure ? createElement(ProjectFigure, { key: figure.url ?? figure.path, figure }) : createElement("span", { className: "reply-image-placeholder" }, `[Image not loaded${alt ? `: ${alt}` : ""}]`);
     }, a: ({ node: _node, href, children, ...props }) => {
     const token = href && adapted?.references.get(href);
+    if (token && !onReference) return createElement("span", props, children);
     const heading = href?.startsWith("#aw-reading-heading-") && contents?.find(item => href === `#aw-reading-heading-${encodeURIComponent(item.id)}`);
-    if (token || heading && onHeading) return createElement("a", { ...props, href, onClick: event => { event.preventDefault(); if (token) onReference!(token); else if (heading) onHeading!(heading.id); } }, children);
+    if (token || heading && onHeading) return createElement("a", { ...props, href, onClick: event => { event.preventDefault(); if (token) onReference?.(token); else if (heading) onHeading!(heading.id); } }, children);
     return href ? createElement("a", { ...props, href, target: href.startsWith("#") ? undefined : "_blank", rel: "noopener noreferrer" }, children) : createElement("span", null, children);
   } };
   return createElement("div", { className: "reply-markdown" }, createElement(Markdown, {

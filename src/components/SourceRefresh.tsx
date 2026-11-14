@@ -17,8 +17,10 @@ interface Props {
 const reasons = { changed: "Source changed at this position", missing: "Original passage no longer found", ambiguous: "Repeated text — location uncertain", "unknown-base": "Saved version could not be confirmed" };
 export function SourceRefresh({ before, incoming, plan, copies, busy, error, onClose, onCheck, onRefresh, onCopy }: Props) {
   const changed = incoming && incoming.revision !== before.revision;
+  const overlap = plan?.conflicts.some(draft => draft.reason === "changed");
   return <section className="source-refresh-panel" aria-label="Source changes">
-    <div className="source-refresh-heading"><strong>{changed ? "Files changed outside this editor" : "Draft recovery"}</strong><button aria-label="Close source changes" onClick={onClose}><X size={15} /></button></div>
+    <div className="source-refresh-heading"><strong>{overlap ? "Paragraph edited in both places" : changed ? "Files changed outside this editor" : "Draft recovery"}</strong><button aria-label="Close source changes" onClick={onClose}><X size={15} /></button></div>
+    {overlap && <p>The saved file and your unfinished edit changed the same passage. Both are kept. Refreshing saves a separate copy of your draft; it does not insert it into the updated paragraph.</p>}
     <p>{changed ? "Refresh here. Edits to unchanged passages, saved replies and waiting tasks are kept." : plan?.conflicts.length ? "An unfinished draft has a different saved version. Compare it with the current source before continuing." : "Check edits made in other apps. This doesn't pull from GitHub or Overleaf, compile, or change the paper."}</p>
     {error && <p role="alert">{error} Your current editor and drafts have not been replaced.</p>}
     {incoming && !changed && !plan?.conflicts.length && <small>The saved source is up to date.</small>}

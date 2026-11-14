@@ -1,4 +1,5 @@
 /** Agent-facing records CLI, with explicit offline disk access. No model calls or server startup. */
+import { importVisualFile } from "./awVisualImport.ts";
 import { readFile, stat } from "node:fs/promises";
 import { readFileSync, lstatSync } from "node:fs";
 import path from "node:path";
@@ -13,8 +14,9 @@ import { validateExperimentInputs } from "../src/experimentInputs.ts";
 import { replyOutline } from "../src/replyOutline.ts";
 import { manuscriptPurpose, manuscriptWritingPolicy } from "../src/manuscripts.ts";
 import { offlineResearchRequest } from "./awOffline.ts";
+import { visualRecipes } from "../src/visualRecipes.ts";
 
-const commands = ["inspect", "discover", "bind", "manifest", "batch", "inputs", "preflight", "cell", "output", "put", "organize", "finish", "run", "job", "session", "restart", "evidence", "phase"];
+const commands = ["visuals", "visual", "inspect", "discover", "bind", "manifest", "batch", "inputs", "preflight", "cell", "output", "put", "organize", "finish", "run", "job", "session", "restart", "evidence", "phase"];
 export function researchHelp(command?: string) {
   return `Active Writing — folder-aware research commands (no downloads or model calls)
 Run with node scripts/awResearch.ts COMMAND. No tsx/npx installation is needed.
@@ -28,6 +30,9 @@ ${command ? `Help for ${command}:\n` : ""}discover --workspace AW_HOME [--projec
 bind SCOPE --file NEW.json: create an explicit binding; existing files are never overwritten.
 inspect SCOPE [--expanded] [--since MANIFEST.json]: catalogue/current revision or only changed cells.
 manifest SCOPE [--file NEW.json]: hash index for later --since; not evidence or a claim of reading.
+visual SCOPE --cell ID --revision REV --file visual.html|visual.json [--title TITLE]: append a saved visual without execution.
+visuals [--recipe explorer|intervals|trajectory|matrix|graph]: offline display catalogue/example source, no scope or service needed.
+See docs/RESEARCH_VISUALS.md for display_explorer, geometry, intervals, animations, HTML and exact schemas.
 cell SCOPE --cell ID / output SCOPE --cell ID --output INDEX: complete saved evidence.
 put SCOPE --cell ID --revision REV --file SOURCE [--kind markdown|code|raw] [--title TITLE] [--after ID] [--inputs INPUTS.json]
 batch SCOPE --revision REV --file EDITS.json [--commit]: preview, then one guarded save for 1–50 edits. Never executes.
@@ -47,12 +52,16 @@ export function researchOptions(argv: string[]): { command: string; flags: Recor
   if (command === "help" || command === "--help" || commands.includes(command) && args.includes("--help")) return { command: "help", flags: { topic: commands.includes(command) ? command : "" }, origin: "" };
   if (!commands.includes(command)) throw new Error("Use node scripts/awResearch.ts --help for commands. See docs/RESEARCH_WORKFLOW.md.");
   const flags: Record<string, string> = {};
-  const allowed = new Set(["offline", "scope", "since", "inputs", "wait-seconds", "url", "workspace", "project", "entry", "cell", "revision", "file", "kind", "title", "after", "before", "pin", "highlight", "suppress", "filed", "trash", "folder", "output", "task", "request-hash", "summary-cell", "job", "allow-python", "session", "expanded", "timeout-seconds", "commit"]);
+  const allowed = new Set(["recipe", "offline", "scope", "since", "inputs", "wait-seconds", "url", "workspace", "project", "entry", "cell", "revision", "file", "kind", "title", "after", "before", "pin", "highlight", "suppress", "filed", "trash", "folder", "output", "task", "request-hash", "summary-cell", "job", "allow-python", "session", "expanded", "timeout-seconds", "commit"]);
   for (let i = 0; i < args.length; i++) {
     const key = args[i].replace(/^--/, "");
     if (!args[i].startsWith("--") || !allowed.has(key) || key in flags) throw new Error(`Unknown or repeated option: ${args[i]}`);
     if (["offline", "allow-python", "session", "expanded", "commit"].includes(key)) flags[key] = "true";
     else { if (args[i + 1] === undefined || args[i + 1].startsWith("--")) throw new Error(`Missing --${key} value.`); flags[key] = args[++i]; }
+  }
+  if (command === "visuals") {
+    if (Object.keys(flags).some(key => !["offline", "recipe"].includes(key)) || flags.recipe && !visualRecipes.some(r => r.id === flags.recipe)) throw new Error("Use visuals [--recipe explorer|intervals|trajectory|matrix|graph]; no project, execution or write options apply.");
+    return { command, flags, origin: "" };
   }
   let expectedOwner: string | undefined;
   if (flags.scope) {
@@ -71,7 +80,7 @@ export function researchOptions(argv: string[]): { command: string; flags: Recor
   if (flags.session && command !== "run") throw new Error("--session applies only to run.");
   if (flags["timeout-seconds"] !== undefined && command !== "run") throw new Error("--timeout-seconds applies only to run.");
   const commandFlags: Record<string, string[]> = {
-    discover: [], bind: ["file"], manifest: ["file"], batch: ["file", "revision", "commit"], inputs: ["cell"],
+    visual: ["cell", "file", "revision", "title"], discover: [], bind: ["file"], manifest: ["file"], batch: ["file", "revision", "commit"], inputs: ["cell"],
     inspect: ["expanded", "since"], cell: ["cell"], output: ["cell", "output"], put: ["cell", "file", "revision", "kind", "title", "after", "inputs"],
     organize: ["cell", "revision", "before", "after", "pin", "highlight", "suppress", "filed", "trash", "folder", "output"],
     finish: ["task", "request-hash", "summary-cell", "revision"], run: ["cell", "revision", "allow-python", "session", "timeout-seconds"],
@@ -80,9 +89,9 @@ export function researchOptions(argv: string[]): { command: string; flags: Recor
   for (const name of Object.keys(flags)) if (!["offline", "scope", "url", "workspace", "project", "entry", ...commandFlags[command]].includes(name)) throw new Error(`--${name} does not apply to ${command}; no option is silently ignored.`);
   const url = new URL(flags.url || "http://127.0.0.1:4173");
   if (url.protocol !== "http:" || !["localhost", "127.0.0.1", "[::1]"].includes(url.hostname) || url.username || url.password || url.pathname !== "/" || url.search || url.hash) throw new Error("Use the app's HTTP loopback origin, not a remote URL.");
-  if (["cell", "output", "put", "organize", "run", "inputs"].includes(command) && !/^[A-Za-z0-9_-]{1,64}$/.test(flags.cell || "")) throw new Error("Provide a valid --cell ID.");
-  if (["put", "organize", "finish", "run", "evidence", "phase", "batch"].includes(command) && flags.revision === undefined) throw new Error("Use the exact --revision from inspect (missing for a new notebook). Reinspect after a conflict.");
-  if (["batch", "bind"].includes(command) && !flags.file) throw new Error("Provide --file for this command.");
+  if (["visual", "cell", "output", "put", "organize", "run", "inputs"].includes(command) && !/^[A-Za-z0-9_-]{1,64}$/.test(flags.cell || "")) throw new Error("Provide a valid --cell ID.");
+  if (["visual", "put", "organize", "finish", "run", "evidence", "phase", "batch"].includes(command) && flags.revision === undefined) throw new Error("Use the exact --revision from inspect (missing for a new notebook). Reinspect after a conflict.");
+  if (["visual", "batch", "bind"].includes(command) && !flags.file) throw new Error("Provide --file for this command.");
   if (command === "phase" && (!flags.title || !flags.file)) throw new Error("Provide --title and --file containing a short Markdown handoff. phase plans by default; --commit requires archival permission.");
   if (command === "finish" && (!/^[0-9a-f-]{36}$/i.test(flags.task || "") || !/^[a-f0-9]{64}$/.test(flags["request-hash"] || "") || !/^[A-Za-z0-9_-]{1,64}$/.test(flags["summary-cell"] || ""))) throw new Error("Use --task ID --request-hash HASH --summary-cell ID from this saved request and notebook.");
   const arrangements = ["pin", "highlight", "suppress", "filed", "trash", "folder", "before"];
@@ -107,6 +116,7 @@ export function researchOptions(argv: string[]): { command: string; flags: Recor
 export async function researchCommand(argv: string[]) {
   const { command, flags, origin, expectedOwner } = researchOptions(argv);
   if (command === "help") return researchHelp(flags.topic);
+  if (command === "visuals") return { offline: true, executed: false, guide: "docs/RESEARCH_VISUALS.md", policy: "During routine exploration use the smallest useful display. When the human is carefully reviewing the notebook, consider linked selections, distributions, uncertainty, trajectories or matrices that explain the question. Reuse saved evidence; no presentation-only reruns or UI visits by default.", recipes: visualRecipes.filter(r => !flags.recipe || r.id === flags.recipe).map(r => flags.recipe ? r : { id: r.id, title: r.title, use: r.use }), next: "Put chosen source into the confirmed owning code cell with a revision guard; run only within human compute permission. Existing visual JSON/HTML can be attached with visual --offline without Python." };
   const request = flags.offline ? await offlineResearchRequest(command, flags, expectedOwner) : async (endpoint: string, body?: unknown) => {
     const response = await fetch(`${origin}/api/paperfocus/${endpoint}`, {
       redirect: "error", signal: AbortSignal.timeout(10_000),
@@ -190,7 +200,7 @@ export async function researchCommand(argv: string[]) {
     }
     return {
       ...identity, paperRoot: folders.paper.path, awDataRoot: folders.data?.path,
-      manuscriptFile, mainManuscript: folders.paper.manuscriptOverviewTargets?.[manuscriptFile], manuscriptPurpose: purpose, writingPolicy: manuscriptWritingPolicy(purpose),
+      manuscriptFile, mainManuscript: folders.paper.manuscriptOverviewTargets?.[manuscriptFile], pinnedDocuments: folders.paper.manuscriptPins ?? {}, manuscriptPurpose: purpose, writingPolicy: manuscriptWritingPolicy(purpose),
       question: entry.question, notes: entry.notes, runtime: store.runtime,
       phase: store.notebook.metadata.awResearchPhase,
       storage: await notebookStorage(store),
@@ -219,6 +229,15 @@ export async function researchCommand(argv: string[]) {
   }
   const revision = flags.revision === "missing" ? "" : flags.revision;
   if (store.revision !== revision) throw new Error("Notebook changed. Reinspect and reconcile; no changes or execution started.");
+  if (command === "visual") {
+    if (!cell || cell.cell_type !== "code") throw new Error("Choose an existing code cell; put creates one without running it.");
+    if ((cell.outputs?.length ?? 0) >= 30) throw new Error("Cell already has 30 outputs; choose another cell.");
+    const output = await importVisualFile(flags.file, flags.title);
+    const notebook = structuredClone(store.notebook), target = notebook.cells.find((item: any) => item.id === cell.id)!;
+    target.outputs = [...(target.outputs ?? []), output];
+    const saved = await request("experiments", { projectId, notebookId, revision, notebook });
+    return { ...identity, revision: saved.revision, path: saved.path, cellId: cell.id, outputIndex: target.outputs.length - 1, label: savedOutputLabel(output, target.outputs.length - 1), saved: true, executed: false, note: "Appended saved visual; source, earlier outputs and run provenance retained. Imported artifact metadata records path/hash/time separately." };
+  }
   if (command === "batch") {
     const edits = await agentJson(flags.file), notebook = await prepareAgentBatch(store.notebook, edits, path.dirname(path.resolve(flags.file)));
     const cells = edits.changes.map((change: any) => change.cell);

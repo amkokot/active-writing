@@ -3,7 +3,7 @@ import { test } from "node:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { markdownMath, ReplyMarkdown, replyLink } from "../src/replyMarkdown.ts";
-import { latexReading, readingReferences } from "../src/latexReading.ts";
+import { latexReading, readingReferences, readingLabelNumbers } from "../src/latexReading.ts";
 import { latexHeadings, latexStructure, manuscriptContents } from "../src/latexStructure.ts";
 import { mathParts } from "../src/mathText.ts";
 import type { ManuscriptNode, Paragraph } from "../src/types.ts";
@@ -90,6 +90,27 @@ test("reading references retain exact original tokens and leave code, URLs and m
   assert.match(adapted.text, /\$\\ref\{math\}\$/); assert.match(adapted.text, /`\\ref\{code\}`/);
   const html = renderToStaticMarkup(createElement(ReplyMarkdown, { text, onReference: () => {} }));
   assert.match(html, /href="#aw-reading-reference-0"/); assert.match(html, /this section/);
+});
+
+test("structural ref labels follow parsed numbers without guessing equations, pages or duplicate labels", () => {
+  const nodes: ManuscriptNode[] = [
+    { id: "claim", title: "Proposition 3 · Balancing", kind: "theorem", depth: 2, paragraphIds: [], environment: "proposition", environmentNumber: 3,
+      sourceOpening: { file: "main.tex", start: 0, end: 70, text: String.raw`\begin{proposition}\label{prop:balance}` } },
+    { id: "sec", title: "Model", kind: "section", depth: 0, paragraphIds: [], sectionCounters: { section: 2 },
+      sourceOpening: { file: "main.tex", start: 80, end: 115, text: String.raw`\section{Model}\label{sec:model}` } },
+  ];
+  const labels = ["prop:balance", "sec:model", "eq:inside", "duplicate", "duplicate"].map(key => ({key, nodeId:"claim", file:"main.tex", line:1}));
+  const numbers = readingLabelNumbers({nodes, labels});
+  assert.deepEqual([...numbers], [["prop:balance","3"],["sec:model","2"]]);
+  const source = String.raw`Proposition~\ref{prop:balance}, Section~\ref{sec:model}, page \pageref{prop:balance}, \eqref{eq:inside}.`;
+  const adapted = readingReferences(source, numbers);
+  assert.match(adapted.text, /\[3\]/); assert.match(adapted.text, /\[2\]/);
+  assert.match(adapted.text, /\[prop:balance\]/, "page number remains unknown");
+  for (const token of adapted.references.values()) assert.equal(source.slice(token.start, token.end), token.raw);
+  const html = renderToStaticMarkup(createElement(ReplyMarkdown, {text:source,referenceLabels:numbers}));
+  assert.match(html, /Proposition~<span>3<\/span>/);
+  assert.doesNotMatch(html, /href="#aw-reading-reference/);
+  assert.doesNotMatch(html, /\\ref\{/);
 });
 
 test("LaTeX prose links render nested labels, escapes and formatting without altering source", () => {

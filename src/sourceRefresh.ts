@@ -26,7 +26,7 @@ export interface SourceDraftCopy {
 }
 
 /** Only literal, unambiguous same-file matches are eligible for automatic rebasing. */
-export function sourceRefreshPlan(before: ProjectDocument, after: ProjectDocument, edits: Record<string, string>, draftRevision?: string) {
+export function sourceRefreshPlan(before: ProjectDocument, after: ProjectDocument, edits: Record<string, string>, draftRevision?: string, recovery?: AppState["draftBase"]) {
   if (before.project.id !== after.project.id || before.project.mainFile !== after.project.mainFile) throw new Error("Refresh the same paper and root file only.");
   const mapping = new Map<string, Paragraph>();
   const trustedDrafts = draftRevision === before.revision;
@@ -40,6 +40,9 @@ export function sourceRefreshPlan(before: ProjectDocument, after: ProjectDocumen
     return { byText, byFile, byId: new Map(paragraphs.map((p) => [p.id, p])) };
   };
   const left = index(before.paragraphs); const right = index(after.paragraphs);
+  const recovered = recovery?.projectId === before.project.id && recovery.rootFile === before.project.mainFile
+    && recovery.engine === before.project.engine && recovery.revision === draftRevision && Array.isArray(recovery.paragraphs)
+    ? new Map(recovery.paragraphs.map(p => [p.id, p])) : undefined;
   const unchangedFiles = new Set(before.files.filter((file) => {
     return JSON.stringify(left.byFile.get(file)) === JSON.stringify(right.byFile.get(file));
   }));
@@ -54,10 +57,14 @@ export function sourceRefreshPlan(before: ProjectDocument, after: ProjectDocumen
   const rebasedEdits: Record<string, string> = {};
   const conflicts: SourceDraftConflict[] = [];
   for (const [id, text] of Object.entries(edits)) {
-    const original = left.byId.get(id);
-    if (original && text === original.text && trustedDrafts) continue;
-    const target = mapping.get(id);
-    if (trustedDrafts && target) {
+    const stored = !trustedDrafts ? recovered?.get(id) : undefined;
+    const original = stored ?? left.byId.get(id);
+    const trusted = trustedDrafts || Boolean(stored && typeof stored.text === "string" && typeof stored.unique === "boolean");
+    if (original && text === original.text && trusted) continue;
+    const recoveredMatches = stored ? right.byText.get(JSON.stringify([stored.file, stored.text])) ?? [] : [];
+    const target = stored ? stored.unique && recoveredMatches.length === 1 ? recoveredMatches[0] : undefined : trustedDrafts ? mapping.get(id) : undefined;
+    if (stored) { mapping.delete(id); if (target) mapping.set(id, target); }
+    if (trusted && target) {
       if (target.text !== text) rebasedEdits[target.id] = text;
       continue;
     }
@@ -65,14 +72,38 @@ export function sourceRefreshPlan(before: ProjectDocument, after: ProjectDocumen
     const candidate = right.byId.get(id);
     const position = original && candidate && candidate.file === original.file && candidate.nodeId === original.nodeId;
     conflicts.push({ paragraphId: id, file: original?.file, baseText: original?.text, draftText: text,
-      reason: !original || !trustedDrafts ? "unknown-base" : matches.length ? "ambiguous" : position ? "changed" : "missing" });
+      reason: !original || !trusted ? "unknown-base" : matches.length ? "ambiguous" : position ? "changed" : "missing" });
   }
   return { mapping, rebasedEdits, conflicts };
 }
 
+const passageCounts = new WeakMap<ProjectDocument, Map<string, number>>();
+/** Capture only edited originals. Unknown/stale drafts never borrow a newer baseline. */
+export function cacheSourceDraft(state: AppState, document?: ProjectDocument): AppState {
+  if (!Object.keys(state.paragraphEdits).length) return state.draftBase ? { ...state, draftBase: undefined } : state;
+  const source = document && state.draftRevision === document.revision ? document : state.sourceSaveContinuation?.document;
+  if (!source || state.draftRevision !== source.revision || document && (source.project.id !== document.project.id || source.project.mainFile !== document.project.mainFile || source.project.engine !== document.project.engine)
+    || state.draftMainFile && state.draftMainFile !== source.project.mainFile) return state;
+  let counts = passageCounts.get(source);
+  if (!counts) { counts = new Map(); for (const p of source.paragraphs) { const key = JSON.stringify([p.file, p.text]); counts.set(key, (counts.get(key) ?? 0) + 1); } passageCounts.set(source, counts); }
+  const paragraphs = source.paragraphs.filter(p => Object.hasOwn(state.paragraphEdits, p.id)).map(({id,nodeId,file,text}) => ({id,nodeId,file,text,unique:counts!.get(JSON.stringify([file,text])) === 1}));
+  return { ...state, draftBase: { projectId: source.project.id, rootFile: source.project.mainFile, engine: source.project.engine, revision: source.revision, paragraphs } };
+}
+
+/** Resume a known draft after unrelated disk changes; real overlaps remain explicit. */
+export function restoreSourceDraft(state: AppState, document: ProjectDocument) {
+  const cached = cacheSourceDraft(state, document);
+  if (!Object.keys(cached.paragraphEdits).length || cached.draftRevision === document.revision
+    || cached.draftMainFile && cached.draftMainFile !== document.project.mainFile) return cached;
+  const plan = sourceRefreshPlan(document, document, cached.paragraphEdits, cached.draftRevision, cached.draftBase);
+  if (plan.conflicts.length) return cached;
+  return cacheSourceDraft({ ...cached, paragraphEdits: plan.rebasedEdits, draftRevision: Object.keys(plan.rebasedEdits).length ? document.revision : undefined,
+    sourceSaveContinuation: undefined, activeParagraphId: plan.mapping.get(cached.activeParagraphId ?? "")?.id ?? cached.activeParagraphId }, document);
+}
+
 /** Keep workspace/queue/Notebook records intact. Unverified source links never gain new meaning. */
 export function refreshSourceState(state: AppState, before: ProjectDocument, after: ProjectDocument) {
-  const plan = sourceRefreshPlan(before, after, state.paragraphEdits, state.draftRevision);
+  const plan = sourceRefreshPlan(before, after, state.paragraphEdits, state.draftRevision, state.draftBase);
   const target = (id?: string) => id ? plan.mapping.get(id) : undefined;
   const nodeIds = new Set(after.nodes.map((node) => node.id));
   const active = target(state.activeParagraphId);
@@ -89,6 +120,7 @@ export function refreshSourceState(state: AppState, before: ProjectDocument, aft
     hiddenNodeIds: state.hiddenNodeIds.filter((id) => nodeIds.has(id)),
     collapsedNodeIds: state.collapsedNodeIds?.filter((id) => nodeIds.has(id)),
     paragraphEdits: plan.rebasedEdits,
+    draftBase: undefined,
     sourceSaveContinuation: undefined,
     draftRevision: Object.keys(plan.rebasedEdits).length ? after.revision : undefined,
     handoffResume: state.handoffResume ? { ...state.handoffResume, activeNodeId: resumeTarget?.nodeId ?? state.handoffResume.activeNodeId, activeParagraphId: resumeTarget?.id,
@@ -116,12 +148,19 @@ export function refreshSourceState(state: AppState, before: ProjectDocument, aft
 
 /** Retry an outdated source version only when every draft's original passage
  * is still literally, unambiguously present. Never guess at overlapping edits,
- * an unknown draft baseline, changed compiler/root, or a pending raw region.
+ * an unknown draft baseline or changed compiler/root. A pending raw region may
+ * return to parsed editing only if its edited originals still match exactly.
  */
 export function automaticSourceRefresh(state: AppState, before: ProjectDocument, after: ProjectDocument, caret?: SaveCaret) {
   if (before.project.id !== after.project.id || before.project.mainFile !== after.project.mainFile || before.project.engine !== after.project.engine
-    || before.revision === after.revision || state.sourceSaveContinuation) return undefined;
-  const plan = sourceRefreshPlan(before, after, state.paragraphEdits, state.draftRevision);
+    || before.revision === after.revision) return undefined;
+  const continuation = state.sourceSaveContinuation;
+  if (continuation && (continuation.document.revision !== before.revision || continuation.document.project.id !== before.project.id
+    || continuation.document.project.mainFile !== before.project.mainFile || Object.keys(state.paragraphEdits).some(id => {
+      const original = before.paragraphs.find(p => p.id === id), range = continuation.ranges.find(r => r.paragraphId === id);
+      return !original || !range || range.file !== original.file || range.text !== original.text;
+    }))) return undefined;
+  const plan = sourceRefreshPlan(before, after, state.paragraphEdits, state.draftRevision, state.draftBase);
   if (plan.conflicts.length) return undefined;
   const next = refreshSourceState(state, before, after);
   const target = caret && plan.mapping.get(caret.paragraphId);
