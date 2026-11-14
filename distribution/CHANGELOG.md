@@ -1,5 +1,13 @@
 # Changes
 
+## 0.2.0 preview 2
+
+- Added an assistant-led setup guide, a Claude entry point and an explicit
+  non-interactive core installer. Assistants ask which extras are wanted, then
+  install and verify the agreed setup; unused integrations remain inactive.
+- Setup plans are read-only; unattended installation requires `--install-core`.
+  Shortcut creation and cache-only installation have separate explicit flags.
+
 ## 0.2.0 preview
 
 - Updated notebook tools, interactive displays, linked research records and

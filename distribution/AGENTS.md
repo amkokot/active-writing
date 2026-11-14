@@ -1,5 +1,10 @@
 # Working in Active Writing
 
+**Installing or onboarding?** Read [ASSISTANT_SETUP.md](docs/ASSISTANT_SETUP.md)
+first. Ask which optional features the person wants, then perform and verify the
+agreed setup. Do not activate every integration. Core setup supports a terminal
+without interactive prompts; do not stop at giving the user shell commands.
+
 Aw is a local LaTeX editor and research notebook. Start with
 [the agent guide](docs/AGENT_GUIDE.md); for notebook work read the quick start in
 [the research workflow](docs/RESEARCH_WORKFLOW.md). Use the installed tools rather

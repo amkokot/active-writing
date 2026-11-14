@@ -9,6 +9,15 @@ walkthrough is a disposable example, not a research project.
 
 ## Install
 
+**Using Codex or Claude Code?** Point it at this repository and say:
+
+> Set up Active Writing for me. Read AGENTS.md and docs/ASSISTANT_SETUP.md, ask
+> which optional features I want, and install and verify only those choices.
+
+The assistant can handle setup without an interactive terminal. Claude's
+`CLAUDE.md` points to the same instructions. A chat without terminal/folder access
+can guide setup but cannot carry out the installation.
+
 Download this repository with **Code → Download ZIP**, extract it into a permanent
 folder, and install [Node.js 24 or newer](https://nodejs.org/en/download) if needed. On Windows, double-click
 **Set up Aw.cmd**. It checks the files, asks before installing the locked npm

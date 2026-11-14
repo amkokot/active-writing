@@ -17,7 +17,7 @@ jobs:
       - run: node scripts/portableSetup.mjs --verify
       - run: npm ci --no-audit --no-fund
       - name: Package, privacy and optional tools
-        run: npm run check -- --test server/portableExport.test.ts --test server/workspaceFolders.test.ts --match 'public application imports|clean app|allowlist|public tree|welcome setup|extracted package|optional sync|recipient verification|folder information'
+        run: npm run check -- --test server/portableExport.test.ts --test server/workspaceFolders.test.ts --match 'assistant setup|public application imports|clean app|allowlist|public tree|welcome setup|extracted package|optional sync|recipient verification|folder information'
       - run: npm run build
       - run: node scripts/seedWelcome.mjs
       - run: node scripts/awResearch.ts discover --offline --workspace .

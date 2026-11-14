@@ -8,7 +8,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { randomUUID } from "node:crypto";
 import { portableEntries, portableZip } from "./portableExport.ts";
-import { verifyDistribution } from "../scripts/portableSetup.mjs";
+import { verifyDistribution,setupOptions } from "../scripts/portableSetup.mjs";
 import { latexMiddleware } from "./latexPlugin.ts";
 import { parseProject } from "./projects.ts";
 import { seedWelcome } from "../scripts/seedWelcome.mjs";
@@ -17,6 +17,13 @@ import { readExperiments } from "./experiments.ts";
 import { preparePublicAw } from "../scripts/preparePublicAw.mjs";
 
 const appRoot = process.cwd();
+test('assistant setup requires one explicit install action and keeps extras opt-in',()=>{
+ assert.equal(setupOptions([]).mode,'interactive');
+ assert.equal(setupOptions(['--plan']).mode,'plan');
+ assert.deepEqual(setupOptions(['--install-core']),{help:false,mode:'install-core',offline:false,shortcut:false});
+ assert.equal(setupOptions(['--install-core','--offline','--shortcut']).shortcut,true);
+ for(const args of [['--shortcut'],['--offline'],['--install-core','--verify'],['--all'],['--install-core','--install-core']])assert.throws(()=>setupOptions(args));
+});
 let base: Awaited<ReturnType<typeof portableEntries>>;
 async function files() { return base ??= await portableEntries(appRoot); }
 test('public application imports include every relative runtime and build helper',async()=>{
@@ -36,6 +43,13 @@ async function fixture() {
   }
   return root;
 }
+test('assistant setup plan works without a TTY and does not install or seed',async()=>{
+ const root=await fixture(),exec=promisify(execFile);
+ const result=await exec(process.execPath,[path.join(root,'scripts/portableSetup.mjs'),'--plan'],{cwd:root,windowsHide:true});
+ assert.match(result.stdout,/"downloads": false/);assert.match(result.stdout,/"two-computers"/);
+ await assert.rejects(readFile(path.join(root,'.paperfocus/projects.json')),/ENOENT/);
+ await assert.rejects(readFile(path.join(root,'node_modules/.package-lock.json')),/ENOENT/);
+});
 function unzip(data: Buffer) {
   const entries = new Map<string, Buffer>(); let offset = 0;
   while (data.readUInt32LE(offset) === 0x04034b50) {
@@ -52,6 +66,7 @@ test("clean app package includes instructions/tools and a new example, not priva
   const { entries, manifest } = await files(), names = entries.map(entry => entry.name);
   for (const name of ["AGENTS.md", "docs/AGENT_GUIDE.md", "docs/RESEARCH_WORKFLOW.md", "scripts/awResearch.ts", "scripts/awOffline.ts", "scripts/awVisualImport.ts", "docs/RESEARCH_VISUALS.md", "scripts/examples/research_visuals.py", "server/research_visuals.py", "src/experimentVisual.ts", "scripts/awWriting.ts", "scripts/awVersions.ts", "server/experiment_runner.py", "scripts/research-requirements.txt", "Set up Aw.cmd", "Start Aw.cmd", "aw-distribution.json"]) assert.ok(names.includes(name), name);
   assert.equal(manifest.privateWorkspaceIncluded, false);
+  assert.ok(names.includes('CLAUDE.md'));assert.ok(names.includes('docs/ASSISTANT_SETUP.md'));
   for(const name of ['scripts/awModules.mjs','scripts/SyncCoordinatorHost.cs','scripts/awSyncJournal.ts','scripts/awSyncPool.ts','scripts/readingWorkspaceLauncher.mjs','scripts/awCorpus.ts','scripts/awLinkReading.mjs','docs/WRITING_PREFERENCES.md','docs/OUTSIDE_REVIEW.md','docs/MAINTENANCE.md','docs/MODULES.md','docs/RESEARCH_CORPUS.md'])assert.ok(names.includes(name),name);
   assert.equal(entries.find(e=>e.name==='AGENTS.md')!.data.toString(),await readFile('distribution/AGENTS.md','utf8'));
   assert.doesNotMatch(entries.find(e=>e.name==='docs/RESEARCH_WORKFLOW.md')!.data.toString(),/authorized bounded.*Antigravity|The Antigravity pass/);

@@ -1,20 +1,25 @@
 {
   "format": "active-writing-distribution",
   "version": 1,
-  "createdAt": "2026-11-14T13:13:09.404Z",
-  "appVersion": "0.2.0-preview.1",
+  "createdAt": "2026-11-14T13:25:25.565Z",
+  "appVersion": "0.2.0-preview.2",
   "privateWorkspaceIncluded": false,
   "setup": "scripts/portableSetup.mjs",
   "files": [
     {
       "path": ".github/workflows/check.yml",
-      "size": 840,
-      "sha256": "781cd5a0b124749747f2fa4fae41075f25745f38a5cde39004a08beea6b40808"
+      "size": 856,
+      "sha256": "18fb7d881dc23ad20272ecb19033c12a74a7505b6765a66c25afebc1b6261ff4"
     },
     {
       "path": "AGENTS.md",
-      "size": 6191,
-      "sha256": "9f59ba2c0b0242f72dd254a3e0d46845d8d08e3bc27a0704eaeb71728cbbe321"
+      "size": 6510,
+      "sha256": "f3aca7bdc1d519081a1ca603d063b9d68ae1552daec27f5d44d3af3a9bd62b8d"
+    },
+    {
+      "path": "CLAUDE.md",
+      "size": 386,
+      "sha256": "e4a125ef032031c5ce11c80c8c4f9f16ad9a4ee214c4788cbb37e700a3b64f52"
     },
     {
       "path": "deploy/cloudflare-reader/check.mjs",
@@ -58,18 +63,28 @@
     },
     {
       "path": "distribution/AGENTS.md",
-      "size": 6191,
-      "sha256": "9f59ba2c0b0242f72dd254a3e0d46845d8d08e3bc27a0704eaeb71728cbbe321"
+      "size": 6510,
+      "sha256": "f3aca7bdc1d519081a1ca603d063b9d68ae1552daec27f5d44d3af3a9bd62b8d"
+    },
+    {
+      "path": "distribution/ASSISTANT_SETUP.md",
+      "size": 5673,
+      "sha256": "9f4bfc5c95178511a6dcfc48f6688da224be9036784a9d166d070a84201e0757"
     },
     {
       "path": "distribution/CHANGELOG.md",
-      "size": 1216,
-      "sha256": "7d6414d1b9d1192a354f73c63945b9ce38b6e81750573369a63b689c46e4eb83"
+      "size": 1625,
+      "sha256": "b49b038850c1e536de9fc4565bb01e7c37baf7e529a773de3be79540dfbedb73"
     },
     {
       "path": "distribution/check.yml",
-      "size": 840,
-      "sha256": "781cd5a0b124749747f2fa4fae41075f25745f38a5cde39004a08beea6b40808"
+      "size": 856,
+      "sha256": "18fb7d881dc23ad20272ecb19033c12a74a7505b6765a66c25afebc1b6261ff4"
+    },
+    {
+      "path": "distribution/CLAUDE.md",
+      "size": 386,
+      "sha256": "e4a125ef032031c5ce11c80c8c4f9f16ad9a4ee214c4788cbb37e700a3b64f52"
     },
     {
       "path": "distribution/demo/main.tex",
@@ -143,8 +158,8 @@
     },
     {
       "path": "distribution/README.md",
-      "size": 4791,
-      "sha256": "5627e73384d2fa3a2bec8960e5863edf7e458134591600beb6800e80272d6f03"
+      "size": 5231,
+      "sha256": "226b867110301330c72b4b843d47c7f610bbdef6a7b19a4656c1d6593c767c2c"
     },
     {
       "path": "distribution/REMOTE_RESEARCH.md",
@@ -155,6 +170,11 @@
       "path": "docs/AGENT_GUIDE.md",
       "size": 69793,
       "sha256": "d0614203b28d7f2d350b740f44d489f500f7ecc04f32f88ce96bed0d56dcd6af"
+    },
+    {
+      "path": "docs/ASSISTANT_SETUP.md",
+      "size": 5673,
+      "sha256": "9f4bfc5c95178511a6dcfc48f6688da224be9036784a9d166d070a84201e0757"
     },
     {
       "path": "docs/DESKTOP_ASSISTANCE.md",
@@ -249,12 +269,12 @@
     {
       "path": "package-lock.json",
       "size": 133308,
-      "sha256": "b72fe4421d43ed965dca2f208ded9749587e01f36f41b57a938667e8ba93a201"
+      "sha256": "79507c6c6d6054b4aab06794ab6e49eaed80ad054e0efc891973ba51155e701d"
     },
     {
       "path": "package.json",
       "size": 4388,
-      "sha256": "8a440dbb7d20e0ac1152f5ee4049f144815a4da30043b5f21ecf9c75f134c3d2"
+      "sha256": "373de2dd16424bce80af5e6cb4d32d1937dcc6437e609d8341c9fbbeeaa45646"
     },
     {
       "path": "public/aw-icon.svg",
@@ -533,8 +553,8 @@
     },
     {
       "path": "scripts/portableSetup.mjs",
-      "size": 5739,
-      "sha256": "94f28bf8db4f478b5c1000711f9e16e5e68c0be284d7e5706f70f9dec89b04bb"
+      "size": 8004,
+      "sha256": "cd7de3449e18444056054baa7d412b8fba4b568937cf5ddd884f27632a149e69"
     },
     {
       "path": "scripts/preparePublicAw.mjs",
@@ -903,13 +923,13 @@
     },
     {
       "path": "server/portableExport.test.ts",
-      "size": 12952,
-      "sha256": "a6a3b74a538aa4e0bf55619dcc22c1072e71c9dac3a32b1da096ff06824f7775"
+      "size": 14192,
+      "sha256": "5d7704cd7b8bca5dbdcfdb75aaad0c605310f29b260c9e13f8db6d2469ba4414"
     },
     {
       "path": "server/portableExport.ts",
-      "size": 13171,
-      "sha256": "55606bdc797904ae66f5b0190935ec71c2c6cc95aaa6691e4097b2fbf3431b4b"
+      "size": 13296,
+      "sha256": "1ba75027c7a51591e830e6e78d7cedaf2f20c5645a8e942e499239d0988c3afb"
     },
     {
       "path": "server/projectActivity.ts",
@@ -2353,8 +2373,8 @@
     },
     {
       "path": "README.md",
-      "size": 4791,
-      "sha256": "5627e73384d2fa3a2bec8960e5863edf7e458134591600beb6800e80272d6f03"
+      "size": 5231,
+      "sha256": "226b867110301330c72b4b843d47c7f610bbdef6a7b19a4656c1d6593c767c2c"
     },
     {
       "path": ".gitignore",
@@ -2363,8 +2383,8 @@
     },
     {
       "path": "CHANGELOG.md",
-      "size": 1216,
-      "sha256": "7d6414d1b9d1192a354f73c63945b9ce38b6e81750573369a63b689c46e4eb83"
+      "size": 1625,
+      "sha256": "b49b038850c1e536de9fc4565bb01e7c37baf7e529a773de3be79540dfbedb73"
     },
     {
       "path": ".gitattributes",

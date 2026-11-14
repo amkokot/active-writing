@@ -105,7 +105,9 @@ async function inventory(root: string) {
     }
   }
   for (const name of rootFiles) await add(name);
-  await add('AGENTS.md','distribution/AGENTS.md');  for (const name of guides) await add(`docs/${name}`,publicGuides.has(name)?`distribution/${name}`:`docs/${name}`);
+  await add('AGENTS.md','distribution/AGENTS.md');  await add('CLAUDE.md','distribution/CLAUDE.md');
+  await add('docs/ASSISTANT_SETUP.md','distribution/ASSISTANT_SETUP.md');
+  for (const name of guides) await add(`docs/${name}`,publicGuides.has(name)?`distribution/${name}`:`docs/${name}`);
   for (const name of tools) await add(`scripts/${name}`);
   for (const name of deployment) await add(`deploy/cloudflare-reader/${name}`);
   await add("distribution/.gitignore");  await add('distribution/check.yml');  await add('.github/workflows/check.yml','distribution/check.yml');
