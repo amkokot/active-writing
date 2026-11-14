@@ -1,8 +1,8 @@
 {
   "format": "active-writing-distribution",
   "version": 1,
-  "createdAt": "2026-11-14T13:25:25.565Z",
-  "appVersion": "0.2.0-preview.2",
+  "createdAt": "2026-11-14T13:38:13.346Z",
+  "appVersion": "0.2.0-preview.3",
   "privateWorkspaceIncluded": false,
   "setup": "scripts/portableSetup.mjs",
   "files": [
@@ -73,8 +73,8 @@
     },
     {
       "path": "distribution/CHANGELOG.md",
-      "size": 1625,
-      "sha256": "b49b038850c1e536de9fc4565bb01e7c37baf7e529a773de3be79540dfbedb73"
+      "size": 2123,
+      "sha256": "9131eed760fb870d83c54d605c5c8f27491a8bae5ad6a256cb3d6355c7620d57"
     },
     {
       "path": "distribution/check.yml",
@@ -268,13 +268,13 @@
     },
     {
       "path": "package-lock.json",
-      "size": 133308,
-      "sha256": "79507c6c6d6054b4aab06794ab6e49eaed80ad054e0efc891973ba51155e701d"
+      "size": 137089,
+      "sha256": "ba97dd2e447fbd7a621aec899671e2fe669e02a3bbccdd6601725059f8135254"
     },
     {
       "path": "package.json",
       "size": 4388,
-      "sha256": "373de2dd16424bce80af5e6cb4d32d1937dcc6437e609d8341c9fbbeeaa45646"
+      "sha256": "a5ba0b4794b97a98edec68cecd2972a10161a11d79464ee0923546224cb2a848"
     },
     {
       "path": "public/aw-icon.svg",
@@ -1488,8 +1488,8 @@
     },
     {
       "path": "src/App.tsx",
-      "size": 286490,
-      "sha256": "790ccb43ec2dc1034c8fb637d8b4afdfcfbce3867a06dff38a8b8eba50d109b2"
+      "size": 286498,
+      "sha256": "40c52f83c1f72b776aa1ae20cfedf1fe1dd663d2465c6dae3e7a7d5f4775ed87"
     },
     {
       "path": "src/attention.ts",
@@ -2383,8 +2383,8 @@
     },
     {
       "path": "CHANGELOG.md",
-      "size": 1625,
-      "sha256": "b49b038850c1e536de9fc4565bb01e7c37baf7e529a773de3be79540dfbedb73"
+      "size": 2123,
+      "sha256": "9131eed760fb870d83c54d605c5c8f27491a8bae5ad6a256cb3d6355c7620d57"
     },
     {
       "path": ".gitattributes",

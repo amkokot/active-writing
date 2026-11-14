@@ -1,7 +1,7 @@
 {
   "name": "active-writing",
   "private": true,
-  "version": "0.2.0-preview.2",
+  "version": "0.2.0-preview.3",
   "type": "module",
   "license": "MIT",
   "engines": { "node": ">=24" },
@@ -51,7 +51,7 @@
     "@types/react-dom": "^19.0.0",
     "@vitejs/plugin-react": "^4.3.4",
     "typescript": "~5.7.2",
-    "vite": "^6.0.5"
+    "vite": "^6.4.6"
   }
 }
 

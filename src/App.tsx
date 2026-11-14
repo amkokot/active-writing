@@ -327,7 +327,7 @@ export default function App() {
   const compileControlRef = useRef<HTMLDivElement>(null);
   useDismissibleLayer(compileMenuOpen, compileControlRef, () => setCompileMenuOpen(false), ".compile-menu-button");
   const [latexMenuOpen, setLatexMenuOpen] = useState(false);
-  const [previewFormat, setPreviewFormat] = useState<"pdf" | "reading">("pdf");
+  const [previewFormat, setPreviewFormat] = useState<"pdf" | "reading">("reading");
   const [previewControlsTarget, setPreviewControlsTarget] = useState<HTMLDivElement | null>(null);
   const latexControlRef = useRef<HTMLDivElement>(null);
   useDismissibleLayer(latexMenuOpen, latexControlRef, () => setLatexMenuOpen(false), ".latex-menu-button");
@@ -761,7 +761,7 @@ export default function App() {
       setPreambleEditing(false);setPlainFile(undefined);
     }
     if (!preserveState || rootChanged || openManuscript) {
-      setPreviewFormat(openManuscript ? "pdf" : seededWindow && initialWindowRequest ? initialWindowRequest.format : resume?.previewFormat ?? "pdf");
+      setPreviewFormat(openManuscript ? "pdf" : seededWindow && initialWindowRequest ? initialWindowRequest.format : resume?.previewFormat ?? "reading");
       setPlainFile(resume?.sourceFile && incoming.files.includes(resume.sourceFile) ? resume.sourceFile : undefined);
       setPreambleEditing(Boolean(resume?.rawEditor && (!resume.sourceFile || incoming.files.includes(resume.sourceFile))));
     }

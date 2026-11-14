@@ -1,5 +1,15 @@
 # Changes
 
+## 0.2.0 preview 3
+
+- Fresh workspaces open in rendered text, so basic setup does not attempt TeX
+  compilation. Saved PDF/reading choices still take precedence when reopening.
+
+- A fresh basic-install trial worked without Python, TeX, models, GitHub CLI or
+  SSH on the application's PATH. No optional service was installed or started.
+- Updated the locked Vite build tool to the compatible 6.4.6 patch after the
+  trial's dependency audit reported advisories in the previous build-tool version.
+
 ## 0.2.0 preview 2
 
 - Added an assistant-led setup guide, a Claude entry point and an explicit
