@@ -31,6 +31,7 @@ export function validateNotebookEntries(value: unknown): asserts value is Notebo
   for (const entry of value) {
     if (!entry || typeof entry.id !== "string" || ids.has(entry.id)) throw new Error("Notebook entries need unique identifiers.");
     ids.add(entry.id);
+    if(entry.readingListCellId!==undefined&&(typeof entry.readingListCellId!=='string'||!/^[A-Za-z0-9_-]{1,64}$/.test(entry.readingListCellId)))throw new Error('Invalid reading-list cell identity.');
     if (entry.manuscriptFile !== undefined && (typeof entry.manuscriptFile !== "string" || entry.manuscriptFile.length > 240 || !entry.manuscriptFile.endsWith(".tex") || /[\\:\x00-\x1f]/.test(entry.manuscriptFile) || entry.manuscriptFile.split("/").some((p: string) => !p || p === "." || p === ".."))) throw new Error("Invalid notebook manuscript.");
     if (entry.continuedFrom !== undefined && (!entry.continuedFrom || ["entryId", "notebookId", "manuscriptFile", "revision"].some(field => typeof entry.continuedFrom[field] !== "string" || entry.continuedFrom[field].length > 240))) throw new Error("Invalid notebook continuation.");
     if (entry.pinned !== undefined && typeof entry.pinned !== "boolean") throw new Error("Invalid notebook pin.");

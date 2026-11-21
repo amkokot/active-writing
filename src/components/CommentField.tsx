@@ -1,54 +1,41 @@
 import { useEffect, useRef, useState } from "react";
-import { createCommentBuffer } from "../commentBuffer";
-import { windowStateCache } from "../windowCache";
-import { useStableEvent } from "../useStableEvent";
+import { commentShortcut } from "../commentKeyboard";
 
-/** Only this small field handles keystrokes; the review panel stays unchanged. */
-export function CommentField({ projectId, id, body, autoFocus, onEdit }: {
+/** Unsaved text stays in this field, outside workspace persistence and sync. */
+export function CommentField({ id, body, autoFocus, isNew = false, onEdit, onSave }: {
   projectId: string; id: string; body: string; autoFocus: boolean;
   onEdit: (id: string, body: string) => void;
+  onSave?: () => void;
+  isNew?: boolean;
 }) {
   const input = useRef<HTMLTextAreaElement>(null);
+  const base = useRef(body);
+  const composing = useRef(false);
   const [notice, setNotice] = useState("");
-  const [kept, setKept] = useState("");
-  const edit = useStableEvent(onEdit);
-  const key = `active-writing.comment.v1.${projectId}.${id}`;
-  const [buffer] = useState(() => createCommentBuffer(body, {
-    commit: value => edit(id, value),
-    keep: (value, base) => {
-      try {
-        const draft = JSON.stringify({ value, base });
-        // This is at most two short comments, never the manuscript/notebook.
-        // Raw storage also avoids compression on the input event.
-        windowStateCache().writeSnapshot(key, draft, JSON.stringify({ value: base, base }), draft);
-      }
-      catch { setNotice("Browser draft storage is unavailable. Keep this field open until your comment saves."); }
-    },
-    conflict: () => {
-      setKept(input.current?.value ?? "");
-      setNotice("This comment changed elsewhere. Your draft is kept below; the incoming comment has not been replaced.");
-    },
-  }));
+  const [canSave, setCanSave] = useState(Boolean(body.trim()));
+  const [dirty, setDirty] = useState(false);
   useEffect(() => {
-    try {
-      const record = JSON.parse(windowStateCache().read(key) ?? "null");
-      if (record && typeof record.base === "string" && typeof record.value === "string" && record.value.length <= 6000 && record.value !== body) {
-        if (record.base === body) { if (input.current) input.current.value = record.value; buffer.change(record.value); }
-        else { setKept(record.value); setNotice("A previous draft is kept below. The saved comment changed since it was written."); }
-      }
-    } catch { /* Never replace saved text with an invalid recovery record. */ }
-    const flush = () => buffer.flush();
-    const visibility = () => { if (document.visibilityState === "hidden") flush(); };
-    window.addEventListener("pagehide", flush);
-    document.addEventListener("visibilitychange", visibility);
-    return () => { window.removeEventListener("pagehide", flush); document.removeEventListener("visibilitychange", visibility); buffer.dispose(); };
-  }, [buffer, key]);
-  useEffect(() => { const next = buffer.receive(body); if (next !== undefined && input.current) input.current.value = next; }, [body, buffer]);
+    const field = input.current;
+    if (!field || body === base.current) return;
+    if (field.value === base.current || field.value === body) {
+      field.value = body; base.current = body;
+      setCanSave(Boolean(body.trim())); setDirty(false); setNotice("");
+    } else setNotice("This comment changed elsewhere. Copy your unsaved text before reopening it; the saved comment has not been replaced.");
+  }, [body]);
+  function save() {
+    const value = input.current?.value ?? "";
+    if (composing.current || notice || !value.trim() || !isNew && value === body) return;
+    if (body !== base.current && value !== body) {
+      setNotice("This comment changed elsewhere. Your unsaved text is still here; reopen the comment before saving."); return;
+    }
+    onEdit(id, value); onSave?.();
+  }
   return <>
-    <textarea ref={input} autoFocus={autoFocus} aria-label="Review comment" placeholder="What needs attention? Saved as you type." maxLength={6000} rows={4} defaultValue={body}
-      onChange={event => buffer.change(event.currentTarget.value)} onBlur={() => buffer.flush()}
-      onCompositionStart={() => buffer.composition(true)} onCompositionEnd={() => buffer.composition(false)} />
+    <textarea ref={input} autoFocus={autoFocus} aria-label="Review comment" placeholder="What needs attention?" maxLength={6000} rows={4} defaultValue={body}
+      onKeyDown={event => { if (commentShortcut({ ...event, isComposing: event.nativeEvent.isComposing }) === "save") { event.preventDefault(); event.stopPropagation(); save(); } }}
+      onChange={event => { setCanSave(Boolean(event.currentTarget.value.trim())); setDirty(event.currentTarget.value !== body); }}
+      onCompositionStart={() => { composing.current = true; }} onCompositionEnd={() => { composing.current = false; }} />
+    {(isNew || dirty) && <div className="review-actions"><button className="primary-button" title="Save comment (Ctrl+Enter)" disabled={!canSave || Boolean(notice)} onClick={save}>{isNew ? "Save comment" : "Save changes"}</button></div>}
     {notice && <small role="status">{notice}</small>}
-    {kept && <details open><summary>Kept comment draft</summary><textarea aria-label="Kept comment draft" readOnly value={kept} rows={4} /><small>Copy any text you want to keep into the saved comment after reopening it.</small></details>}
   </>;
 }

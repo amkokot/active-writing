@@ -1,3 +1,4 @@
+import {slideChoice,validateSlideChoice,mergeSlideChoice,applySlideChoice} from './slideDecks.ts';
 // Small, independent reading records. This deliberately does not acknowledge a
 // whole-project head, transfer raw experiments, run code or resolve conflicts.
 import path from 'node:path';
@@ -27,10 +28,11 @@ const limit=16*1024**2;
 const sourceTypes=/\.(tex|bib|md|txt|png|jpe?g|webp|gif|pdf|svg|eps)$/i;
 export interface Item {key:string;digest:string;raw:string;bytes:number;binding:string;blocked?:string}
 export interface Packet {item:Item;data:string;runs?:Array<{name:string;data:string;sha256:string}>;commentUnion?:true}
-export interface Inventory {projectId:string;deviceId:string;items:Item[];deferred:string[];absentNotebooks?:string[];documentPins?:Item;figures?:Item[];maintenance?:boolean}
+export interface Inventory {projectId:string;deviceId:string;items:Item[];deferred:string[];absentNotebooks?:string[];documentPins?:Item;slideDeck?:Item;figures?:Item[];maintenance?:boolean}
 class AbsentReadingNotebook extends Error {}
-interface Baselines {version:1;projectId:string;peerId:string;files:Record<string,string>;documentPins?:string}
+interface Baselines {version:1;projectId:string;peerId:string;files:Record<string,string>;documentPins?:string;slideDeck?:string}
 function kind(key:string){
+ if(key==='slide-deck')return 'slide-deck';
  if(key==='document-pins')return 'document-pins';
  if(key==='comments')return 'comments';
  if(key.startsWith('source/')&&safeSyncPath(key)&&sourceTypes.test(key))return 'source';
@@ -43,6 +45,7 @@ function bytes(packet:Packet){checkItem(packet.item);if(typeof packet.data!=='st
  if(type==='source'&&/\.(tex|bib|md|txt)$/i.test(packet.item.key)){const text=new TextDecoder('utf8',{fatal:true,ignoreBOM:true}).decode(raw);if(/[\x00-\x08\x0b\x0e-\x1f\x7f]/.test(text))throw Error('Source is not ordinary UTF-8 text.');}
  if(type==='comments'){const value=JSON.parse(raw.toString());validateWorkbench(value);digest=syncHash(canonical(comments(value)));}
  if(type==='notebook'){const value=JSON.parse(raw.toString());validateExperimentNotebook(value);digest=syncHash(canonical(value));}
+ if(type==='slide-deck'){if(raw.length>8192)throw Error('Slide choice exceeds its budget.');validateSlideChoice(JSON.parse(raw.toString()));}
  if(type==='document-pins'){if(raw.length>8192)throw Error('Reading document pins exceed their budget.');validateReadingPins(JSON.parse(raw.toString()));}
  if(digest!==packet.item.digest)throw Error('Reading semantic checksum changed.');return raw;}
 async function policy(home:string,id:string){
@@ -68,6 +71,7 @@ async function packet(home:string,id:string,key:string,inventoryPolicy?:Awaited<
   raw=await readSyncBytes(await guardedTarget(p.root,key.slice(7)),limit);
   if(/\.(tex|bib|md|txt)$/i.test(key)){const text=new TextDecoder('utf8',{fatal:true,ignoreBOM:true}).decode(raw);if(/[\x00-\x08\x0b\x0e-\x1f\x7f]/.test(text))throw Error('Source is not ordinary UTF-8 text.');}
   digest=syncHash(raw);
+ }else if(type==='slide-deck'){raw=Buffer.from(canonical(slideChoice(p.project)));digest=syncHash(raw);
  }else if(type==='document-pins'){
   raw=Buffer.from(canonical(readingPins(p.project)));digest=syncHash(raw);
  }else if(type==='comments'){
@@ -84,7 +88,7 @@ function unionPacket(original:Packet,store:ReturnType<typeof blankReviewStore>):
  const raw=Buffer.from(JSON.stringify(store));if(raw.length>4_000_000)throw Error('Comment store exceeds its saved-work budget.');
  return {item:{...original.item,bytes:raw.length,raw:syncHash(raw),digest:syncHash(canonical(comments(store)))},data:raw.toString('base64'),commentUnion:true};
 }
-async function cacheSourcePacket(home:string,id:string,value:Packet){if((mergeableReadingSource(value.item.key)||value.item.key==='document-pins')&&value.item.bytes<=textMergeLimits.bytes)await rememberReadingSource(home,id,value.item.digest,bytes(value));}
+async function cacheSourcePacket(home:string,id:string,value:Packet){if((mergeableReadingSource(value.item.key)||value.item.key==='document-pins'||value.item.key==='slide-deck')&&value.item.bytes<=textMergeLimits.bytes)await rememberReadingSource(home,id,value.item.digest,bytes(value));}
 function sourcePacket(original:Packet,text:string):Packet{const raw=Buffer.from(text);sourceText(raw);return {item:{...original.item,raw:syncHash(raw),digest:syncHash(raw),bytes:raw.length},data:raw.toString('base64')};}
 /** Literal dependencies only: no macro expansion or execution, bounded reads. */
 export async function fastReadingFigures(root:string,roots:string[]){
@@ -103,13 +107,13 @@ export async function fastReadingFigures(root:string,roots:string[]){
  }
  return [...figures];
 }
-export function readingTransferPriority(key:string){return key==='comments'||key==='document-pins'?0:/\.(tex|bib|md|txt)$/i.test(key)?1:/^source\/.+\//.test(key)&&sourceTypes.test(key)?2:key.startsWith('notebook/')?3:4;}
+export function readingTransferPriority(key:string){return key==='comments'||key==='document-pins'||key==='slide-deck'?0:/\.(tex|bib|md|txt)$/i.test(key)?1:/^source\/.+\//.test(key)&&sourceTypes.test(key)?2:key.startsWith('notebook/')?3:4;}
 export async function readingInventory(home:string,id:string,fastOnly=false):Promise<Inventory>{
  const device=(await syncStatus(home)).device;if(!device)throw Error('Name the device first.');
  const items:Item[]=[],deferred:string[]=[],absentNotebooks:string[]=[];
  const keys:string[]=[];
  const inventoryPolicy=await policy(home,id);
- const readingAssets=fastOnly?await fastReadingFigures(inventoryPolicy.root,[inventoryPolicy.project.manuscriptPins?.overview,inventoryPolicy.project.manuscriptPins?.notes,inventoryPolicy.project.mainFile].filter((f):f is string=>!!f)):[];
+ const readingAssets=fastOnly?await fastReadingFigures(inventoryPolicy.root,[inventoryPolicy.project.manuscriptPins?.overview,inventoryPolicy.project.manuscriptPins?.notes,inventoryPolicy.project.mainFile,inventoryPolicy.project.slideDeck].filter((f):f is string=>!!f)):[];
  try{const sources=await sourceInventory(home,id,{retainCompiledPdf:true,readingTextOnly:fastOnly,readingAssets});keys.push(...sources.files.filter(f=>sourceTypes.test(f.name)).map(f=>'source/'+f.name));}
  catch(error){if((error as NodeJS.ErrnoException).code==='ENOENT'||/changed|moved/i.test((error as Error).message))deferred.push('source/');else throw error;}
  keys.push('comments',...(fastOnly?[]:[...(await owners(home,id)).keys()].map(owner=>'notebook/'+owner)));
@@ -121,8 +125,9 @@ export async function readingInventory(home:string,id:string,fastOnly=false):Pro
  // An optional capability, outside items, keeps older peers fully compatible.
  let documentPins:Item|undefined;
  try{documentPins=(await packet(home,id,'document-pins',inventoryPolicy)).item;}catch{deferred.push('document-pins');}
+ let slideDeck:Item|undefined;try{slideDeck=(await packet(home,id,'slide-deck',inventoryPolicy)).item;}catch{deferred.push('slide-deck');}
  const figures=fastOnly?items.filter(i=>!/^source\/.*\.(tex|bib|md|txt)$/i.test(i.key)&&i.key!=='comments'):undefined;
- return {projectId:id,deviceId:device.id,items:figures?items.filter(i=>!figures.includes(i)):items,deferred,absentNotebooks,...(documentPins?{documentPins}:{}),...(figures?{figures}:{}),maintenance:await (await import('./syncMaintenance.ts')).maintenanceEnabled()};
+ return {projectId:id,deviceId:device.id,items:figures?items.filter(i=>!figures.includes(i)):items,deferred,absentNotebooks,...(documentPins?{documentPins}:{}),...(slideDeck?{slideDeck}:{}),...(figures?{figures}:{}),maintenance:await (await import('./syncMaintenance.ts')).maintenanceEnabled()};
 }
 export async function readingPacket(home:string,id:string,item:Item,budget=limit):Promise<Packet>{
  if(!Number.isSafeInteger(budget)||budget<1||budget>limit)throw Error('Invalid reading packet budget.');
@@ -132,7 +137,12 @@ export async function readingPacket(home:string,id:string,item:Item,budget=limit
   const owner=item.key.slice(9),nb=JSON.parse(Buffer.from(result.data,'base64').toString()),ids=new Set<string>();
   for(const cell of nb.cells){const run=cell.metadata?.paperfocus?.runId;if(run){if(!ownerPattern.test(run))throw Error('Invalid notebook run identity.');ids.add(run);}}
   const runs:NonNullable<Packet['runs']>=[];let total=result.item.bytes;
-  for(const run of ids){const name=`${run}.json`,file=await guardedTarget(projectDataPath(home,id),`experiments/${owner}/runs/${name}`),data=await readSyncBytes(file,limit);if((total+=data.length)>budget)throw Error('Reading batch budget reached; leave this record for the next pass.');runs.push({name,data:data.toString('base64'),sha256:syncHash(data)});}
+  for(const run of ids){
+   const name=`${run}.json`;let data:Buffer;
+   try{const file=await guardedTarget(projectDataPath(home,id),`experiments/${owner}/runs/${name}`);data=await readSyncBytes(file,limit);}
+   catch(error){if(['ENOENT','ENOTDIR'].includes((error as NodeJS.ErrnoException).code??''))throw Error(`Notebook run provenance is missing for ${run}.`);throw error;}
+   if((total+=data.length)>budget)throw Error('Reading batch budget reached; leave this record for the next pass.');runs.push({name,data:data.toString('base64'),sha256:syncHash(data)});
+  }
   result.runs=runs;
  }
  return result;
@@ -149,7 +159,10 @@ export async function applyReadingPacket(home:string,id:string,incoming:Packet,e
  if(type==='source'&&(p.publication||p.locks.unknown||p.locks.files.has(incoming.item.key)))throw Error('Publication or locked source stays in its writing workflow.');
  const receipt=syncHash(canonical({projectId:id,key:incoming.item.key,before:previous?.item.raw??'',after:incoming.item.raw,binding}));
  if(previous)await saveImmutableSyncArtifact(await privateSyncPath(home,`reading/${id}/before/${receipt}.blob`,true),Buffer.from(previous.data,'base64'),limit);
- if(type==='document-pins'){
+ if(type==='slide-deck'){
+  if(!previous)throw Error('Missing current slide choice.');
+  await applySlideChoice(home,id,JSON.parse(data.toString()),previous.item.digest);
+ }else if(type==='document-pins'){
   if(!previous)throw Error('Missing current reading document pins.');
   await applyReadingPins(home,id,JSON.parse(data.toString()),previous.item.digest);
  }else if(type==='source')await saveGuardedFile(p.root,incoming.item.key.slice(7),previous?.item.raw??'',data,limit);
@@ -215,7 +228,7 @@ export async function syncReadingRecords(home:string,id:string,peerId:string,run
  if(!Number.isSafeInteger(timeout)||timeout<1000||timeout>120000)throw Error('Reading timeout must be bounded to 1–120 seconds.');
  await requireSyncNetwork(home);const peer=await readSshPeer(home,id,peerId),file=await privateSyncPath(home,`reading/${id}/${peerId}.json`,true);
  let prior='',base:Baselines;
- try{const raw=await readSyncBytes(file,2*1024**2);prior=syncHash(raw);base=JSON.parse(raw.toString());validateSyncJson(base);if(base.version!==1||base.projectId!==id||base.peerId!==peerId||base.documentPins!==undefined&&!hashPattern.test(base.documentPins)||Object.keys(base.files).length>5000||Object.entries(base.files).some(([k,v])=>{kind(k);return !hashPattern.test(v);}))throw Error('Invalid reading baseline; preserved.');}
+ try{const raw=await readSyncBytes(file,2*1024**2);prior=syncHash(raw);base=JSON.parse(raw.toString());validateSyncJson(base);if(base.version!==1||base.projectId!==id||base.peerId!==peerId||base.documentPins!==undefined&&!hashPattern.test(base.documentPins)||base.slideDeck!==undefined&&!hashPattern.test(base.slideDeck)||Object.keys(base.files).length>5000||Object.entries(base.files).some(([k,v])=>{kind(k);return !hashPattern.test(v);}))throw Error('Invalid reading baseline; preserved.');}
  catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error;base={version:1,projectId:id,peerId,files:await initialBaselines(home,id)};}
  const send=async(action:string,extra:object={})=>{await requireSyncNetwork(home);const request=Buffer.from(JSON.stringify({version:1,expectedDeviceId:peer.options.deviceId,action,maxBytes:limit,...extra}));if(request.length>Math.ceil(limit/3)*4+100000)throw Error('Reading request exceeds its budget.');const raw=await runner(peer.options.host,sshPeerCommand(peer.options,id),request,Math.ceil(limit/3)*4+100000,timeout),reply=JSON.parse(raw.toString());validateSyncJson(reply);if(reply.version!==1||reply.liveImport!==(action==='reading-put'))throw Error('Unexpected reading reply.');return reply;};
  const local=await readingInventory(home,id,options.fastOnly),remote:Inventory=(await send('reading-inventory',options.fastOnly?{fastOnly:true}:{})).inventory;
@@ -233,6 +246,7 @@ export async function syncReadingRecords(home:string,id:string,peerId:string,run
   checkItem(remote.documentPins);if(remote.documentPins.key!=='document-pins'||remote.documentPins.bytes>8192)throw Error('Invalid document pin capability.');
   local.items.push(local.documentPins);remote.items.push(remote.documentPins);
  }
+ if(remote.slideDeck&&local.slideDeck&&local.items.length<5000&&remote.items.length<5000){checkItem(remote.slideDeck);if(remote.slideDeck.key!=='slide-deck'||remote.slideDeck.bytes>8192)throw Error('Invalid slide choice capability.');local.items.push(local.slideDeck);remote.items.push(remote.slideDeck);}
  if(new Set(remote.items.map(i=>i.key)).size!==remote.items.length)throw Error('Duplicate reading identity.');
  const left=new Map(local.items.map(i=>[i.key,i])),right=new Map(remote.items.map(i=>[i.key,i]));
  const allKeys=[...new Set([...left.keys(),...right.keys()])];
@@ -243,13 +257,13 @@ export async function syncReadingRecords(home:string,id:string,peerId:string,run
  for(const key of new Set([...(local.absentNotebooks??[]),...(remote.absentNotebooks??[])]))if(base.files[key])held.push(key);
  let transferredBytes=0,connectionLost=false,seededBytes=0,seededFiles=0;
  for(const key of [...new Set([...left.keys(),...right.keys()])].sort((a,b)=>readingTransferPriority(a)-readingTransferPriority(b)||a.localeCompare(b))){
-  if(deferred.includes(key)||key.startsWith('source/')&&deferred.includes('source/'))continue;const l=left.get(key),r=right.get(key),b=key==='document-pins'?base.documentPins:base.files[key];
+  if(deferred.includes(key)||key.startsWith('source/')&&deferred.includes('source/'))continue;const l=left.get(key),r=right.get(key),b=key==='slide-deck'?base.slideDeck:key==='document-pins'?base.documentPins:base.files[key];
   if(l&&r&&l.digest===r.digest){
-   if(mergeableReadingSource(key)||key==='document-pins')try{
+   if(mergeableReadingSource(key)||key==='document-pins'||key==='slide-deck')try{
     if(l.bytes<=textMergeLimits.bytes&&seededFiles<16&&seededBytes+l.bytes<=1024**2&&!await hasReadingSourceBase(home,id,l.digest)){await cacheSourcePacket(home,id,await readingPacket(home,id,l));seededFiles++;seededBytes+=l.bytes;}
     await clearReadingSourceReview(home,id,key);
    }catch(error){issues.push({key,reason:(error as Error).message.slice(0,500)});deferred.push(key);continue;}
-   if(key==='document-pins')base.documentPins=l.digest;else base.files[key]=l.digest;continue;
+   if(key==='slide-deck')base.slideDeck=l.digest;else if(key==='document-pins')base.documentPins=l.digest;else base.files[key]=l.digest;continue;
   }
   if(connectionLost){deferred.push(key);continue;}
   // Fast inventories contain only selected-root figure dependencies. An absent
@@ -262,20 +276,20 @@ export async function syncReadingRecords(home:string,id:string,peerId:string,run
    continue;
   }
   if(l?.binding&&r?.binding&&l.binding!==r.binding||l?.blocked||r?.blocked){held.push(key);continue;}
-  if(key==='document-pins'&&l&&r){
+  if((key==='document-pins'||key==='slide-deck')&&l&&r){
    try{
     const lp=await readingPacket(home,id,l),rp:Packet=(await send('reading-get',{item:r,budget:8192})).packet;
     if(rp.item.key!==key||rp.item.raw!==r.raw||rp.item.digest!==r.digest||rp.item.binding!==r.binding)throw Error('Reading document pins changed.');
     const saved=b?await readingSourceBase(home,id,b):undefined;
     if(b&&!saved)throw Error('Saved common reading document choices unavailable; both choices are preserved.');
-    const value=mergeReadingPins(saved?JSON.parse(saved):undefined,JSON.parse(bytes(lp).toString()),JSON.parse(bytes(rp).toString()));
+    const value=(key==='slide-deck'?mergeSlideChoice:mergeReadingPins)(saved?JSON.parse(saved):undefined,JSON.parse(bytes(lp).toString()),JSON.parse(bytes(rp).toString()));
     const leftPacket=sourcePacket(lp,canonical(value)),rightPacket=sourcePacket(rp,canonical(value));
     if(transferredBytes+lp.item.bytes+rp.item.bytes+rightPacket.item.bytes>32*1024**2||copied.length>=32)throw Error('Reading batch budget reached');
     if(options.mayWrite&&!await options.mayWrite())throw Error('Sync settings changed; no pin write started.');
     if(rightPacket.item.digest!==r.digest)await send('reading-put',{packet:rightPacket,expected:r});
     if(options.mayWrite&&!await options.mayWrite())throw Error('Sync settings changed; no local pin write started.');
     if(leftPacket.item.digest!==l.digest)await applyReadingPacket(home,id,leftPacket,l);
-    await cacheSourcePacket(home,id,leftPacket);base.documentPins=leftPacket.item.digest;copied.push(key);transferredBytes+=lp.item.bytes+rp.item.bytes+rightPacket.item.bytes;
+    await cacheSourcePacket(home,id,leftPacket);if(key==='slide-deck')base.slideDeck=leftPacket.item.digest;else base.documentPins=leftPacket.item.digest;copied.push(key);transferredBytes+=lp.item.bytes+rp.item.bytes+rightPacket.item.bytes;
    }catch(error){const reason=(error as Error).message;issues.push({key,reason:reason.slice(0,500)});connectionLost=/SSH exchange (?:timed out|unavailable \(255\))|Connection (?:closed|reset|refused|timed out|dropped)|write EOF|ETIMEDOUT|ECONN\w*|ENET\w*|EHOST\w*|Waiting for campus|SSH entry point is unavailable|Network status unavailable/i.test(reason);if(connectionLost||/changed|arrived|locked|budget/i.test(reason))deferred.push(key);else held.push(key);}
    const raw=Buffer.from(JSON.stringify(base));if(syncHash(raw)!==prior)prior=await saveGuardedFile(path.dirname(file),path.basename(file),prior,raw,2*1024**2);
    continue;
@@ -345,7 +359,7 @@ export async function syncReadingRecords(home:string,id:string,peerId:string,run
   }catch(error){const message=(error as Error).message;issues.push({key,reason:message.slice(0,500)});
    connectionLost=/SSH exchange (?:timed out|unavailable \(255\))|Connection (?:closed|reset|refused|timed out|dropped)|write EOF|ETIMEDOUT|ECONN\w*|ENET\w*|EHOST\w*|Waiting for campus|SSH entry point is unavailable|Network status unavailable/i.test(message);
    const protectedFailure=/checksum|invalid|identity|protected|policy|ownership|deletion|resurrection|provenance|bound|limit|notebook is full/i.test(message);
-   if(!protectedFailure&&(connectionLost||/changed|moved|locked|already.*running|lease|Reading batch budget reached|No record lock|SSH exchange (?:unavailable|timed out)|connection|\bEOF\b/i.test(message)))deferred.push(key);else held.push(key);}
+   if(!protectedFailure&&(connectionLost||/changed|moved|locked|already.*running|\blease\b|Reading batch budget reached|No record lock|SSH exchange (?:unavailable|timed out)|connection|\bEOF\b/i.test(message)))deferred.push(key);else held.push(key);}
   // Each confirmed one-sided record gets its own baseline. Losing a later
   // connection cannot erase earlier progress or require replaying a whole batch.
   const raw=Buffer.from(JSON.stringify(base));if(syncHash(raw)!==prior)prior=await saveGuardedFile(path.dirname(file),path.basename(file),prior,raw,2*1024**2);

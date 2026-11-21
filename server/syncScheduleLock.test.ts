@@ -23,6 +23,10 @@ test('native scheduling lease excludes another process and releases normally',as
  const f=await fixture(),release=await acquireScheduleLease(f.target);
  try{await assert.rejects(acquireScheduleLease(f.target),RecordLocked);}finally{await release();}
  await(await acquireScheduleLease(f.target))();
+ const inbox=path.join(f.folder,'reading-link-coordinator'),inboxRelease=await acquireScheduleLease(inbox);
+ try{await assert.rejects(acquireScheduleLease(inbox),RecordLocked);}finally{await inboxRelease();}
+ const transfer=path.join(f.folder,'transfer-coordinator'),transferRelease=await acquireScheduleLease(transfer);
+ try{await assert.rejects(acquireScheduleLease(transfer),RecordLocked);}finally{await transferRelease();}
  await assert.rejects(acquireScheduleLease(path.join(f.folder,'workbench')),/Only Aw scheduling/);
 });
 

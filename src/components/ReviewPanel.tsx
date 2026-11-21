@@ -1,13 +1,14 @@
 import { ArrowLeft, ArrowRight, ArrowUpRight, MessageSquareText, X } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { commentShortcut } from "../commentKeyboard";
 import { CommentField } from "./CommentField";
 import type { AttentionTask, ProjectDocument, HandoffDraft, ReviewComment } from "../types";
-import { reviewComments, reviewCommentTitle, defaultReviewInstructions, reviewCommentTarget, reviewCommentLocation, adjacentReviewComment, nextCommentOutsideBlock } from "../review";
+import { reviewComments, reviewCommentQueue, reviewCommentTitle, defaultReviewInstructions, reviewCommentTarget, reviewCommentLocation, adjacentReviewComment, nextCommentOutsideBlock } from "../review";
 import { checkTaskSource } from "../taskSource";
 import { LazyDisclosure } from "../lazyDisclosure";
-import { attentionQueue } from "../attention";
 
-export function ReviewPanel({ onReply, blockComments, onAllComments, onOutsideComment, tasks, document, edits, selectedId, instructions, busy, protectedText, onProtect, onClose, onSelect, onJump, onAdd, onEdit, onResolve, onAsk, onRewrite, onInstructions, onExport, onImport, onArchive, onDraftReply, onSavePacket }: {
+export function ReviewPanel({ unsaved, onReply, blockComments, onAllComments, onOutsideComment, tasks, document, edits, selectedId, instructions, busy, protectedText, onProtect, onClose, onSelect, onJump, onAdd, onEdit, onResolve, onAsk, onRewrite, onInstructions, onExport, onImport, onArchive, onDraftReply, onSavePacket }: {
+  unsaved?: boolean;
   onReply: (id: string, body: string) => void;
   blockComments?: AttentionTask[]; onAllComments?: () => void;
   onOutsideComment: (task: AttentionTask) => void;
@@ -23,10 +24,11 @@ export function ReviewPanel({ onReply, blockComments, onAllComments, onOutsideCo
   const [notice, setNotice] = useState("");
   const [replyDrafts, setReplyDrafts] = useState<Record<string, string>>({});
   const [replyingTo, setReplyingTo] = useState<string>();
+  const panel = useRef<HTMLElement>(null);
   const [preparing, setPreparing] = useState(false);
   const navigationTasks = blockComments ?? tasks;
   const outsideComment = blockComments && nextCommentOutsideBlock(tasks, blockComments, selectedId);
-  const open = reviewComments(blockComments ?? attentionQueue(tasks)), resolved = reviewComments(tasks, true);
+  const open = reviewCommentQueue(blockComments ?? tasks), resolved = reviewComments(tasks, true).filter(task => task.review?.kind === "comment" && !task.review.replyTo);
   const selected = tasks.find(t => t.id === selectedId && t.review?.kind === "comment");
   const comment = selected?.review as ReviewComment | undefined;
   const source = selected && checkTaskSource(selected.sourceSnapshot, document, edits);
@@ -50,7 +52,29 @@ export function ReviewPanel({ onReply, blockComments, onAllComments, onOutsideCo
   }
   const rows = (list: AttentionTask[]) => list.map(t => <button className={`review-list-item ${t.id === selectedId ? "is-active" : ""}`} key={t.id} onClick={() => onSelect(t)}><span>{t.review?.kind === "comment" ? reviewCommentTitle(t.review.body, t.review.quote) : t.title}</span><small>{t.review?.kind === "comment" && (t.review.author === "human" ? "Your comment" : "Assistant · unchecked")} · {t.sourceSnapshot?.nodeTitle}</small></button>);
   const move = (direction: -1 | 1) => { const task = adjacentReviewComment(navigationTasks, selectedId, direction); if (task) onSelect(task); };
-  return <section className="review-panel" aria-label="Queue comment details">
+  function moveReply(direction: -1 | 1) {
+    const task = adjacentReviewComment(navigationTasks, selectedId, direction);
+    if (task) { onSelect(task); setReplyingTo(task.id); }
+  }
+  function saveReply() {
+    if (!selected || busy || !replyDrafts[selected.id]?.trim()) return;
+    onReply(selected.id, replyDrafts[selected.id]);
+    setReplyDrafts(current => ({ ...current, [selected.id]: "" }));
+    setReplyingTo(undefined);
+    panel.current?.focus({ preventScroll: true });
+  }
+  if (unsaved && selected && comment) return <section className="review-panel" aria-label="New comment">
+    <header className="inspector-header"><h2><MessageSquareText size={17} /> Comment</h2><button aria-label="Discard unsaved comment" onClick={onClose}><X size={16} /></button></header>
+    <article className="review-current"><blockquote>{comment.quote}</blockquote>
+      <CommentField key={selected.id} projectId={document.project.id} id={selected.id} body={comment.body} autoFocus isNew onEdit={onEdit} onSave={onClose} />
+      <small>Not saved until you choose Save comment.</small>
+    </article>
+  </section>;
+  return <section ref={panel} tabIndex={-1} className="review-panel" aria-label="Queue comment details" onKeyDown={event => {
+    if ((event.target as HTMLElement).closest("textarea, input, select, [contenteditable=true]")) return;
+    const action = commentShortcut({ ...event, isComposing: event.nativeEvent.isComposing }, true);
+    if (action === -1 || action === 1) { event.preventDefault(); event.stopPropagation(); moveReply(action); }
+  }}>
     <header className="inspector-header"><h2><MessageSquareText size={17} /> {selected ? "Comment" : "Review"}</h2><button aria-label="Close review" onClick={onClose}><X size={16} /></button></header>
     {blockComments && <div className="block-comments-list" aria-label="Comments on this block"><strong>Comments on this block</strong>{rows(blockComments)}{!blockComments.length && <small>No open comments remain on this block.</small>}<button disabled={!outsideComment} title={outsideComment ? "Leave this block's list and open the next unresolved comment in queue order" : "No other open comments"} onClick={() => { if (outsideComment) onOutsideComment(outsideComment); }}>Next comment outside this block <ArrowRight size={14} /></button><button onClick={onAllComments}>Show all comments</button></div>}
     <div className="review-navigation" aria-label="Unresolved comments"><button aria-label="Previous unresolved comment" disabled={!open.length} onClick={() => move(-1)}><ArrowLeft size={14} /></button><span>{open.some(t => t.id === selectedId) ? `${open.findIndex(t => t.id === selectedId) + 1} / ${open.length} open` : `${open.length} open`}<small>{blockComments ? "On this block" : "In your priority queue"}</small></span><button aria-label="Next unresolved comment" disabled={!open.length} onClick={() => move(1)}><ArrowRight size={14} /></button></div>
@@ -60,12 +84,17 @@ export function ReviewPanel({ onReply, blockComments, onAllComments, onOutsideCo
       <small>{location ? `${document.nodes.find(node => node.id === location.nodeId)?.title ?? "Passage"} · ${document.paragraphs.find(p => p.id === location.paragraphId)?.file ?? document.project.mainFile}` : otherManuscript ? `In ${selected.sourceSnapshot?.rootFile}. Jump opens its project and manuscript before checking the location.` : "The original passage could not be located safely. Its saved quote is shown below."}</small>
       {location?.changedBlock && <small>The text was edited. Jump returns to its saved block, not an exact quoted range.</small>}
       <blockquote>{comment.quote}</blockquote>
-      <CommentField key={selected.id} projectId={document.project.id} id={selected.id} body={comment.body} autoFocus={comment.author === "human" && !comment.body} onEdit={onEdit} />
+      <CommentField key={selected.id} projectId={document.project.id} id={selected.id} body={comment.body} autoFocus={comment.author === "human" && !comment.body} onEdit={onEdit} onSave={onClose} />
       <small>{location?.changedBlock ? "The remembered block is available, but the original quoted range no longer matches." : source?.message} The saved quote is kept even if its location changes.</small>
       {comment.replyTo && <button onClick={() => { const parent = tasks.find(t => t.id === comment.replyTo); if (parent) onSelect(parent); }}>Original comment →</button>}
       {tasks.some(t => t.review?.kind === "comment" && t.review.replyTo === selected.id) && <div className="comment-thread-replies" aria-label="Replies to this comment"><strong>Replies</strong>{rows(tasks.filter(t => t.review?.kind === "comment" && t.review.replyTo === selected.id))}</div>}
       <div className="review-actions"><button onClick={() => setReplyingTo(replyingTo === selected.id ? undefined : selected.id)}>Reply</button></div>
-      {replyingTo === selected.id && <div className="comment-reply-composer"><textarea autoFocus aria-label="Comment reply" rows={3} maxLength={6000} placeholder="Add a reply. The original comment is kept." value={replyDrafts[selected.id] ?? ""} onChange={event => setReplyDrafts(current => ({ ...current, [selected.id]: event.target.value }))} /><button disabled={busy || !replyDrafts[selected.id]?.trim()} onClick={() => { onReply(selected.id, replyDrafts[selected.id]); setReplyingTo(undefined); }}>Save reply</button><button onClick={() => setReplyingTo(undefined)}>Cancel reply</button></div>}
+      {replyingTo === selected.id && <div className="comment-reply-composer"><textarea key={selected.id} autoFocus aria-label="Comment reply" title="Ctrl+Enter to save; Shift+arrow to move between comments" rows={3} maxLength={6000} placeholder="Add a reply. The original comment is kept." value={replyDrafts[selected.id] ?? ""} onChange={event => setReplyDrafts(current => ({ ...current, [selected.id]: event.target.value }))} onKeyDown={event => {
+        const action = commentShortcut({ ...event, isComposing: event.nativeEvent.isComposing }, true);
+        if (action === undefined) return;
+        event.preventDefault(); event.stopPropagation();
+        if (action === "save") saveReply(); else moveReply(action);
+      }} /><button title="Save reply (Ctrl+Enter)" disabled={busy || !replyDrafts[selected.id]?.trim()} onClick={saveReply}>Save reply</button><button onClick={() => setReplyingTo(undefined)}>Cancel reply</button></div>}
       <div className="review-actions"><button className="primary-button" onClick={() => onResolve(selected.id, selected.status !== "reviewed")}>{selected.status === "reviewed" ? "Reopen comment" : "Resolve"}</button></div>
       <div className="review-actions"><button disabled={!editableQuote || Boolean(editableQuote.command)} onClick={() => onAsk(selected)}>Ask</button><button disabled={!editableQuote || Boolean(editableQuote.command)} onClick={() => onRewrite(selected)}>Rephrase</button><button aria-pressed={!protectedText} onClick={() => onProtect(!protectedText)}>{protectedText ? "Enable typing" : "Protect text"}</button></div>
       <small>Resolve closes this comment and its replies; the full thread stays in History. Reopen affects only the selected comment.</small>

@@ -25,6 +25,7 @@ import { anchoredScrollTop, captureSourceViewport, type SourceJumpTarget, type S
 import { WritingMarker } from "./WritingMarker";
 import { BlockCommentsButton } from "./BlockCommentsButton";
 import { sourceCommandId } from "../taskSource";
+import { isNewCommentShortcut } from "../commentKeyboard";
 import type { WritingMarker as Marker } from "../writing";
 import type {
   Lens,
@@ -488,7 +489,7 @@ export function SourceParagraph({ paragraph, text, editable, onEdit, onReference
       <button title="Focus this block" aria-label="Focus this block" onClick={() => run("focus")}><Focus size={12} /></button>
       <button title="Ask about this block" aria-label="Ask about this block" onClick={() => run("ask")}><CircleHelp size={12} /></button>
       <button title="Rephrase this block" aria-label="Rephrase this block" disabled={!editable} onClick={() => run("rewrite")}><WandSparkles size={12} /></button>
-      <button title="Comment on this block" aria-label="Comment on this block" onClick={() => run("comment")}><MessageSquareText size={12} /></button>
+      <button title="Comment on this block · Ctrl+M" aria-label="Comment on this block" onClick={() => run("comment")}><MessageSquareText size={12} /></button>
       <button title="Toggle this block in the queue · notes stay open" aria-label="Return to this block later" aria-pressed={!!isQueued?.({ paragraphId: paragraph.id, nodeId: paragraph.nodeId, start: activeChunk.start, end: activeChunk.end, text: text.slice(activeChunk.start, activeChunk.end) })} onClick={() => run("later")}><BookmarkPlus size={12} /></button>
     </div>}
   </div>;
@@ -677,11 +678,13 @@ export function Manuscript({
     const pane={left:Math.max(0,frame?.left ?? 0),right:Math.min(window.innerWidth,frame?.right ?? window.innerWidth),top:Math.max(0,frame?.top ?? 0),bottom:Math.min(window.innerHeight,frame?.bottom ?? window.innerHeight)};
     const toolbar=editor.parentElement?.querySelector<HTMLElement>(".selected-block-actions");
     const position=highlightActionsPosition(rect,pane,toolbar?.offsetWidth || 220,toolbar?.offsetHeight || 28);
-    onSelection({
+    const picked: PendingSelection = {
       ...first, text: spans.map(span => span.text).join("\n\n"),
       ...(spans.length > 1 ? { spans } : {}),
       ...position,
-    });
+    };
+    onSelection(picked);
+    return picked;
   };
   const pointAt = (x:number,y:number) => {
     const api=document as Document & {caretRangeFromPoint?: (x:number,y:number)=>Range|null; caretPositionFromPoint?: (x:number,y:number)=>{offsetNode:Node;offset:number}|null};
@@ -848,6 +851,23 @@ export function Manuscript({
       const end=anchor?.endId && editorRef.current?.querySelector<HTMLElement>(`p[data-paragraph-id="${CSS.escape(anchor.endId)}"]`);
       if(anchor?.crossed && end) extendSelection(anchor.paragraphId,anchor.offset,end,anchor.endOffset!);
     }} onPointerCancel={()=>{dragSelection.current=undefined;}} onPointerDown={event => { if (event.target === event.currentTarget) reel.intent(); }} onPointerMove={event => { if (event.buttons && event.target === event.currentTarget) reel.intent(); }} onTouchMove={event => { if (event.touches.length === 1) reel.intent(); }} onKeyDownCapture={event => {
+      if (isNewCommentShortcut({ ...event, isComposing: event.nativeEvent.isComposing }) && !(event.target as HTMLElement).closest("textarea,input,select")) {
+        event.preventDefault(); event.stopPropagation();
+        const highlighted = handleSelection();
+        if (highlighted) onChunkAction("comment", highlighted);
+        else {
+          const target = event.target as HTMLElement;
+          const root = target.closest<HTMLElement>("p[data-paragraph-id]") ?? target.closest(".source-editor-shell")?.querySelector<HTMLElement>("p[data-paragraph-id]");
+          if (root?.dataset.paragraphId && root.dataset.nodeId) {
+            const value = editableText(root), chunks = sourceChunks(value, Boolean(nodes.find(n => n.id === root.dataset.nodeId)?.environment));
+            const caret = editableCaret(root), active = root.querySelector<HTMLElement>('.source-chunk[data-active="true"]');
+            const chunk = caret === undefined ? chunks[Number(active?.dataset.chunkIndex ?? 0)] : chunkAtOffset(chunks, caret);
+            const box = root.getBoundingClientRect();
+            if (chunk?.text.trim()) onChunkAction("comment", { paragraphId: root.dataset.paragraphId, nodeId: root.dataset.nodeId, start: chunk.start, end: chunk.end, text: chunk.text, x: box.left + box.width / 2, y: box.bottom });
+          }
+        }
+        return;
+      }
       if ((event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === "a" && selectSource(event.target, event.shiftKey)) { event.preventDefault(); event.stopPropagation(); return; }
       if(event.key==="Escape" && (crossBlockRange.current || selectedSource.current)){clearCrossSelection();onSelection(undefined);}
       else if((crossBlockRange.current || selectedSource.current) && !event.ctrlKey && !event.metaKey && (event.key.length===1 || ["Enter","Backspace","Delete"].includes(event.key)))event.preventDefault();
@@ -915,7 +935,7 @@ export function Manuscript({
             <button title="Rephrase highlighted blocks" aria-label="Rephrase highlighted blocks" disabled={readOnly} onClick={onBeginRewrite}><WandSparkles size={12} /></button>
             {!turbo && <button title="Find related passages" aria-label="Find related passages" onClick={onCreateTheme}><Sparkles size={12} /></button>}
             <button title="Open highlighted blocks in the notebook" aria-label="Open highlighted blocks in the notebook" onClick={onExplore}><Scan size={12} /></button>
-            <button title="Comment on highlighted blocks" aria-label="Comment on highlighted blocks" onClick={onComment}><MessageSquareText size={12} /></button>
+            <button title="Comment on highlighted blocks · Ctrl+M" aria-label="Comment on highlighted blocks" onClick={onComment}><MessageSquareText size={12} /></button>
             <button aria-label="Return to highlighted blocks later" aria-pressed={(pendingSelection.spans ?? [pendingSelection]).every(span => !!isQueued?.(span))} title="Toggle highlighted blocks in the queue · notes stay open" onClick={onReviewLater}><BookmarkPlus size={12} /></button>
           </div>
         )}

@@ -13,6 +13,8 @@ import { useReadingLayout } from "../usePaneLayout";
 import { useSavedReadingPosition } from "../useSavedReadingPosition";
 import type { WindowRequest } from "../windowWorkspace";
 import { phaseNeighbours, researchPhases } from "../notebook";
+import { CurrentWriteups } from './CurrentWriteups';
+import { hasWriteupList } from '../currentWriteups';
 
 interface Props {
   shareControl?: React.ReactNode;
@@ -23,6 +25,7 @@ interface Props {
   collapsedIds: string[];
   onToggle: (entry: NotebookEntry, open: boolean) => void;
   onNavigatePhase: (entry: NotebookEntry) => Promise<void>;
+  onReadWriteup: (file:string) => Promise<void>;
   sourceFor: (entry: NotebookEntry) => string | undefined;
   active?: boolean;
   document: ProjectDocument;
@@ -62,6 +65,8 @@ export function ResearchNotebook(props: Props) {
   const catalogue=orderedNotebookEntries(entries),visible=catalogue.filter(item=>!item.filed || item.id === entry?.id || item.id === props.evidenceTarget?.notebookId),filed=catalogue.filter(item=>item.filed && item.id !== entry?.id && item.id !== props.evidenceTarget?.notebookId);
   const [phaseBusy, setPhaseBusy] = useState(false);
   const [phaseError, setPhaseError] = useState("");
+  const library=orderedNotebookEntries(props.allEntries.filter(item=>!item.recoveryKey));
+  const libraryFolders=[...new Set(library.map(item=>item.folder?.trim()||'Notebooks'))].sort();
   const phases = researchPhases(props.allEntries, props.document.project.id);
   const selectedPhase = phases.find(item => item.id === entry?.id);
   const phaseLinks = selectedPhase ? phaseNeighbours(selectedPhase, props.allEntries, props.document.project.id) : undefined;
@@ -121,7 +126,9 @@ export function ResearchNotebook(props: Props) {
     </article>;
   }
   return <section className="research-notebook-pane">
+    {props.allEntries.some(hasWriteupList)&&<nav className="writeups-jumpbar" aria-label="Reading navigation"><button onClick={()=>scrollRef.current?.querySelector('#current-writeups')?.scrollIntoView({block:'start',behavior:'smooth'})}><FileText size={13}/>Current writeups ↑</button></nav>}
     <div className="research-notebook" ref={scrollRef}>
+    <CurrentWriteups document={props.document} entries={props.allEntries} onRead={props.onReadWriteup}/>
     {phases.length > 0 && <nav className="notebook-phase-toolbar" aria-label="Research phase navigation">
       <label>Research phase<select aria-label="Research phase" value={selectedPhase?.id ?? ""} disabled={phaseBusy} onChange={event => { const target = phases.find(item => item.id === event.target.value); if (target) void goToPhase(target); }}>
         {!selectedPhase && <option value="">Choose a saved research phase…</option>}
@@ -134,7 +141,7 @@ export function ResearchNotebook(props: Props) {
       </div>
       <small>{phaseBusy ? "Saving before switching…" : selectedPhase?.filed ? "Viewing an archive; its evidence stays preserved." : "Choose any saved phase, including archives. No experiments run."}</small>
     </nav>}
-    <header className="notebook-heading"><span>Notebook · {visible.length} research {visible.length === 1 ? "item" : "items"}</span><small>{error ? "Draft kept · saving paused" : saving || pending ? "Saving locally…" : "Saved locally"}</small>{props.shareControl}<NotebookTransfer {...props} /><button onClick={onNew}><Plus size={14} /> Question</button></header>
+    <header className="notebook-heading"><span>Notebook · {visible.length} research {visible.length === 1 ? "item" : "items"}</span><small>{error ? "Draft kept · saving paused" : saving || pending ? "Saving locally…" : "Saved locally"}</small>{library.length>0 && <select className="notebook-library" aria-label="Browse project notebooks" value="" disabled={phaseBusy} onChange={event=>{const target=library.find(item=>item.id===event.target.value);if(target)void goToPhase(target);}}><option value="">Browse notebooks…</option>{libraryFolders.map(folder=><optgroup key={folder} label={folder}>{library.filter(item=>(item.folder?.trim()||'Notebooks')===folder).map(item=><option key={item.id} value={item.id}>{notebookTitle(item)}{item.filed?' · filed':''}</option>)}</optgroup>)}</select>}{props.shareControl}<NotebookTransfer {...props} /><button onClick={onNew}><Plus size={14} /> Question</button></header>
     {props.evidenceTarget && !entries.some(item => item.id === props.evidenceTarget!.notebookId) && <p role="status">The linked conversation is no longer available. The catalogue is shown; no other conversation is presented as the linked evidence.</p>}
     {error && <div className="notebook-error" role="alert">{error} Your draft is kept in this browser. <button onClick={onRecover}>Reload saved work</button></div>}
     {phaseError && <p className="notebook-error" role="alert">Phase navigation stopped: {phaseError} Your current work stays open.</p>}
@@ -201,7 +208,7 @@ function NotebookConversation({ entry, active, onToggle, document, currentSource
       {entry.source && !experimentOnly && <div className="notebook-source"><details><summary>Linked {entry.source.passages ? `${entry.source.passages.length} blocks` : "passage"} · {entry.source.file}</summary>{excerpt}<small>Saved passage{entry.source.returnAnchor && currentSource !== entry.source.paragraphText ? " · edited since capture; refresh before replacing" : currentSource !== entry.source.paragraphText ? " · source has changed" : ""}</small></details></div>}
       {!active && <button className="conversation-work-on" onClick={() => onToggle(entry, true)}>Continue this conversation</button>}
       {!experimentOnly && <StudyWorkspace key={entry.id} entry={entry} document={document} showComposer={active} selection={selection} onSelection={setSelection} onClearSelection={() => setSelection(undefined)} onPatch={patch} onHandoff={onHandoff} onImportReply={onImportReply} onFinishWithoutImport={onFinishWithoutImport} onFinishTask={onFinishTask} onReopenTask={onReopenTask} onLocalStudy={onLocalStudy} dispatching={dispatching} onContinue={onContinue} onReference={onReference} />}
-      <ExperimentWorkspace key={`experiments:${document.project.id}:${entry.experimentNotebookId ?? entry.id}`} compact={experimentOnly && entry.id !== evidenceTarget?.notebookId} projectId={document.project.id} manuscriptFile={entry.manuscriptFile ?? entry.source?.rootFile ?? document.project.mainFile} purpose={manuscriptPurpose(document.project, entry.manuscriptFile ?? entry.source?.rootFile ?? document.project.mainFile)} entryId={entry.id} notebookId={entry.experimentNotebookId ?? entry.id} trusted={trustedExperiments} onTrust={onTrustExperiments} onContext={patchExperimentContext} onPin={() => patch({ pinned: true, pinMode: entry.pinned && entry.pinMode !== "experiments" ? "conversation" : "experiments" })} linkTarget={entry.id === evidenceTarget?.notebookId ? evidenceTarget : undefined} passageHref={passageHrefFor(entry)} />
+      <ExperimentWorkspace key={`experiments:${document.project.id}:${entry.experimentNotebookId ?? entry.id}`} compact={experimentOnly && entry.id !== evidenceTarget?.notebookId} projectId={document.project.id} manuscriptFile={entry.manuscriptFile ?? entry.source?.rootFile ?? document.project.mainFile} purpose={manuscriptPurpose(document.project, entry.manuscriptFile ?? entry.source?.rootFile ?? document.project.mainFile)} entryId={entry.id} readingListCellId={entry.readingListCellId} notebookId={entry.experimentNotebookId ?? entry.id} trusted={trustedExperiments} onTrust={onTrustExperiments} onContext={patchExperimentContext} onPin={() => patch({ pinned: true, pinMode: entry.pinned && entry.pinMode !== "experiments" ? "conversation" : "experiments" })} linkTarget={entry.id === evidenceTarget?.notebookId ? evidenceTarget : undefined} passageHref={passageHrefFor(entry)} />
       <details className="notebook-entry-tools"><summary>Notes & manuscript tools</summary>
       {entry.continuedFrom && <p className="notebook-applied">Continued from {entry.continuedFrom.manuscriptFile}. Notes and experiments are independent copies; earlier evidence remains at its original owner. <a href={`?${new URLSearchParams({ awProject: document.project.id, awPanel: "notebook", awNotebook: entry.continuedFrom.entryId })}`} target="_blank" rel="noopener noreferrer">Earlier notebook</a></p>}
       <details className="notebook-notes"><summary>Notes & title{entry.notes ? " · saved" : ""}</summary><label>Conversation title<input aria-label="Question title" value={entry.title} onChange={(event) => patch({ title: event.target.value })} /></label><textarea aria-label="Working notes" placeholder="Approaches, calculations, failed checks…" value={entry.notes} onChange={(event) => patch({ notes: event.target.value })} onSelect={(event) => captureText(event, "Working notes")} rows={4} /></details>

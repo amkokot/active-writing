@@ -1,6 +1,6 @@
 import type { AppState, AttentionTask, PendingSelection, ProjectDocument, ReviewComment, TaskSourceSnapshot } from "./types.ts";
 import { captureTaskSource, checkTaskSource, sourceSnapshotLimits, sourceCommands } from "./taskSource.ts";
-import { attentionQueue } from "./attention.ts";
+import { attentionQueue, attentionThreads } from "./attention.ts";
 
 export const defaultReviewInstructions = {
   human: "Work through the human comments. Explain the concern, check the quoted passage and propose a response or minimal revision. Do not silently agree with every objection. Keep questions separate from established errors.",
@@ -9,16 +9,21 @@ export const defaultReviewInstructions = {
 export function reviewComments(tasks: AttentionTask[], resolved = false) {
   return tasks.filter(task => task.review?.kind === "comment" && (task.status === "reviewed") === resolved);
 }
+/** Replies stay in their thread rather than becoming extra navigation stops. */
+export function reviewCommentQueue(tasks: AttentionTask[]) {
+  return attentionThreads(tasks).queue.filter(task => task.review?.kind === "comment");
+}
 /** Comment navigation uses the queue's saved order, never retires a task. */
 export function adjacentReviewComment(tasks: AttentionTask[], selectedId: string | undefined, direction: -1 | 1) {
-  const open = reviewComments(attentionQueue(tasks));
+  const open = reviewCommentQueue(tasks);
   if (!open.length) return undefined;
-  const index = open.findIndex(task => task.id === selectedId);
+  const rootId = selectedId && attentionThreads(tasks).roots.get(selectedId)?.id;
+  const index = open.findIndex(task => task.id === (rootId ?? selectedId));
   return open[index < 0 ? direction === 1 ? 0 : open.length - 1 : (index + direction + open.length) % open.length];
 }
 /** Leave a block's comment list without resolving or reopening anything. */
 export function nextCommentOutsideBlock(tasks: AttentionTask[], blockComments: AttentionTask[], selectedId?: string) {
-  const open = reviewComments(attentionQueue(tasks));
+  const open = reviewCommentQueue(tasks);
   const excluded = new Set(blockComments.map(task => task.id));
   const index = open.findIndex(task => task.id === selectedId);
   const after = index < 0 ? open : [...open.slice(index + 1), ...open.slice(0, index + 1)];
@@ -27,7 +32,7 @@ export function nextCommentOutsideBlock(tasks: AttentionTask[], blockComments: A
 /** Choose before resolving: next in queue order, previous if this was last. */
 export function nextCommentAfterResolve(tasks: AttentionTask[], selectedId: string, threadTasks = tasks) {
   const thread = commentThreadIds(threadTasks, selectedId);
-  const open = reviewComments(attentionQueue(tasks.filter(task => task.id === selectedId || !thread.has(task.id))));
+  const open = reviewCommentQueue(tasks.filter(task => task.id === selectedId || !thread.has(task.id)));
   const index = open.findIndex(task => task.id === selectedId);
   return index < 0 ? undefined : open[index + 1] ?? open[index - 1];
 }
@@ -52,7 +57,7 @@ export function reviewCommentLocation(task: AttentionTask, document: ProjectDocu
 /** Visible annotations belong to the current root and a safely located block. */
 export function blockReviewComments(tasks: AttentionTask[], document: ProjectDocument, edits: Record<string, string> = {}) {
   const groups: Record<string, AttentionTask[]> = {};
-  const ordered = [...attentionQueue(tasks), ...tasks.filter(t => t.queueHiddenAt && t.status !== "reviewed")];
+  const ordered = [...reviewCommentQueue(tasks), ...tasks.filter(t => t.queueHiddenAt && t.status !== "reviewed" && t.review?.kind === "comment" && !t.review.replyTo)];
   for (const task of ordered) {
     const location = reviewCommentLocation(task, document, edits);
     if (location) (groups[location.paragraphId] ??= []).push(task);

@@ -5,6 +5,7 @@ import { workspaceNote, type WorkspaceFolders as Folders } from "../workspaceFol
 import { PortableAwDownload } from "./PortableAwDownload";
 import { DeviceSyncPreparation } from "./DeviceSyncPreparation";
 import {SyncAttentionNotice} from './SyncAttentionNotice';
+import {DesktopInbox} from './DesktopInbox';
 
 export function WorkspaceFolders({ projectId, onSaveDrafts }: { projectId?: string; onSaveDrafts?: () => Promise<void> }) {
   const [open, setOpen] = useState(false);
@@ -70,6 +71,7 @@ export function WorkspaceFolders({ projectId, onSaveDrafts }: { projectId?: stri
     {tools?.sync&&<SyncAttentionNotice projectId={projectId} onAttention={setSyncNeedsAttention} onReview={()=>{setOpen(true);setSyncOpenRequest(value=>value+1);}}/>}
     {open && <div id={id} className="workspace-folders-panel" aria-label="Workspace folders">
       <header><strong>Workspace folders</strong><small>Choose this folder in your other app.</small></header>
+      <DesktopInbox/>
       {current ? <>{current.paper && folder("Paper repository", current.paper, "paper")}{current.data && folder("Aw files · this paper", current.data, "data")}{folder("Aw home", current.home, "home")}
         <button className="workspace-note-copy" onClick={() => void copy(workspaceNote(current), "Workspace note")}><Copy size={13} /> Copy workspace note for a chat</button>
         <small>Paths set the workspace; links work only in clients that allow local files. Nothing is connected or sent automatically.</small>

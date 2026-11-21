@@ -4,6 +4,7 @@ A local helper is an optional second opinion for routine extraction, log triage,
 test planning or a short writing critique. Use deterministic tools first. Keep
 research direction, hard reasoning, mathematical judgment and final integration
 with the main agent. Do not spend a helper request on a task quicker to do directly.
+Do not delegate proof-critical reasoning or final approval to a weaker helper.
 
 ```text
 node APP_CODE/scripts/awDelegate.ts status

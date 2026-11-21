@@ -70,6 +70,8 @@ export interface PaperProject {
   manuscriptOverviewTargets?: Record<string, string>;
   /** Preferred existing root per purpose. Aw metadata, never TeX content or approval. */
   manuscriptPins?: Partial<Record<ManuscriptPurpose, string>>;
+  /** Presentation navigation, independent of manuscript writing policy. */
+  slideDeck?: string;
 }
 
 export interface ManuscriptVersion {
@@ -81,6 +83,7 @@ export interface ProjectDocument {
   project: PaperProject;
   files: string[];
   rootFiles: string[];
+  slideFiles?: string[];
   nodes: ManuscriptNode[];
   paragraphs: Paragraph[];
   revision: string;
@@ -488,6 +491,7 @@ export interface SourceReturnAnchor {
 }
 
 export interface NotebookEntry {
+  readingListCellId?: string;
   id: string;
   /** Catalogue scope; absent legacy entries remain project-wide. */
   manuscriptFile?: string;

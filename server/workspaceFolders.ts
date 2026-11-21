@@ -29,11 +29,13 @@ export function selectedFolder(folders: WorkspaceFolders, target: unknown) {
   throw new Error("Choose Aw home, the current paper folder, or its Aw files.");
 }
 
-async function openExplorer(folder: string) {
+export async function openExplorer(folder: string, launch:typeof spawn=spawn) {
   if (process.platform !== "win32") throw new Error("Copy the folder path to your file manager on this system.");
   await new Promise<void>((resolve, reject) => {
     // Fixed executable, validated directory and argument array: never a shell command.
-    const child = spawn("explorer.exe", [folder], { windowsHide: true, detached: true, stdio: "ignore" });
+    // This is an explicitly requested foreground folder window. Hiding the
+    // process can make Explorer accept the request without showing that window.
+    const child = launch("explorer.exe", [folder], { windowsHide: false, detached: true, stdio: "ignore" });
     child.once("error", reject);
     child.once("spawn", () => { child.unref(); resolve(); });
   });

@@ -122,7 +122,7 @@ async function captureRecords(workspace: string, projectId: string) {
   // Device-local paths, active UI selection, credentials and Git remotes are
   // not project policy. Publication purpose/lineage remain protected records.
   records.push(syncRecord("project/manuscripts.json", "policy", Buffer.from(JSON.stringify({ name: project.name, createdAt: project.createdAt,
-    manuscriptPurposes: project.manuscriptPurposes ?? {}, manuscriptVersions: project.manuscriptVersions ?? [], manuscriptOverviewTargets: project.manuscriptOverviewTargets ?? {}, ...(project.manuscriptPins ? { manuscriptPins: project.manuscriptPins } : {}) }))));
+    manuscriptPurposes: project.manuscriptPurposes ?? {}, manuscriptVersions: project.manuscriptVersions ?? [], manuscriptOverviewTargets: project.manuscriptOverviewTargets ?? {}, ...(project.manuscriptPins ? { manuscriptPins: project.manuscriptPins } : {}),...(project.slideDeck?{slideDeck:project.slideDeck}:{}) }))));
   return records.sort((a, b) => a.path.localeCompare(b.path));
 }
 export async function captureSyncSnapshot(workspace: string, projectId: string, parent?: SyncSnapshot,options:{forceFull?:boolean}={}) {

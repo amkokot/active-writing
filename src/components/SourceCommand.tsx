@@ -4,6 +4,7 @@ import { windowStateCache } from "../windowCache";
 import type { ManuscriptNode } from "../types";
 import { MessageSquareText } from "lucide-react";
 import { sourceCommandId } from "../taskSource";
+import { isNewCommentShortcut } from "../commentKeyboard";
 
 export type SourceCommandRange = NonNullable<ManuscriptNode["sourceOpening"]>;
 export interface SourceCommandEditing {
@@ -15,6 +16,7 @@ export interface SourceCommandEditing {
 
 /** Structural source stays in the same pane; only the exact command range is saved. */
 export function SourceCommand({ nodeId, closing = false, command, editable, editing }: {nodeId: string; closing?: boolean; command: SourceCommandRange; editable: boolean; editing?: SourceCommandEditing}) {
+  const documentTitle = nodeId === "document" && /^\\title\b/.test(command.text);
   const key = `${editing?.identity}:${nodeId}:${closing ? "end" : "start"}`;
   const cacheKey = `active-writing.command.${key}`;
   const [value, setValue] = useState(() => {
@@ -45,8 +47,14 @@ export function SourceCommand({ nodeId, closing = false, command, editable, edit
     if (draft.current === original.current) { draft.current = command.text; original.current = command.text; setValue(command.text); }
   }, [command.text]);
   useLayoutEffect(() => { const element = input.current; if (element) { element.style.height = "0"; element.style.height = `${element.scrollHeight}px`; } }, [value]);
+  const comment = () => {
+    const field = input.current; if (!field || !editing?.comment || saving) return;
+    const start = field.selectionStart === field.selectionEnd ? 0 : field.selectionStart;
+    const end = field.selectionStart === field.selectionEnd ? field.value.length : field.selectionEnd;
+    void editing.comment({ nodeId, command: closing ? "closing" : "opening", file: command.file, value: field.value, start, end }).catch(reason => setError((reason as Error).message));
+  };
   return <div className="inline-source-command">
-    <textarea ref={input} className="literal-source-command" data-source-command-id={sourceCommandId(nodeId, closing ? "closing" : "opening")} aria-label={closing ? "Edit closing LaTeX command" : "Edit LaTeX heading or opening command"}
+    <textarea ref={input} className="literal-source-command" data-source-command-id={sourceCommandId(nodeId, closing ? "closing" : "opening")} aria-label={documentTitle ? "Edit document title" : closing ? "Edit closing LaTeX command" : "Edit LaTeX heading or opening command"}
       title="Edit here · saved when leaving this command · Ctrl/⌘ Enter to save" spellCheck={false} wrap="soft" readOnly={!editable || !editing || saving} value={value}
       onChange={event => {
         const next = event.target.value; draft.current = next; setValue(next);
@@ -54,14 +62,9 @@ export function SourceCommand({ nodeId, closing = false, command, editable, edit
         catch { setError("Browser storage is full. Keep this editor open and copy your command."); }
       }}
       onBlur={() => { void save().catch(() => undefined); }}
-      onKeyDown={event => { if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) { event.preventDefault(); void save().catch(() => undefined); } }} />
-    {editing?.comment && <button className="command-comment-button" aria-label={closing ? "Comment on closing command" : "Comment on heading or opening command"} title="Comment on selected heading text, or the whole command" disabled={saving}
-      onMouseDown={event => event.preventDefault()} onClick={() => {
-        const field = input.current; if (!field) return;
-        const start = field.selectionStart === field.selectionEnd ? 0 : field.selectionStart;
-        const end = field.selectionStart === field.selectionEnd ? field.value.length : field.selectionEnd;
-        void editing.comment!({ nodeId, command: closing ? "closing" : "opening", file: command.file, value: field.value, start, end }).catch(reason => setError((reason as Error).message));
-      }}><MessageSquareText size={14} /></button>}
+      onKeyDown={event => { if (isNewCommentShortcut({ ...event, isComposing: event.nativeEvent.isComposing }) && editing?.comment) { event.preventDefault(); event.stopPropagation(); comment(); } else if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) { event.preventDefault(); void save().catch(() => undefined); } }} />
+    {editing?.comment && <button className="command-comment-button" aria-label={documentTitle ? "Comment on document title" : closing ? "Comment on closing command" : "Comment on heading or opening command"} title={`${documentTitle ? "Comment on selected title text, or the whole title" : "Comment on selected heading text, or the whole command"} · Ctrl+M`} disabled={saving}
+      onMouseDown={event => event.preventDefault()} onClick={comment}><MessageSquareText size={14} /></button>}
     {error && <small role="alert">{error} <button onClick={() => { void save().catch(() => undefined); }}>Retry</button></small>}
   </div>;
 }

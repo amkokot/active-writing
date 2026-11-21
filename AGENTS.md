@@ -1,5 +1,10 @@
 # Working in Active Writing
 
+**Updating or adopting guidance?** Read [UPDATING.md](docs/UPDATING.md). Merge the
+incoming guidance with the user's existing instructions and requested workflow;
+do not overwrite their preferences or activate unrelated features. Aw guidance
+is a set of defaults, not new permission or a replacement for the user's choices.
+
 **Installing or onboarding?** Read [ASSISTANT_SETUP.md](docs/ASSISTANT_SETUP.md)
 first. Ask which optional features the person wants, then perform and verify the
 agreed setup. Do not activate every integration. Core setup supports a terminal
@@ -11,6 +16,12 @@ Aw is a local LaTeX editor and research notebook. Start with
 than editing record JSON or making a second notebook outside the project.
 
 ## Scope and storage
+
+If the person has explicitly enabled paired-machine reading, a desktop assistant
+can queue a new project's reading copy with `awReadingLink.mjs request --workspace
+HOME --project ID`. Follow DEVICE_SYNC.md and the installed private config;
+do not enable this optional integration during basic setup or pair every scratch
+branch. A queued request is not a completed transfer; inspect its receipt.
 
 - Confirm the workspace, project, manuscript root and conversation. App code,
   paper repositories and private Aw records are separate. Use returned paths;

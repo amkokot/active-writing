@@ -26,6 +26,28 @@ test('assistant setup requires one explicit install action and keeps extras opt-
 });
 let base: Awaited<ReturnType<typeof portableEntries>>;
 async function files() { return base ??= await portableEntries(appRoot); }
+
+test('public guidance tells assistants to merge user instructions and keep updates separate from saved work',async()=>{
+ const {entries}=await files(), text=(name:string)=>entries.find(e=>e.name===name)?.data.toString()??'';
+ for(const name of ['AGENTS.md','CLAUDE.md','docs/ASSISTANT_SETUP.md']) assert.match(text(name),/UPDATING\.md/,name);
+ const guide=text('docs/UPDATING.md');
+ assert.match(guide,/user's current request/);
+ assert.match(guide,/compare the current file with its last/i);
+ assert.match(guide,/Do not edit global/);
+ assert.match(guide,/Leave unused\s+modules inactive/);
+ assert.match(guide,/sync history intact/);
+ assert.equal(text('docs/UPDATING.md'),text('distribution/UPDATING.md'));
+});
+
+test('public keyboard shortcut tables include context-sensitive comments, replies and source navigation',async()=>{
+ const {entries}=await files();
+ for(const name of ['README.md','docs/GETTING_STARTED.md']){
+  const text=entries.find(e=>e.name===name)!.data.toString();
+  assert.match(text,/## Keyboard shortcuts/);
+  for(const key of ['Ctrl+M','Ctrl+Enter','Shift+Up / Left','Shift+Down / Right','Ctrl+K','Ctrl+A','Ctrl+Shift+A'])assert.ok(text.includes(key),`${name}: ${key}`);
+  assert.match(text,/normal.*selection|normal keyboard selection/);
+ }
+});
 test('public application imports include every relative runtime and build helper',async()=>{
  const {entries}=await files(),names=new Set(entries.map(e=>e.name));
  for(const entry of entries.filter(e=>/\.(ts|tsx|mjs)$/.test(e.name)&&!e.name.includes('.test.'))){

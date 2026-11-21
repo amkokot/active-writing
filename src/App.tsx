@@ -262,6 +262,9 @@ export default function App() {
   const [reviewEditing, setReviewEditing] = useState(false);
   const [reviewTaskId, setReviewTaskId] = useState<string>();
   const [reviewBlockId, setReviewBlockId] = useState<string>();
+  const [unsavedComments, setUnsavedComments] = useState<AttentionTask[]>([]);
+  useEffect(() => { setUnsavedComments([]); }, [document?.project.id, document?.project.mainFile]);
+  useEffect(() => { if (!reviewOpen) setUnsavedComments([]); }, [reviewOpen]);
   const [writingOpen, setWritingOpen] = useState(false);
   const [writingTaskId, setWritingTaskId] = useState<string>();
   useEffect(() => { setWritingOpen(false); setWritingTaskId(undefined); }, [document?.project.id]);
@@ -324,6 +327,10 @@ export default function App() {
   const [activeRewriteId, setActiveRewriteId] = useState<string>();
   const [toast, setToast] = useState<string>();
   const [compileMenuOpen, setCompileMenuOpen] = useState(false);
+  const [fastSlideCompile, setFastSlideCompile] = useState(() => {
+    try { return localStorage.getItem("active-writing.fast-slide-compile") !== "off"; }
+    catch { return true; }
+  });
   const compileControlRef = useRef<HTMLDivElement>(null);
   useDismissibleLayer(compileMenuOpen, compileControlRef, () => setCompileMenuOpen(false), ".compile-menu-button");
   const [latexMenuOpen, setLatexMenuOpen] = useState(false);
@@ -673,9 +680,9 @@ export default function App() {
   const isPassageQueued = useMemo(() => document ? (selection: Parameters<typeof passageBookmark>[3]) => !!passageBookmark(state.attentionTasks, document, latestState.current.paragraphEdits, selection) : undefined, [document, state.attentionTasks]);
   const activeCommentHighlight = useMemo(() => {
     if (!reviewOpen || !document || state.destination !== "manuscript") return undefined;
-    const task = state.attentionTasks.find(task => task.id === reviewTaskId);
+    const task = unsavedComments.find(task => task.id === reviewTaskId) ?? state.attentionTasks.find(task => task.id === reviewTaskId);
     return task ? reviewCommentTarget(task, document, state.paragraphEdits) : undefined;
-  }, [reviewOpen, reviewTaskId, document, state.destination, state.attentionTasks, state.paragraphEdits]);
+  }, [reviewOpen, reviewTaskId, document, state.destination, state.attentionTasks, state.paragraphEdits, unsavedComments]);
   const currentQueueTask = openTasks.find(task => task.id === replyTaskId || writingOpen && task.id === writingTaskId || reviewOpen && task.id === reviewTaskId)
     ?? (manuscriptPromptOpen ? openTasks.find(task => task.notebookId === state.manuscriptPromptId && task.studyTurnId === state.notebookEntries.find(entry => entry.id === state.manuscriptPromptId)?.study?.activeTurnId) : undefined)
     ?? (state.destination === "manuscript" && document ? openTasks.find(task => projectQueueId(document.project.id, task.id) === queueCursor && notebookQueuePassage(task, document, state)?.id === handoffParagraphId) : undefined)
@@ -1014,6 +1021,20 @@ export default function App() {
     } finally { manuscriptNavigationBusy.current = false; setManuscriptBusy(false); }
   }
 
+  async function pinSlideDeck(file: string) {
+    const before=latestDocument.current;
+    if(!before||manuscriptNavigationBusy.current)throw new Error("Wait for the current document operation.");
+    manuscriptNavigationBusy.current=true;setManuscriptBusy(true);
+    try{
+      const response=await fetch("/api/paperfocus/manuscripts/slides",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({projectId:before.project.id,mainFile:before.project.mainFile,revision:before.revision,file,expectedFile:before.project.slideDeck??""})});
+      if(response.status===404)throw new Error("Slides need the updated Aw service. Save drafts before restarting it.");
+      const result=await response.json();if(!response.ok)throw new Error(result.error??"Could not pin slides.");
+      const current=latestDocument.current;
+      if(current?.project.id===before.project.id){const next={...current,project:{...current.project,slideDeck:result.document.project.slideDeck}};latestDocument.current=next;setDocument(next);}
+      announceSaved(before.project.id,"source");setToast("Pinned slides updated.");
+    }finally{manuscriptNavigationBusy.current=false;setManuscriptBusy(false);}
+  }
+
   async function pinManuscript(purpose: "notes" | "overview" | "publication", file: string) {
     const before = latestDocument.current;
     if (!before || manuscriptNavigationBusy.current) throw new Error("Wait for the current manuscript operation.");
@@ -1229,7 +1250,7 @@ export default function App() {
       if (saveInFlight.current || latestDocument.current?.revision !== before.revision || latestDocument.current.project.id !== before.project.id) return;
       if (incoming.revision === before.revision && incoming.project.mainFile === before.project.mainFile && incoming.project.engine === before.project.engine) {
         // Policy-only refresh: preserve the draft, selection, layout and compiled PDF.
-        if ((JSON.stringify(incoming.project.manuscriptPurposes) !== JSON.stringify(before.project.manuscriptPurposes) || JSON.stringify(incoming.project.manuscriptOverviewTargets) !== JSON.stringify(before.project.manuscriptOverviewTargets) || JSON.stringify(incoming.project.manuscriptPins) !== JSON.stringify(before.project.manuscriptPins))) {
+        if ((JSON.stringify(incoming.project.manuscriptPurposes) !== JSON.stringify(before.project.manuscriptPurposes) || JSON.stringify(incoming.project.manuscriptOverviewTargets) !== JSON.stringify(before.project.manuscriptOverviewTargets) || JSON.stringify(incoming.project.manuscriptPins) !== JSON.stringify(before.project.manuscriptPins) || incoming.project.slideDeck !== before.project.slideDeck)) {
           const next = { ...latestDocument.current, project: incoming.project };
           latestDocument.current = next; setDocument(next);
         }
@@ -2087,6 +2108,7 @@ export default function App() {
     [document?.environmentOptions, document?.labels, document?.structureIssue, changeBlockType]);
 
   function openReview(task?: AttentionTask, blockId?: string) {
+    setUnsavedComments([]);
     setReviewBlockId(blockId);
     setWritingOpen(false);
     const first = !task && openTasks.find(t => t.review?.kind === "comment");
@@ -2163,10 +2185,10 @@ export default function App() {
       const edits = { ...latestState.current.paragraphEdits };
       for (const span of chosen) edits[span.paragraphId] = flushParagraph(span.paragraphId);
       const tasks = chosen.map(span => makeReviewComment(document, edits, span));
-      setState(current => tasks.reduce(queueAttentionTask, current));
       setPendingSelection(undefined); window.getSelection()?.removeAllRanges();
       openReview(tasks[0]);
-      setToast(`${tasks.length === 1 ? "Passage" : `${tasks.length} passages`} queued. Use ✓ to resolve; notes stay in History.`);
+      setUnsavedComments(tasks);
+      setToast("Write your comment, then choose Save comment. Closing discards the unsaved comment.");
     } catch (error) { setToast(error instanceof Error ? error.message : String(error)); }
   }
   function resolveComment(id: string, resolved: boolean) {
@@ -2184,7 +2206,6 @@ export default function App() {
     try {
       const reply = makeReviewCommentReply(parent, body);
       setState(current => queueAttentionTask(current, reply));
-      openReview(reply, reviewBlockId);
       setToast("Reply added. The original comment and its history are unchanged.");
     } catch (error) { setToast(error instanceof Error ? error.message : String(error)); }
   }
@@ -2193,8 +2214,8 @@ export default function App() {
     const saved = await savePaper();
     if (latestDocument.current?.project.id !== owner.project.id || latestDocument.current.project.mainFile !== owner.project.mainFile) return;
     const task = makeCommandReviewComment(saved, selection);
-    setState(current => queueAttentionTask(current, task)); openReview(task);
-    setToast("Heading or command comment saved. Its original quote remains in History.");
+    openReview(task); setUnsavedComments([task]);
+    setToast("Write your comment, then choose Save comment.");
   }
   async function jumpToComment(task: AttentionTask) {
     const owner = task.sourceSnapshot;
@@ -2772,7 +2793,7 @@ export default function App() {
         setCompileStale(Boolean(Object.keys(latestState.current.paragraphEdits).length));
         if (mode === "full") setLastFullCompile(result);
         if (!automatic) setToast(
-          `${originalPages ? "Original pages" : mode === "full" ? "Full document" : "Focused view"} ${result.cacheHit ? "reused from cache" : "compiled"} in ${(result.durationMs / 1000).toFixed(1)}s.`,
+          `${result.draft ? "Quick PDF" : originalPages ? "Original pages" : mode === "full" ? "Full document" : "Focused view"} ${result.cacheHit ? "reused from cache" : "compiled"} in ${(result.durationMs / 1000).toFixed(1)}s.`,
         );
       } else {
         setToast("LaTeX found an error. Diagnostics are open in the preview.");
@@ -2876,7 +2897,7 @@ export default function App() {
 
         <div className="topbar-actions">
           {document && <ManuscriptSwitcher key={`${document.project.id}:${document.project.mainFile}`} document={document} disabled={manuscriptBusy || compiling || savingPaper || savingHandoff || sourceRefreshing || queueNavigating || repositoryOpen || environmentBusy}
-            onSelect={switchManuscript} onVersion={newVersion} onPurpose={changeManuscriptPurpose} onPin={pinManuscript} onCreate={(file, title, kind) => switchManuscript(file, { title, kind })}
+            onSelect={switchManuscript} onVersion={newVersion} onPurpose={changeManuscriptPurpose} onPin={pinManuscript} onPinSlides={pinSlideDeck} onCreate={(file, title, kind) => switchManuscript(file, { title, kind })}
             section={document.nodes.find(node => node.id === chooseManuscriptScope(state, "section", document.nodes).focusedNodeId)} onSectionFile={saveSectionFile} />}
           <ToolbarDetails className="appearance-settings" summary={<><SlidersHorizontal size={14} /><span className="sr-only">Appearance settings</span></>}>
             <div className="appearance-settings-panel">
@@ -3147,11 +3168,15 @@ export default function App() {
               </select></label>
               <div className="compile-control" ref={compileControlRef}>
                 <button className="primary-button compile-main" disabled={compiling || !document} aria-label={compiling ? "Compiling…" : "Compile"}
-                  title="Compile the paper · reuse unchanged PDF and previous build files" onClick={() => void compileLatex("full")} type="button">
+                  title="Compile · slide editing can use one pass; choose a full build from the arrow menu" onClick={() => void compileLatex("full", false, false, fastSlideCompile && Boolean(document?.slideFiles?.includes(document.project.mainFile)))} type="button">
                   <Play size={12} fill="currentColor" /> <span>{compiling ? "Compiling…" : "Compile"}</span>
                 </button>
                 <button className="primary-button compile-menu-button" aria-label="Compile options" aria-expanded={compileMenuOpen} aria-controls="compile-options" disabled={compiling || !document} onClick={() => setCompileMenuOpen(open => !open)} type="button"><ChevronDown size={12} /></button>
                 {compileMenuOpen && <div className="compile-menu" id="compile-options" aria-label="Compile options">
+                  {document?.slideFiles?.includes(document.project.mainFile) && <label className="fast-slide-setting"><input type="checkbox" checked={fastSlideCompile} onChange={event => {
+                    const enabled=event.target.checked; setFastSlideCompile(enabled);
+                    try { localStorage.setItem("active-writing.fast-slide-compile", enabled ? "on" : "off"); } catch { /* Optional preference. */ }
+                  }} /> Fast slide editing <small>One TeX pass · all overlays · references settle on a full build</small></label>}
                   <button disabled={compiling} onClick={() => void compileLatex("focus", false, false, true)}><strong>Quick draft</strong><small>Visible text · one TeX pass · references may be unsettled</small></button>
                   <button disabled={compiling} onClick={() => void compileLatex("focus")}><strong>Compile view</strong><small>Visible sections or blocks only</small></button>
                   <button disabled={compiling} onClick={() => void compileLatex("full", true)}><strong>Original pages</strong><small>Current section · reuse full PDF or update full build</small></button>
@@ -3188,6 +3213,7 @@ export default function App() {
           {state.destination === "notebook" && document ? <Suspense fallback={toolLoading}><ResearchNotebook key={document.project.id} entry={activeNotebook} entries={manuscriptNotebookEntries.some(e => e.id === activeNotebook?.id) || !activeNotebook ? manuscriptNotebookEntries : [...manuscriptNotebookEntries, activeNotebook]} collapsedIds={state.collapsedNotebookIds ?? []}
             onToggle={(entry, open) => setState((current) => toggleNotebookConversation(current, entry.id, open))}
             onNavigatePhase={navigateNotebookPhase}
+            onReadWriteup={async file=>{await flushProjectExperimentDrafts(document.project.id);await notebookStorage.flush();if(latestDocument.current?.project.id!==document.project.id)throw new Error('The project changed. Choose the writeup again.');await switchManuscript(file);switchDestination('manuscript');}}
             sourceFor={(entry) => { const passage = locateSavedPassage(entry.source, document, state.paragraphEdits); return passage ? paragraphText(state, passage.id, paragraphs) : undefined; }} document={document}
             trustedExperiments={trustedExperimentProject === document.project.id} onTrustExperiments={(trusted) => setTrustedExperimentProject(trusted ? document.project.id : undefined)}
             currentSource={activeNotebookPassage ? paragraphText(state, activeNotebookPassage.id, paragraphs) : undefined}
@@ -3409,10 +3435,13 @@ export default function App() {
 
         {(writingOpen || reviewOpen || activeRewrite || activeHandoff || latexAssistantOpen || referenceRequest || replyTask) && (
           <aside className="inspector-pane">
-            {reviewOpen && document && <Suspense fallback={toolLoading}><ReviewPanel key={document.project.id} document={document} tasks={state.attentionTasks} edits={state.paragraphEdits} selectedId={reviewTaskId} instructions={state.handoffDrafts ?? {}} busy={savingHandoff} protectedText={!reviewEditing} onProtect={protect => setReviewEditing(!protect)}
+            {reviewOpen && document && <Suspense fallback={toolLoading}><ReviewPanel key={document.project.id} document={document} unsaved={unsavedComments.some(task => task.id === reviewTaskId)} tasks={[...state.attentionTasks, ...unsavedComments]} edits={state.paragraphEdits} selectedId={reviewTaskId} instructions={state.handoffDrafts ?? {}} busy={savingHandoff} protectedText={!reviewEditing} onProtect={protect => setReviewEditing(!protect)}
               blockComments={reviewBlockId ? blockComments[reviewBlockId] ?? [] : undefined} onAllComments={() => setReviewBlockId(undefined)} onOutsideComment={task => openReview(task)}
               onReply={replyToComment}
-              onClose={() => setReviewOpen(false)} onSelect={task => openReview(task, reviewBlockId)} onJump={jumpToComment} onAdd={() => addReviewComment()} onEdit={(id, body) => setState(current => editReviewComment(current, id, body))} onResolve={resolveComment}
+              onClose={() => { setUnsavedComments([]); setReviewOpen(false); }} onSelect={task => openReview(task, reviewBlockId)} onJump={jumpToComment} onAdd={() => addReviewComment()} onEdit={(id, body) => {
+                const drafts = unsavedComments.some(task => task.id === id) ? unsavedComments : [];
+                setState(current => drafts.length ? drafts.reduce((saved, task) => editReviewComment(queueAttentionTask(saved, task), task.id, body), current) : editReviewComment(current, id, body));
+              }} onResolve={resolveComment}
               onAsk={task => useReviewTool(task, false)} onRewrite={task => useReviewTool(task, true)}
               onInstructions={(mode, instruction) => setState(current => ({ ...current, handoffDrafts: { ...current.handoffDrafts, [`review:${mode}`]: { ...defaultHandoff("codex", true), instruction } } }))}
               onExport={prepareReview} onSavePacket={saveReviewPacket} onImport={(id, reply) => { importPastedReply(id, reply, document.project.id); }}

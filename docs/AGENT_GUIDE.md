@@ -1,5 +1,22 @@
 # Working with Aw as a folder-aware agent
 
+## Slide decks
+
+Independent `\documentclass{beamer}` roots appear under **Slides** in the
+document selector. Its arrow opens decks/iterations; **Pin** designates the
+current talk. Open a deck and use **Create & organize → New version** to iterate;
+the current deck's pin follows that new version. Opening an older deck alone
+does not move the pin. Writing purpose, overview/notes/paper pins and source
+stay independent. An unpinned single deck is shown automatically.
+
+Agents can designate a requested deck without starting Aw: confirm project/home
+with `getProject`, read `slideChoice(project)` from `server/slideDecks.ts`, then
+call `applySlideChoice(home, id, {version:1,file:ROOT},
+syncHash(canonical(snapshot)))`. Use `file:null` to unpin. This checks existing
+Beamer roots and fences registry bytes; never hand-edit the catalogue. Ordinary
+reading sync negotiates slide pins separately on updated peers; competing pins
+remain held. A pin is not authorization to write, compile, upload or publish.
+
 For an optional outside review, see [OUTSIDE_REVIEW.md](OUTSIDE_REVIEW.md).
 No external reviewer or permission to send research is configured by default.
 
@@ -80,6 +97,15 @@ archives out of in-memory packets and sends missing hashes only. Keep the return
 desktop home separate, and use the receipt's laptop project link for human viewing.
 No server, experiment replay or new Codex chat is required. This setup does not
 enlarge source/compute permissions or resolve conflicting/protected research.
+
+On an explicitly enabled desktop → laptop reading inbox, new-project creation
+ends with `node APP_CODE/scripts/awReadingLink.mjs request --workspace HOME
+--project ID` after the first usable TeX root exists. The laptop collects the
+request through its approved network gate and native first-copy tools; no
+laptop chat or incoming laptop SSH is needed. Check its completion receipt
+before claiming it is linked. Reuse existing copies for later phases. Scratch
+branches and an explicit desktop-only project stay remote. See DEVICE_SYNC.md
+for setup, bounded status and interruption guards; the inbox is optional.
 
 Aw remains the working harness, not just a viewer for files produced elsewhere. Keep the owning project, conversation, notebook, evidence links and request status connected through the scoped tools. Save authorized readable TeX notes alongside that project's source and link them from the owning notebook when available. Do not skip notebook storage or task completion merely to avoid visiting the app. Opening Aw and inspecting its renderer are for preparing the human's review, explicit display/UI work, or publication presentation checks—not routine exploration. Data access through CLI/files is not a visual app visit.
 

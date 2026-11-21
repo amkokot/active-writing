@@ -1,3 +1,7 @@
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { createServer } from "vite";
+import { commentShortcut, isNewCommentShortcut } from "../src/commentKeyboard.ts";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { mkdir, mkdtemp, readFile, writeFile, symlink } from "node:fs/promises";
@@ -15,13 +19,36 @@ import { exportReview, annotateCompletedReview } from "./reviewExport.ts";
 import { readHandoff } from "./handoffs.ts";
 import { parseProject, registerProject } from "./projects.ts";
 import { latexPlugin } from "./latexPlugin.ts";
-import { makeReviewCommentReply, nextCommentOutsideBlock } from "../src/review.ts";
+import { makeReviewCommentReply, nextCommentOutsideBlock, reviewCommentQueue } from "../src/review.ts";
 
 function document(): ProjectDocument {
   return { project: { id: "paper", name: "Review fixture", folder: "paper", mainFile: "main.tex", createdAt: "now" }, files: ["main.tex", "sections/proof.tex"], rootFiles: ["main.tex"], revision: "first",
     nodes: [{ id: "intro", title: "Introduction", kind: "section", depth: 0, paragraphIds: ["p1", "p2"] }, { id: "proof", title: "Proof", kind: "proof", parentId: "intro", depth: 1, paragraphIds: ["p3"] }, { id: "other", title: "Other work", kind: "section", depth: 0, paragraphIds: ["p4"] }],
     paragraphs: [{ id: "p1", nodeId: "intro", file: "main.tex", text: "The bound $x \\leq 1$ holds. See \\ref{lem}." }, { id: "p2", nodeId: "intro", file: "main.tex", text: "Repeated term, repeated term. 🙂" }, { id: "p3", nodeId: "proof", file: "sections/proof.tex", text: "By \\cite{source}, compactness suffices." }, { id: "p4", nodeId: "other", file: "main.tex", text: "An independent branch." }] };
 }
+
+test("comment keyboard saves explicitly and reply arrows navigate without consuming normal typing", () => {
+  const key = { key: "Enter", ctrlKey: false, metaKey: false, shiftKey: false, altKey: false };
+  assert.equal(commentShortcut({ ...key, ctrlKey: true }), "save");
+  assert.equal(commentShortcut({ ...key, metaKey: true }, true), "save");
+  for (const arrow of ["ArrowUp", "ArrowLeft", "ArrowDown", "ArrowRight"]) {
+    const event = { ...key, key: arrow, shiftKey: true };
+    assert.equal(commentShortcut(event), undefined, "normal comment selection is unchanged");
+    assert.equal(commentShortcut(event, true), ["ArrowUp", "ArrowLeft"].includes(arrow) ? -1 : 1);
+    assert.equal(commentShortcut({ ...event, shiftKey: false }, true), undefined);
+  }
+  assert.equal(commentShortcut(key, true), undefined);
+  for (const guard of [{ isComposing: true }, { repeat: true }, { altKey: true }, { shiftKey: true }]) {
+    assert.equal(commentShortcut({ ...key, ctrlKey: true, ...guard }, true), undefined);
+  }
+});
+
+test("new-comment shortcut is scoped to an intentional Ctrl M without repeats or composition", () => {
+  const key = { key: "m", ctrlKey: true, metaKey: false, shiftKey: false, altKey: false };
+  assert.equal(isNewCommentShortcut(key), true);
+  assert.equal(isNewCommentShortcut({ ...key, ctrlKey: false, metaKey: true }), true);
+  for (const guard of [{ ctrlKey: false }, { altKey: true }, { shiftKey: true }, { isComposing: true }, { repeat: true }, { key: "Enter" }]) assert.equal(isNewCommentShortcut({ ...key, ...guard }), false);
+});
 function state(tasks: AttentionTask[] = []): AppState {
   return { destination: "manuscript", notebookEntries: [], suggestions: { relation: "unrelated", minimized: true }, turbo: freshTurbo(), lens: "paper", displayMode: "editing", activeNodeId: "other", hiddenNodeIds: [], progressByNode: {}, paragraphEdits: {}, rewriteSessions: [], attentionTasks: tasks, themeLenses: [], activeThemeId: "", previewMode: "hidden" };
 }
@@ -62,6 +89,25 @@ test("comment navigation follows priority order, wraps both ways and never resol
 function comment(doc = document()) {
   const p = doc.paragraphs[0]; return makeReviewComment(doc, {}, { paragraphId: p.id, nodeId: p.nodeId, start: 0, end: 9, text: p.text.slice(0, 9) }, "Explain the assumptions.");
 }
+
+test("replying preserves the parent comment's queue position and navigation skips replies", () => {
+  const first = { ...comment(), id: "first", queuePosition: 0 };
+  const parent = { ...comment(), id: "parent", queuePosition: 1 };
+  const last = { ...comment(), id: "last", queuePosition: 2 };
+  const before = state([first, parent, last]);
+  const reply = makeReviewCommentReply(parent, "A response to this concern.");
+  const nested = makeReviewCommentReply(reply, "A follow-up.");
+  const after = queueAttentionTask(queueAttentionTask(before, reply), nested);
+  assert.deepEqual(reviewCommentQueue(after.attentionTasks).map(t => t.id), ["first", "parent", "last"]);
+  assert.equal(after.attentionTasks.find(t => t.id === parent.id), parent);
+  assert.equal(adjacentReviewComment(after.attentionTasks, parent.id, 1)?.id, last.id);
+  assert.equal(adjacentReviewComment(after.attentionTasks, reply.id, 1)?.id, last.id);
+  assert.equal(adjacentReviewComment(after.attentionTasks, nested.id, -1)?.id, first.id);
+  assert.equal(nextCommentOutsideBlock(after.attentionTasks, [parent], parent.id)?.id, last.id);
+  assert.equal(nextCommentAfterResolve(after.attentionTasks, parent.id)?.id, last.id);
+  assert.equal(blockReviewComments(after.attentionTasks, document()).p1.length, 3);
+  assert.equal(reviewComments(after.attentionTasks).length, 5, "all replies remain available to exports and history");
+});
 
 test("leaving block comments skips that block and closed/hidden work, including after the last resolution", () => {
   const first = { ...comment(), id: "first", queuePosition: 0 };
@@ -382,4 +428,29 @@ test("review HTTP writes require the editor Origin and validate the exported req
   assert.equal((await call("/api/paperfocus/review/annotated", { projectId: f.project.id, id: task.id, reply: reply(task) }, origin)).statusCode, 200);
   assert.equal((await call("/api/paperfocus/review/annotated", { projectId: f.project.id, id: task.id, reply: reply(task, { status: "reviewed" }) }, origin)).statusCode, 400);
   assert.equal((await call("/api/paperfocus/review/annotated", { projectId: f.project.id, id: task.id, reply: reply(task) })).statusCode, 400);
+});
+
+test("new comments require explicit save and omit reply, resolve and export actions", async () => {
+  const server = await createServer({ configFile: false, optimizeDeps: { noDiscovery: true, include: [] }, server: { middlewareMode: true, hmr: false }, appType: "custom", logLevel: "error" });
+  try {
+    const { ReviewPanel } = await server.ssrLoadModule("/src/components/ReviewPanel.tsx");
+    const { makeReviewComment, makeReviewCommentReply } = await server.ssrLoadModule("/src/review.ts");
+    const document = { project: { id: "paper", mainFile: "main.tex" }, revision: "test", nodes: [{ id: "intro", title: "Introduction", kind: "section", depth: 0, paragraphIds: ["p"] }], paragraphs: [{ id: "p", nodeId: "intro", file: "main.tex", text: "Some text." }] };
+    const parent = makeReviewComment(document, {}, { paragraphId: "p", nodeId: "intro", start: 0, end: 4, text: "Some" }, "");
+    let saves = 0;
+    const props = { document, tasks: [parent], selectedId: parent.id, edits: {}, instructions: {}, busy: false, protectedText: true, unsaved: true, onEdit: () => saves++ };
+    const html = renderToStaticMarkup(createElement(ReviewPanel, props));
+    assert.match(html, /disabled="">Save comment/);
+    assert.match(html, /Discard unsaved comment/);
+    assert.doesNotMatch(html, /Saved as you type|>Resolve<|>Reply<|Request a review|Unresolved comments/);
+    assert.equal(saves, 0);
+    parent.review.body = "Please clarify.";
+    const reply = makeReviewCommentReply(parent, "A response.");
+    const saved = renderToStaticMarkup(createElement(ReviewPanel, { ...props, unsaved: false, tasks: [parent, reply] }));
+    assert.doesNotMatch(saved, />Save comment<\/|>Save changes<\//, "reviewing saved comments has no redundant save action");
+    assert.match(saved, /1 \/ 1 open/);
+    assert.match(saved, /Replies to this comment/);
+    assert.doesNotMatch(saved, /2 open|1 \/ 2 open/);
+    assert.equal(saves, 0);
+  } finally { await server.close(); }
 });

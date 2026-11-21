@@ -1,5 +1,29 @@
 # Changes
 
+## 0.2.0 preview 4
+
+- Updated instructions for Codex and Claude: merge guidance with the user's
+  existing instructions and preferences, preserve saved work, and enable only
+  the optional features they request. Added a separate update guide.
+- Comments now require an explicit save. Closing without saving discards a new
+  comment or leaves the saved version unchanged. Replies stay in their thread
+  without moving your place in the queue.
+- Ctrl+M comments on a highlighted range or the active block. Ctrl+Enter saves
+  comments and replies; Shift+arrow moves between comments while replying.
+- Document titles can be edited and commented on in the standard source view,
+  including titles declared in an included preamble file.
+- Personal notes and slide decks have separate document menus. Fast slide
+  editing uses a one-pass full-deck compile; settled compilation remains available.
+- Notebook folders and designated current writeups make larger collections
+  easier to browse. An optional paired-machine inbox transfers selected files
+  with receipts when two-computer tools have been configured.
+- Improved large-PDF scrolling and retained the existing compilation cache and
+  source/PDF navigation. Source edits remain ordinary, shareable LaTeX.
+- The basic editor and notebook remain independent of optional model, Python,
+  two-computer sync, online sharing and maintenance setup.
+- Missing notebook run provenance is reported as a held import regardless of
+  folder names; reading sync still never runs transferred code.
+
 ## 0.2.0 preview 3
 
 - Fresh workspaces open in rendered text, so basic setup does not attempt TeX

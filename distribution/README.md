@@ -69,6 +69,24 @@ keep ordinary source, use a focused window, or compile the real LaTeX PDF. A
 research-directory project's Show / hide choice applies to its PDF and sharing
 exports without removing its master source.
 
+## Keyboard shortcuts
+
+| Shortcut | Action |
+| --- | --- |
+| **Ctrl+M** | Comment on highlighted source text, or the active block when nothing is selected. Also works in title and heading fields. |
+| **Ctrl+Enter** | Save a comment or reply. In a title/heading field, save that command. |
+| **Shift+Up / Left** | Previous comment while replying. |
+| **Shift+Down / Right** | Next comment while replying. Unsent reply text stays available when you return. |
+| **Ctrl+K** | Search the table of contents in the manuscript view. |
+| **Ctrl+A** | Select the visible source text. Other text fields keep their normal select-all behavior. |
+| **Ctrl+Shift+A** | Select the active source block. |
+| **Ctrl+scroll / pinch** | Zoom the source or preview pane independently. |
+
+Comments save only when you choose Save or press Ctrl+Enter. Shift+arrow navigation
+applies in the reply field or focused comment panel; ordinary source text keeps
+normal keyboard selection. See [the first-session guide](docs/GETTING_STARTED.md)
+for source/preview navigation and the rest of the editing workflow.
+
 ## Keep your work private
 
 Your projects, notebooks, replies and builds are local. `.paperfocus/`, `papers/`,
@@ -96,3 +114,9 @@ the built app. App code and research-data folders can be separate.
 MIT licensed. Dependencies retain their own licenses. This repository contains
 app code and synthetic examples, not accounts, personal assistant settings,
 research records or a bundled subscription.
+
+## Updating an existing setup
+
+Ask your assistant to read [the update guide](docs/UPDATING.md). It should merge
+the new guidance with your existing instructions and preferences, keep your
+projects and notebooks, and leave optional features you do not use inactive.

@@ -32,7 +32,7 @@ export function PdfDownload({ result, projectId, projectName, mainFile, stale }:
     <form onSubmit={event => { event.preventDefault(); void download(); }}>
       <label>Filename (optional)<input aria-label="PDF filename (optional)" placeholder={suggested} value={name} onChange={event => setName(event.target.value)} maxLength={200} disabled={busy} /></label>
       <button type="submit" disabled={busy}>{busy ? "Preparing…" : "Download"}</button>
-      <small>{result?.mode === "focus" ? "Focused build, not the full paper." : "Complete compiled PDF, including pages hidden in this view."} {stale && "Saved PDF predates current edits; compile first to include them."}</small>
+      <small>{result?.draft ? "One-pass PDF. Use a full build to settle references and navigation before sharing." : result?.mode === "focus" ? "Focused build, not the full paper." : "Complete compiled PDF, including pages hidden in this view."} {stale && "Saved PDF predates current edits; compile first to include them."}</small>
       {error && <p role="alert">{error}</p>}
     </form>
   </details>;

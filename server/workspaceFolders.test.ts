@@ -3,12 +3,20 @@ import { mkdir, mkdtemp, readFile, writeFile, realpath } from "node:fs/promises"
 import path from "node:path";
 import { Readable } from "node:stream";
 import test from "node:test";
-import { workspaceFolders, openWorkspaceFolder, selectedFolder } from "./workspaceFolders.ts";
+import { workspaceFolders, openWorkspaceFolder, selectedFolder,openExplorer } from "./workspaceFolders.ts";
+import {EventEmitter} from 'node:events';
+import type {spawn} from 'node:child_process';
 import { workspaceNote } from "../src/workspaceFolders.ts";
 import { registerProject } from "./projects.ts";
 import { latexPlugin } from "./latexPlugin.ts";
 import { appCodeRoot } from "./appPaths.ts";
 import {readOptionalTools,saveOptionalTools} from './optionalTools.ts';
+test('a requested Explorer folder window is visible and keeps a spaced path as one argument',{skip:process.platform!=='win32'},async()=>{
+ let call:any[]=[];const child=Object.assign(new EventEmitter(),{unref(){}});
+ const launch=((...args:any[])=>{call=args;queueMicrotask(()=>child.emit('spawn'));return child;}) as unknown as typeof spawn;
+ await openExplorer('C:\\Aw home\\Desktop inbox',launch);
+ assert.equal(call[0],'explorer.exe');assert.deepEqual(call[1],['C:\\Aw home\\Desktop inbox']);assert.equal(call[2].windowsHide,false);
+});
 
 test('optional sync tools are off in new workspaces, preserve existing pairs, and fence settings',async()=>{
  const f=await fixture();

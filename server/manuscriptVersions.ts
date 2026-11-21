@@ -163,9 +163,10 @@ export async function createManuscriptVersion(workspace: string, input: {
     project.manuscriptPurposes = { ...project.manuscriptPurposes, [file]: manuscriptPurpose(project, input.mainFile) };
     const overviewTarget = project.manuscriptOverviewTargets?.[input.mainFile];
     if (overviewTarget) project.manuscriptOverviewTargets = { ...project.manuscriptOverviewTargets, [file]: overviewTarget };
+    if(project.slideDeck===input.mainFile)project.slideDeck=file;
     project.manuscriptVersions = versions; project.mainFile = file; project.lastOpenedAt = now;
     await saveRegistry(workspace, catalogue);
-    document.project = { ...document.project, manuscriptVersions: versions, manuscriptPurposes: project.manuscriptPurposes, manuscriptOverviewTargets: project.manuscriptOverviewTargets };
+    document.project = { ...document.project, manuscriptVersions: versions, manuscriptPurposes: project.manuscriptPurposes, manuscriptOverviewTargets: project.manuscriptOverviewTargets, slideDeck:project.slideDeck };
     return { document, notebook: stored, workbench: savedWorkbench, version, entryMapping };
   } catch (error) {
     throw new Error(`${(error as Error).message}${prepared ? ` Prepared TeX/notebook copies are kept; inspect ${journal} before retrying. The previous manuscript was not overwritten.` : ""}`);

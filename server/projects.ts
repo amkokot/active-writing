@@ -8,7 +8,7 @@ import { parseBibliography, parseInlineBibliography } from "./bibliography.ts";
 import { replaceFile } from "./atomicFile.ts";
 import { paperAppearance } from "../src/paperAppearance.ts";
 import { sectionCommands } from "../src/headingHierarchy.ts";
-import { discoverManuscriptRoots } from "./manuscriptRoots.ts";
+import { discoverManuscriptRoots, discoverManuscriptDocuments } from "./manuscriptRoots.ts";
 import { readerSnapshotPaths } from "./readerFolder.ts";
 import { sourceBoundaries, sourceChunks } from "../src/sourceChunks.ts";
 import { saveGuardedFile } from "./guardedFile.ts";
@@ -97,6 +97,28 @@ function braced(source: string, open: number) {
     if (source[i] === "}" && --level === 0) return { text: source.slice(open + 1, i), end: i + 1, closed: true };
   }
   return { text: source.slice(open + 1), end: source.length, closed: false };
+}
+
+/** Only literal top-level declarations: never expose a title inside a macro body. */
+function documentTitles(source: string, file: string) {
+  const masked = maskComments(source), titles: Array<{ title: string; range: NonNullable<ManuscriptNode["sourceOpening"]> }> = [];
+  let depth = 0;
+  for (let i = 0; i < masked.length; i++) {
+    if (masked[i] === "\\") {
+      if (!depth && /^\\title(?![A-Za-z@])/.test(masked.slice(i))) {
+        let at = i + 6; while (/\s/.test(masked[at] ?? "") && at < masked.length) at++;
+        if (masked[at] === "[") { const short = groupAt(masked, at, "[", "]"); if (!short) continue; at = short.end; while (/\s/.test(masked[at] ?? "") && at < masked.length) at++; }
+        if (masked[at] === "{") {
+          const value = braced(masked, at);
+          if (value.closed) { titles.push({ title: source.slice(at + 1, value.end - 1), range: { file, start: i, end: value.end, text: source.slice(i, value.end) } }); i = value.end - 1; continue; }
+        }
+      }
+      i++; continue;
+    }
+    if (masked[i] === "{") depth++;
+    else if (masked[i] === "}") depth = Math.max(0, depth - 1);
+  }
+  return titles;
 }
 
 export function theoremDeclarations(source:string) {
@@ -206,6 +228,8 @@ export async function parseProject(workspace: string, id?: string, editing = fal
   let activeId = "document";
   let lastStatementId: string | undefined;
   nodes.push({ id: activeId, title: "Document", kind: "section", depth: 0, paragraphIds: [] });
+  const titles = Object.entries({ [project.mainFile]: main.slice(0, begin), ...preambleSources }).flatMap(([file, source]) => documentTitles(source, file));
+  if (titles.length === 1) { nodes[0].title = titles[0].title || "Title"; nodes[0].sourceOpening = titles[0].range; }
   const fileVisits = new Set<string>();
   const addParagraph = (file: string, start: number, end: number) => {
     const source = sources[file];
@@ -376,7 +400,8 @@ export async function parseProject(workspace: string, id?: string, editing = fal
     } else if (node.id !== "document") text = `${nodeHeadings[node.id]}\n${text}`;
     nodeBodies[node.id] = text;
   }
-  const rootFiles = await discoverManuscriptRoots(root, files, sources);
+  const {rootFiles,slideFiles} = await discoverManuscriptDocuments(root, files, sources);
+  if (nodes.length === 1 && nodes[0].sourceOpening && !paragraphs.length) nodes[0].sourceInsertion = { file: project.mainFile, offset: begin + "\\begin{document}".length };
   const bibliographyCommands = [...maskComments(expandedPreamble + "\n" + body).matchAll(/\\(?:bibliography|addbibresource)(?:\[[^\]]*\])?\s*\{([^}]+)\}/g)];
   const declaredBibliographies = bibliographyCommands.flatMap((match) => match[1].split(",").map((name) => {
     const filename = name.trim().endsWith(".bib") ? name.trim() : name.trim() + ".bib";
@@ -391,8 +416,8 @@ export async function parseProject(workspace: string, id?: string, editing = fal
   if (revision !== startingRevision || JSON.stringify([...files].sort()) !== JSON.stringify([...finalFiles].sort())) {
     throw new Error("Source files changed while being read. Try again once the collaborator or agent finishes writing.");
   }
-  return { project, files, rootFiles,
-    nodes: nodes.filter((node) => node.id !== "document" || node.paragraphIds.length), paragraphs,
+  return { project, files, rootFiles, slideFiles,
+    nodes: nodes.filter((node) => node.id !== "document" || node.paragraphIds.length || node.sourceOpening), paragraphs,
     revision, spans, sources, body, preamble: main.slice(0, begin), nodeBodies, labels, citations, sourceFiles: Object.keys(sources), appearance: paperAppearance(expandedPreamble), environmentOptions, environmentRanges };
 }
 
@@ -424,8 +449,9 @@ export async function editableProject(workspace: string, id?: string): Promise<P
       paragraphs.push({ id: paragraphId, nodeId, file, text, renderIssue: issue }); spans.push({ id: paragraphId, file, start: 0, end: text.length, text });
     }
     if (revision !== await projectRevision(root, await projectFiles(root))) throw new Error("Source files changed while being read. Try again after the other app finishes writing.");
-    const rootFiles = [...new Set([project.mainFile, ...await discoverManuscriptRoots(root, files, sources)])];
-    return { project, files, rootFiles, revision, nodes, paragraphs, spans, sources, body: sources[project.mainFile] ?? "", preamble: "", nodeBodies, sourceFiles: Object.keys(sources), structureIssue: issue };
+    const discovered=await discoverManuscriptDocuments(root,files,sources);
+    const rootFiles = [...new Set([project.mainFile, ...discovered.rootFiles])],slideFiles=discovered.slideFiles;
+    return { project, files, rootFiles, slideFiles, revision, nodes, paragraphs, spans, sources, body: sources[project.mainFile] ?? "", preamble: "", nodeBodies, sourceFiles: Object.keys(sources), structureIssue: issue };
   }
 }
 
@@ -498,8 +524,8 @@ export async function saveEdits(workspace: string, id: string | undefined, edits
 }
 
 export function publicDocument(parsed: ParsedProject): ProjectDocument {
-  const { project, files, rootFiles, nodes, paragraphs, revision, labels, citations, sourceFiles, appearance, structureIssue, environmentOptions } = parsed;
-  return { project, files, rootFiles, nodes, paragraphs, revision, labels, citations, sourceFiles, appearance, structureIssue, environmentOptions };
+  const { project, files, rootFiles, slideFiles, nodes, paragraphs, revision, labels, citations, sourceFiles, appearance, structureIssue, environmentOptions } = parsed;
+  return { project, files, rootFiles, slideFiles, nodes, paragraphs, revision, labels, citations, sourceFiles, appearance, structureIssue, environmentOptions };
 }
 
 /** Lazy, revision-bound raw source for the file editor, including the preamble. */

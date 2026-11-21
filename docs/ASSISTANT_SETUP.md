@@ -1,5 +1,10 @@
 # Set up Aw for someone
 
+For an existing installation, start with [UPDATING.md](UPDATING.md). Merge the new
+guidance with existing instructions according to the user's requests; preserve
+their preferences and existing module choices. Do not treat setup as a reason
+to replace personal instructions, reset saved work or install every feature.
+
 This is the entry point for Codex, Claude Code, or another assistant with terminal
 and folder access. A browser-only chat cannot install software by itself. When
 asked to set up Aw, carry out the agreed setup and verification; don't just hand

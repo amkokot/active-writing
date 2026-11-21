@@ -1,25 +1,25 @@
 {
   "format": "active-writing-distribution",
   "version": 1,
-  "createdAt": "2026-11-14T13:38:13.346Z",
-  "appVersion": "0.2.0-preview.3",
+  "createdAt": "2026-11-21T14:20:02.134Z",
+  "appVersion": "0.2.0-preview.4",
   "privateWorkspaceIncluded": false,
   "setup": "scripts/portableSetup.mjs",
   "files": [
     {
       "path": ".github/workflows/check.yml",
-      "size": 856,
-      "sha256": "18fb7d881dc23ad20272ecb19033c12a74a7505b6765a66c25afebc1b6261ff4"
+      "size": 971,
+      "sha256": "fb8110e1a29bba295f7ffe5b3bd5e0ab3281a52bf096367d9bc9db15069c7518"
     },
     {
       "path": "AGENTS.md",
-      "size": 6510,
-      "sha256": "f3aca7bdc1d519081a1ca603d063b9d68ae1552daec27f5d44d3af3a9bd62b8d"
+      "size": 7232,
+      "sha256": "9a71cc0f83b709bbbcdf19b9a55b9203bf7014416808bb87f1f0e5570fe97c9b"
     },
     {
       "path": "CLAUDE.md",
-      "size": 386,
-      "sha256": "e4a125ef032031c5ce11c80c8c4f9f16ad9a4ee214c4788cbb37e700a3b64f52"
+      "size": 633,
+      "sha256": "54192e1870f05d6a27427796f956732e7c8fcef30fe2293859dedfa8cfa2ba3f"
     },
     {
       "path": "deploy/cloudflare-reader/check.mjs",
@@ -63,28 +63,28 @@
     },
     {
       "path": "distribution/AGENTS.md",
-      "size": 6510,
-      "sha256": "f3aca7bdc1d519081a1ca603d063b9d68ae1552daec27f5d44d3af3a9bd62b8d"
+      "size": 7232,
+      "sha256": "9a71cc0f83b709bbbcdf19b9a55b9203bf7014416808bb87f1f0e5570fe97c9b"
     },
     {
       "path": "distribution/ASSISTANT_SETUP.md",
-      "size": 5673,
-      "sha256": "9f4bfc5c95178511a6dcfc48f6688da224be9036784a9d166d070a84201e0757"
+      "size": 5991,
+      "sha256": "92a8295ce07a5eb7dedb267866d9ddc1d8c122ad14c4bec5c881dfd510ecbc1d"
     },
     {
       "path": "distribution/CHANGELOG.md",
-      "size": 2123,
-      "sha256": "9131eed760fb870d83c54d605c5c8f27491a8bae5ad6a256cb3d6355c7620d57"
+      "size": 3658,
+      "sha256": "72875c22ca803ebc008259fa10811a13b5b40a7eb4255211f23b8edec352d5bc"
     },
     {
       "path": "distribution/check.yml",
-      "size": 856,
-      "sha256": "18fb7d881dc23ad20272ecb19033c12a74a7505b6765a66c25afebc1b6261ff4"
+      "size": 971,
+      "sha256": "fb8110e1a29bba295f7ffe5b3bd5e0ab3281a52bf096367d9bc9db15069c7518"
     },
     {
       "path": "distribution/CLAUDE.md",
-      "size": 386,
-      "sha256": "e4a125ef032031c5ce11c80c8c4f9f16ad9a4ee214c4788cbb37e700a3b64f52"
+      "size": 633,
+      "sha256": "54192e1870f05d6a27427796f956732e7c8fcef30fe2293859dedfa8cfa2ba3f"
     },
     {
       "path": "distribution/demo/main.tex",
@@ -123,13 +123,13 @@
     },
     {
       "path": "distribution/DESKTOP_ASSISTANCE.md",
-      "size": 2134,
-      "sha256": "e8cd6873d070f799ef38153de393bfeeb0d08ca4e708b0bca8f1d160f0cbfdff"
+      "size": 2213,
+      "sha256": "52cdea6db4487550accbaf76b87763b5e9f41b42e6bd9124d80f1508adc789ae"
     },
     {
       "path": "distribution/GETTING_STARTED.md",
-      "size": 4676,
-      "sha256": "af7e7af5472d052e25869a498cb7a3fc75e77efff7a8f0024dff15660e1ba1ff"
+      "size": 6183,
+      "sha256": "46219ec61c889359464d97a8438404cb6814d4ddce68ae537b7fa2563376b9d7"
     },
     {
       "path": "distribution/MAINTENANCE.md",
@@ -158,8 +158,8 @@
     },
     {
       "path": "distribution/README.md",
-      "size": 5231,
-      "sha256": "226b867110301330c72b4b843d47c7f610bbdef6a7b19a4656c1d6593c767c2c"
+      "size": 6700,
+      "sha256": "2489c614d723638f6c04025891adff12b56973b8c07d14cd8b10c18ef3861b62"
     },
     {
       "path": "distribution/REMOTE_RESEARCH.md",
@@ -167,29 +167,34 @@
       "sha256": "f78f20aefac7fa6b1ab5f1af55edae630ee457a6603a709abe6888072f8b214c"
     },
     {
+      "path": "distribution/UPDATING.md",
+      "size": 3991,
+      "sha256": "f4e6b8b7a5442be67389e3d7037ca2225a36dbd6393eb2144b84540537092f82"
+    },
+    {
       "path": "docs/AGENT_GUIDE.md",
-      "size": 69793,
-      "sha256": "d0614203b28d7f2d350b740f44d489f500f7ecc04f32f88ce96bed0d56dcd6af"
+      "size": 71439,
+      "sha256": "e9af24dad4d91868ad93722d998b144efed4f4722c7cabd13945573d006e9015"
     },
     {
       "path": "docs/ASSISTANT_SETUP.md",
-      "size": 5673,
-      "sha256": "9f4bfc5c95178511a6dcfc48f6688da224be9036784a9d166d070a84201e0757"
+      "size": 5991,
+      "sha256": "92a8295ce07a5eb7dedb267866d9ddc1d8c122ad14c4bec5c881dfd510ecbc1d"
     },
     {
       "path": "docs/DESKTOP_ASSISTANCE.md",
-      "size": 2134,
-      "sha256": "e8cd6873d070f799ef38153de393bfeeb0d08ca4e708b0bca8f1d160f0cbfdff"
+      "size": 2213,
+      "sha256": "52cdea6db4487550accbaf76b87763b5e9f41b42e6bd9124d80f1508adc789ae"
     },
     {
       "path": "docs/DEVICE_SYNC.md",
-      "size": 87859,
-      "sha256": "cab51392b283fd7e693374a42f1263aa91e4f288339d4e156cd6cd824dda8582"
+      "size": 94300,
+      "sha256": "65aa5c8394b70cc31a2b23659832f693aa30b019798882af175bd3b6216190fd"
     },
     {
       "path": "docs/GETTING_STARTED.md",
-      "size": 4676,
-      "sha256": "af7e7af5472d052e25869a498cb7a3fc75e77efff7a8f0024dff15660e1ba1ff"
+      "size": 6183,
+      "sha256": "46219ec61c889359464d97a8438404cb6814d4ddce68ae537b7fa2563376b9d7"
     },
     {
       "path": "docs/MAINTENANCE.md",
@@ -243,8 +248,13 @@
     },
     {
       "path": "docs/RESEARCH_WORKFLOW.md",
-      "size": 96301,
-      "sha256": "a56630fd0e3659835e44aaa8f83a3088d07a8171668021d8770250a3adb4e83d"
+      "size": 100098,
+      "sha256": "492aeb8781ea949e308c4cb7d8093136f4e1de9b57ccea601112631d96cf66fb"
+    },
+    {
+      "path": "docs/UPDATING.md",
+      "size": 3991,
+      "sha256": "f4e6b8b7a5442be67389e3d7037ca2225a36dbd6393eb2144b84540537092f82"
     },
     {
       "path": "docs/WRITING_PREFERENCES.md",
@@ -269,12 +279,12 @@
     {
       "path": "package-lock.json",
       "size": 137089,
-      "sha256": "ba97dd2e447fbd7a621aec899671e2fe669e02a3bbccdd6601725059f8135254"
+      "sha256": "45d008ae909d48e2b675bdde4918a8e6d383b1ed99b53db30f82bc1148127f41"
     },
     {
       "path": "package.json",
-      "size": 4388,
-      "sha256": "a5ba0b4794b97a98edec68cecd2972a10161a11d79464ee0923546224cb2a848"
+      "size": 4733,
+      "sha256": "81e082f83f5a29cfe6267317b64c8a4c5639d012e61fc1725914ba41a79bcbc1"
     },
     {
       "path": "public/aw-icon.svg",
@@ -298,8 +308,8 @@
     },
     {
       "path": "scripts/awDelegate.test.mjs",
-      "size": 1379,
-      "sha256": "8695076cadf8ca81a46c619969c71ffe4a9b523ad55d2329a952a412cb0dcd1b"
+      "size": 1440,
+      "sha256": "4eec6b0efe24812ac71a19f639b961236fcc257d36ba562b14d8844397a85c32"
     },
     {
       "path": "scripts/awDelegate.ts",
@@ -357,6 +367,16 @@
       "sha256": "b92b12e1008aaa7edbd3ac09549b30ddcbc760bc95c16e85252bd3a32e5c9fa1"
     },
     {
+      "path": "scripts/awReadingLink.mjs",
+      "size": 20827,
+      "sha256": "be1e01fcb3ab57eb17c7818ae62e5a42daafdb7c635d9ceb7fbe4000fceade0a"
+    },
+    {
+      "path": "scripts/awReadingLink.test.mjs",
+      "size": 7377,
+      "sha256": "1a9350a1a6f80ce0d939488ac4138441d0531698892a5745ffbca609b4810421"
+    },
+    {
       "path": "scripts/awRemoteBootstrap.py",
       "size": 5432,
       "sha256": "01bf4575b347d2bcf07703ca70f94b85b62ba4de3dfbd8baacd4802d0bbeeff7"
@@ -380,6 +400,11 @@
       "path": "scripts/awReview.ts",
       "size": 6360,
       "sha256": "b0681e6b6222bb856fd045cd9858d5d4fd68e01f21401950e3faa84fe8ad5214"
+    },
+    {
+      "path": "scripts/awSendFiles.ts",
+      "size": 1462,
+      "sha256": "e8d1538b6ab89da5cb32b573e42dda1d44e4e80c20a3c422dffcd0edc1d86999"
     },
     {
       "path": "scripts/awShare.ts",
@@ -468,8 +493,8 @@
     },
     {
       "path": "scripts/chromePreferences.test.mjs",
-      "size": 74113,
-      "sha256": "7094b2147efbae4f641d8ae2e04d67bebc2f4effe1047a80bdabb9c9aff02bf8"
+      "size": 74591,
+      "sha256": "d4343935fab667eadfcc08408dcb479f8ba688d82faec13e4eca37cd3e03c6c7"
     },
     {
       "path": "scripts/desktopBuild.mjs",
@@ -520,6 +545,11 @@
       "path": "scripts/installDesktopShortcut.ps1",
       "size": 5349,
       "sha256": "29982112dc534190593a8445b9e802fbad949d4df3da624b20e68b3e7367e00f"
+    },
+    {
+      "path": "scripts/installReadingInbox.ps1",
+      "size": 2683,
+      "sha256": "d0012324489e5182de7e3bb4f2796c1527323030f27dbeff4a46866fa9960a19"
     },
     {
       "path": "scripts/installReadingShortcut.ps1",
@@ -692,14 +722,29 @@
       "sha256": "6115a7e75ee1648d7498f1f6ad939792e81f8d82f91081b76203b45cf7ec35ad"
     },
     {
+      "path": "server/currentWriteups.test.ts",
+      "size": 2100,
+      "sha256": "0e7a5950958f14369fc08b9362c19f21175c811ebd5e374fa775260fd0e844c2"
+    },
+    {
+      "path": "server/desktopInbox.test.ts",
+      "size": 4154,
+      "sha256": "d411cc6a8553c1dfeaaeed68bed13aeb0e31cb04a398c299e4e6af0bff3e84a5"
+    },
+    {
+      "path": "server/desktopInbox.ts",
+      "size": 15010,
+      "sha256": "86bafdc99b5dd64972afb2acf96e81b4db0a8f70fe8302e143a1e2e76fa50058"
+    },
+    {
       "path": "server/deviceSync.test.ts",
       "size": 20483,
       "sha256": "59c8756fd20bd4da77952ff6bb8bc054daef77ca4a9b9a087de036a37c912412"
     },
     {
       "path": "server/deviceSync.ts",
-      "size": 11641,
-      "sha256": "f48a020aced0ab16c8dd29b82bb0fc9d1de4890ef6f2e03be0273d4cf57240a5"
+      "size": 11855,
+      "sha256": "ca042643f04dc102347f2ef9aa50dc3133d0775831606d0d171b1f99f66ff1f1"
     },
     {
       "path": "server/editorGeometry.test.ts",
@@ -708,8 +753,8 @@
     },
     {
       "path": "server/efficiency.test.ts",
-      "size": 7435,
-      "sha256": "ba0eb9c8164c6755928dfc3ddaeb8bdd4906d108aaef4247b1617b86958a07a9"
+      "size": 7436,
+      "sha256": "452bf0aba8251e51cdb34cb13251a67fff4aacc5459404eff461a68c696e9d56"
     },
     {
       "path": "server/environmentEditing.test.ts",
@@ -813,8 +858,8 @@
     },
     {
       "path": "server/headings.test.ts",
-      "size": 12954,
-      "sha256": "5fc7c70aefc5e9860770c208dc05cbad1d8df714d8f7ebeacc758f8120c06703"
+      "size": 15683,
+      "sha256": "19db074dc64d13b6b02c9fcf58029e42afa2cb8fa687e87b5f6c57493468d868"
     },
     {
       "path": "server/idleCompilation.test.ts",
@@ -823,8 +868,8 @@
     },
     {
       "path": "server/latexPlugin.ts",
-      "size": 92727,
-      "sha256": "5fe559fcb2dea9b4784260049c99645fc14dbde9fed8ad316cead6b1d9e2cc46"
+      "size": 94440,
+      "sha256": "98916fb5bb75f95072cb4f67e83a045c9d7969a88820a56ba3bc2de166e68701"
     },
     {
       "path": "server/linkedWorkspaces.test.ts",
@@ -833,8 +878,8 @@
     },
     {
       "path": "server/linkedWorkspaces.ts",
-      "size": 4843,
-      "sha256": "1234189f365bf065d81a03e6236c64d1b4c2a3cf7304d2058df6655cbc3d1918"
+      "size": 4850,
+      "sha256": "578d420b7e13a837eb6ff962a9077a690aa719586ead79108504b995f006f892"
     },
     {
       "path": "server/localModels.test.ts",
@@ -868,8 +913,8 @@
     },
     {
       "path": "server/manuscriptRoots.ts",
-      "size": 2322,
-      "sha256": "0966b9239693ab51c47c2453803cb240fd7548237fc831bb097f00e44137eec2"
+      "size": 2684,
+      "sha256": "7990e0635d670b74e982c4df8194c18c7861567be63a13c29998cf0818ac4a33"
     },
     {
       "path": "server/manuscriptVersions.test.ts",
@@ -878,8 +923,8 @@
     },
     {
       "path": "server/manuscriptVersions.ts",
-      "size": 15335,
-      "sha256": "5aa6b180c92c05d567f6a83570af80ce3df94ab17d9ee782e02dd01776257fb6"
+      "size": 15604,
+      "sha256": "a5288f6e9e5a7d7279910c2aa8354ea5242bedb08dba26d30a58c568daf87c26"
     },
     {
       "path": "server/notebook.test.ts",
@@ -887,9 +932,14 @@
       "sha256": "63b8295b57a446a1f1b861585a8583056681e1eb8217520d64e3911dd633c3f4"
     },
     {
+      "path": "server/notebookFolders.test.ts",
+      "size": 1496,
+      "sha256": "d9180c3f673bd76fff02184ab355f8d604fd8ef05e65b45ca654ae81cb5e2b81"
+    },
+    {
       "path": "server/notebookStore.ts",
-      "size": 16124,
-      "sha256": "45934ae277964c242b22dc2772417e132a9c7104e2f5225a85b3abc87bdcdf3d"
+      "size": 16324,
+      "sha256": "7b1fef09aab6bc22197526c0abda4767d84d6dee581db30e111ccc067378f6ff"
     },
     {
       "path": "server/notebookTransfer.ts",
@@ -922,14 +972,24 @@
       "sha256": "60f465a5bc23e37ef98c2282d33deeec9d94a8a82ccfd676a8c398068aa050dd"
     },
     {
+      "path": "server/pdfViewport.test.ts",
+      "size": 2923,
+      "sha256": "cefb12282c5d3ec3f657cc241aa1c565dd9e3aff3791769121b987cd651af3c0"
+    },
+    {
+      "path": "server/personalNotes.test.ts",
+      "size": 3396,
+      "sha256": "b8e24135704f06b8c3ed56f07a0da9b7cd3b73ab47e24eefa07c23e0ebf13807"
+    },
+    {
       "path": "server/portableExport.test.ts",
-      "size": 14192,
-      "sha256": "5d7704cd7b8bca5dbdcfdb75aaad0c605310f29b260c9e13f8db6d2469ba4414"
+      "size": 15486,
+      "sha256": "2bb345a84423b10d8accf8fc8c5e7c665c4dee1c2ed1a6c67593742c6aa7e3d2"
     },
     {
       "path": "server/portableExport.ts",
-      "size": 13296,
-      "sha256": "1ba75027c7a51591e830e6e78d7cedaf2f20c5645a8e942e499239d0988c3afb"
+      "size": 13427,
+      "sha256": "7b7b04200c6294d5cf38a15a8254a3f3426bbda221ee110d4eadfe2993e1dc67"
     },
     {
       "path": "server/projectActivity.ts",
@@ -958,8 +1018,8 @@
     },
     {
       "path": "server/projects.ts",
-      "size": 39620,
-      "sha256": "56e8f12b10422171b382bcf4b2950f68b11c4d1efa97a5d5ab2e9df03761d8da"
+      "size": 41950,
+      "sha256": "7065a9829d984aaba35c4d189c15e2dc6bdf16e85301af6139441d481d6c3308"
     },
     {
       "path": "server/projectStorage.test.ts",
@@ -1083,8 +1143,8 @@
     },
     {
       "path": "server/review.test.ts",
-      "size": 37105,
-      "sha256": "00ff3bfe9902ef2a945f0fab9cd08c17fdeaa0533fd59ead2107c2a021b2ee0f"
+      "size": 42732,
+      "sha256": "1ba86987eb923669725d1e46a93a0545164316ccae7f7b9b7d2e72be9553450e"
     },
     {
       "path": "server/reviewExport.ts",
@@ -1125,6 +1185,16 @@
       "path": "server/sharingPdf.ts",
       "size": 7343,
       "sha256": "65cbb493b81c470519402cd953d20a351e9e394da1f168a3c6095cf0d06deb1c"
+    },
+    {
+      "path": "server/slideDecks.test.ts",
+      "size": 3942,
+      "sha256": "7b0f95500936721c2c0d62f1269dbb88d72334729f3e0bed022b1e192dfe4ada"
+    },
+    {
+      "path": "server/slideDecks.ts",
+      "size": 3042,
+      "sha256": "9979d57029f07bdfef460b0a4ea7714a92257fea7808a7fc645bba00d1006e1f"
     },
     {
       "path": "server/sourceDrafts.ts",
@@ -1228,8 +1298,8 @@
     },
     {
       "path": "server/syncClone.ts",
-      "size": 22086,
-      "sha256": "a5dd8077a2a8ed257702f4c070cf6b3ab25363eb928f136f5f4a5b6abf1bde7c"
+      "size": 22656,
+      "sha256": "b78bd8d7c1a690aaa11b26e7974d33f272f3f21d05dfa03f99f61c3f0aa471fe"
     },
     {
       "path": "server/syncCold.test.ts",
@@ -1328,13 +1398,13 @@
     },
     {
       "path": "server/syncReading.test.ts",
-      "size": 46147,
-      "sha256": "fdf0f99d8a5754cc68c676d164f75019e852f949775bda4e8f2da5455f4db59c"
+      "size": 48220,
+      "sha256": "87b4db94111495cdbd7353a263cab6ad3df5d6912e36d0a841e6589ffed567e3"
     },
     {
       "path": "server/syncReading.ts",
-      "size": 39451,
-      "sha256": "5581060ab754fa75ad881b3aa45fbf5e7ae7ba3696a0ecbad9fafc59001a4705"
+      "size": 41489,
+      "sha256": "b7f88516958237c2ae44f800037a0da088eaa59748af6a1547acff6f7eae446c"
     },
     {
       "path": "server/syncReadingSource.test.ts",
@@ -1383,13 +1453,13 @@
     },
     {
       "path": "server/syncScheduleLock.test.ts",
-      "size": 4315,
-      "sha256": "92f4855dff490d06aac6d79997c9a481ccfd54a09046ba0ccee7e46d9ac446c5"
+      "size": 4742,
+      "sha256": "0cb953c20c7e1d2d3233b3c3b595af23ba5f3919a2c2461162a0e1126e7b2b11"
     },
     {
       "path": "server/syncScheduleLock.ts",
-      "size": 6882,
-      "sha256": "ecb49d66a37266e49bf2e5aab6b8a433120725ebd3b91613209bd58419e7b6ef"
+      "size": 6932,
+      "sha256": "b3891586316a7c9d04939a1045da566b15d1c80885240cfb99a866d80f6336db"
     },
     {
       "path": "server/syncSetupBrief.ts",
@@ -1463,13 +1533,13 @@
     },
     {
       "path": "server/workspaceFolders.test.ts",
-      "size": 5789,
-      "sha256": "1517afcc36311dcd51bc9815f81c61eab510254f321da2d5aaad7013a5b02f39"
+      "size": 6432,
+      "sha256": "d63fdd1bd9e802ce5c439b8cde4cd7e09b7803b91386f4a4625981c5120ec2d4"
     },
     {
       "path": "server/workspaceFolders.ts",
-      "size": 2628,
-      "sha256": "f6ad9174b9fb7c64c623b00712f3c826650ab021d03f1b729e78afb2c6b2ba21"
+      "size": 2821,
+      "sha256": "18efd6136dcb58e4fa5bfa7393dd7a913c9d80a779fd0871122eee6686b6ea5e"
     },
     {
       "path": "server/writing.test.ts",
@@ -1488,8 +1558,8 @@
     },
     {
       "path": "src/App.tsx",
-      "size": 286498,
-      "sha256": "40c52f83c1f72b776aa1ae20cfedf1fe1dd663d2465c6dae3e7a7d5f4775ed87"
+      "size": 293118,
+      "sha256": "c80d29be76afa87505ebf171a2b63322d138642b4ef38568767b854c7448de0b"
     },
     {
       "path": "src/attention.ts",
@@ -1522,6 +1592,11 @@
       "sha256": "696b7f0e931a3302673224063351529a905918fbfa9f8be2c388e19ed11fafa5"
     },
     {
+      "path": "src/commentKeyboard.ts",
+      "size": 949,
+      "sha256": "bad34028c50bc7b06e5628ebaa757ef61976abaeb12c7d6c0af430e46941439a"
+    },
+    {
       "path": "src/components/AgentHandoff.tsx",
       "size": 9210,
       "sha256": "8fcefd657a69e3fdbdea67ddcc83ed745e6439ecd50acd52bffb456e63ca810f"
@@ -1548,18 +1623,28 @@
     },
     {
       "path": "src/components/CommentField.tsx",
-      "size": 3342,
-      "sha256": "6b9146455a83c23d77453d3925edb8f0660c56d6969fd6bbc02f549ca8dc8256"
+      "size": 2471,
+      "sha256": "019ac052dd9b0f9b73cd8a13ad24a6de0b0614b9ae1ec03de2ed9ba6c5819efa"
     },
     {
       "path": "src/components/ContinuousPdfPages.tsx",
-      "size": 12261,
-      "sha256": "a52af9239b826a1d9f1a82d5b125fb6e33606ff79885422ca26e7c01ee439758"
+      "size": 14041,
+      "sha256": "e7421f667c7ca62d65f9cefb45e9bfb7518e2c9018e46d35fc75d6d586e119d4"
+    },
+    {
+      "path": "src/components/CurrentWriteups.tsx",
+      "size": 5782,
+      "sha256": "3caacef2a7f37ad3000f50d0552d948728dacfc44840590d84928d4e86347c49"
     },
     {
       "path": "src/components/DesktopFiles.tsx",
       "size": 3051,
       "sha256": "633f64e1f6ba3cf53a9cc1412232a6d2b36c0caa24faab5f6498481fa0437830"
+    },
+    {
+      "path": "src/components/DesktopInbox.tsx",
+      "size": 3667,
+      "sha256": "574ab42ce81678eeeb711da0b3a7c4067b5b9d56fe18aa8e988c783fa31b9ed7"
     },
     {
       "path": "src/components/DeviceSyncPreparation.tsx",
@@ -1593,8 +1678,8 @@
     },
     {
       "path": "src/components/ExperimentWorkspace.tsx",
-      "size": 43889,
-      "sha256": "1f2e70d972db252bcfd4df0be9a49351211108c7d2cc750f167048d3ae71cf9f"
+      "size": 44672,
+      "sha256": "1668df50d88a8b1bd925eb7b4f142a3bd9f429960dfa2b9d0746f2ae4b44ae34"
     },
     {
       "path": "src/components/FindingsReader.tsx",
@@ -1623,8 +1708,8 @@
     },
     {
       "path": "src/components/Manuscript.tsx",
-      "size": 75036,
-      "sha256": "dcfb56b46dd4048c82d53e6e5e0d4f8117850cb4bfee16b56e5f59dc35f7dba6"
+      "size": 77491,
+      "sha256": "d44ee17aec288be52b84f1b29025b41ea03efa5627a98855449bfadf95fea1b7"
     },
     {
       "path": "src/components/ManuscriptPrompt.tsx",
@@ -1633,8 +1718,13 @@
     },
     {
       "path": "src/components/ManuscriptSwitcher.tsx",
-      "size": 12242,
-      "sha256": "619f6482d312653338b90703ed82e29819bc444f0548282b7dd4e74751bc869f"
+      "size": 15011,
+      "sha256": "4ff0dbacc7a690ac0bcb48702d7f23a9c2e81b32429d6f3680d50f424af77a07"
+    },
+    {
+      "path": "src/components/NotebookFolders.tsx",
+      "size": 1731,
+      "sha256": "dc4a197c0a34178f8879dc98927c01c6c63a6b6dd988abf89ce0532e94093748"
     },
     {
       "path": "src/components/NotebookLink.tsx",
@@ -1658,18 +1748,18 @@
     },
     {
       "path": "src/components/PdfDownload.tsx",
-      "size": 3109,
-      "sha256": "88cd6dea0c4b43055197673154f9a9d007c2aad4d99d2ccd33e89637b8178deb"
+      "size": 3212,
+      "sha256": "e18257d3ea2afe57f40af0b5f1d8365fc97d34245e8f3e4aba20ef2a2381cf58"
     },
     {
       "path": "src/components/PdfTextLayer.tsx",
-      "size": 1782,
-      "sha256": "5a6314ad33a77ef801ea1faa62b2ae8443f820c97f93acc509ee34f44b20f988"
+      "size": 1813,
+      "sha256": "c2eda0674efe8821e40237eb9f0cc4c3f56f73a92a28b40cbb3998b1126acaf6"
     },
     {
       "path": "src/components/PdfViewer.tsx",
-      "size": 27899,
-      "sha256": "625cbf5570f1038ae9cea1d59301cab602839f09d1925a510c3904e131293be0"
+      "size": 27916,
+      "sha256": "ffc8db3c4397bbfa7f90cccd281ae61b2a2ceda1729db83eabe6aaf22185cd17"
     },
     {
       "path": "src/components/PlainSourceEditor.tsx",
@@ -1683,8 +1773,8 @@
     },
     {
       "path": "src/components/Preview.tsx",
-      "size": 17820,
-      "sha256": "7b2be2989e28635b8b72442d6ffc756d67aa76953f949c11d70e84b6378ea959"
+      "size": 17856,
+      "sha256": "85fb888fbdd457cd335de1c7caac343c4f882cd25e810d20df8c728a361edcff"
     },
     {
       "path": "src/components/PriorityQueue.tsx",
@@ -1713,8 +1803,8 @@
     },
     {
       "path": "src/components/RepositoryPanel.tsx",
-      "size": 29719,
-      "sha256": "0f6b131838eeec8b91e552dd3c633b1d77ccdca9289ce2e25fefbe1df9e462e8"
+      "size": 29792,
+      "sha256": "294d1937658f36f3e6ee46c285c97b1b9abb38e664c26dfe2260187f52159124"
     },
     {
       "path": "src/components/ResearchCorpusMenu.tsx",
@@ -1723,8 +1813,8 @@
     },
     {
       "path": "src/components/ResearchNotebook.tsx",
-      "size": 25086,
-      "sha256": "a19823b0c3e1f27a1c1a394ee45fd1826856d0ee5834aed8a109db98cd65b19b"
+      "size": 26422,
+      "sha256": "958b279294942be439497b095b2a0b8e5486081cf1ed9e255dd009ec16af4bd3"
     },
     {
       "path": "src/components/ResearchSetup.tsx",
@@ -1733,8 +1823,8 @@
     },
     {
       "path": "src/components/ReviewPanel.tsx",
-      "size": 15776,
-      "sha256": "4fcd6f20566b1c64e14573806d35af27de36736b080ea78d9c26a1826c88e85a"
+      "size": 17910,
+      "sha256": "404824ae0c6ff53870029df18b0b7d43e40e6f2ecd6cc4be890b757d023245c9"
     },
     {
       "path": "src/components/RewriteDrawer.tsx",
@@ -1753,8 +1843,8 @@
     },
     {
       "path": "src/components/SourceCommand.tsx",
-      "size": 4972,
-      "sha256": "44e5e3218ff2faf20c510368e2e6dee96a523b285d33f6eeecc12d002c7a8228"
+      "size": 5567,
+      "sha256": "c3b0c13087b8ea3025ccc07898bdff90f4cf16a2f6a995bc9fef8a5209e81001"
     },
     {
       "path": "src/components/SourceLineNumbers.tsx",
@@ -1808,8 +1898,8 @@
     },
     {
       "path": "src/components/WorkspaceFolders.tsx",
-      "size": 6431,
-      "sha256": "41427bdac6c4fdef883ab2e958fc8043e0b77e6d84aa1733b72e1275360ada17"
+      "size": 6498,
+      "sha256": "968401cc82ba7c430ebcab5b5ba91a31b7f1a34c76746341f6ea7c3c802083ca"
     },
     {
       "path": "src/components/WorkspaceTools.tsx",
@@ -1825,6 +1915,11 @@
       "path": "src/components/WritingPanel.tsx",
       "size": 12016,
       "sha256": "9018dadcafa04e55934e70eb735082e1e91df9f4899d62d86bf6d6ff9efc0505"
+    },
+    {
+      "path": "src/currentWriteups.ts",
+      "size": 2247,
+      "sha256": "d925c19ef6257df96fb8b79cdf1240b5d8419ffd72c2157eda2f1f69c2a9be77"
     },
     {
       "path": "src/demoProject.ts",
@@ -1993,8 +2088,8 @@
     },
     {
       "path": "src/manuscripts.ts",
-      "size": 7918,
-      "sha256": "04ec8f3c81b1ea0da87e817b4301b93d87c054bf49ebf12d0743017d3db787f5"
+      "size": 8561,
+      "sha256": "d2fb768054ebf5f2d955407a0be73d1229813382daa5e14214cbd9a7f81129df"
     },
     {
       "path": "src/manuscriptView.ts",
@@ -2017,6 +2112,11 @@
       "sha256": "45cd6f418ae8f0b686af53c29c3c2e5a07c7a13ced2c1d4f013baadc10c59cc9"
     },
     {
+      "path": "src/notebookFolders.ts",
+      "size": 1580,
+      "sha256": "03f57541db7048fe5aa8f8dc856190aa935b34a1412a3f528ce458447b6b6592"
+    },
+    {
       "path": "src/notebookSync.ts",
       "size": 7492,
       "sha256": "9f07808af0ac42c997b863db19e830ea369e5e269834d095e4cb6ef0a8a6471b"
@@ -2035,6 +2135,11 @@
       "path": "src/pdfLinks.ts",
       "size": 1803,
       "sha256": "c65ad48cf13618b34ee97c15443feb1e34469723458a92700e3a782d55069f9e"
+    },
+    {
+      "path": "src/pdfViewport.ts",
+      "size": 3254,
+      "sha256": "a74d4c5689e89410780280c086f5292826a0b8f9e683a72f5934521504ebca4a"
     },
     {
       "path": "src/plotInspection.ts",
@@ -2118,8 +2223,8 @@
     },
     {
       "path": "src/review.ts",
-      "size": 23294,
-      "sha256": "0cb41aeb197e4beb93d2a8717373f57ac58797cdbcd721ba358e6ae2e8479e9e"
+      "size": 23659,
+      "sha256": "e7b037f3c65926fc023bb8a07e37e66a787874e80ea9a907ee842731b13e2028"
     },
     {
       "path": "src/rewrite.ts",
@@ -2178,8 +2283,8 @@
     },
     {
       "path": "src/styles.css",
-      "size": 205947,
-      "sha256": "d3789b8a19ab0484f967af1d059357b0165443c2e5c7789056b9a1eae6e51289"
+      "size": 212149,
+      "sha256": "2118ab744765a9f1a689a2622f2678a83e81fc1f29860c5ac3ae35a0b894f3c2"
     },
     {
       "path": "src/syncAttention.ts",
@@ -2203,8 +2308,8 @@
     },
     {
       "path": "src/types.ts",
-      "size": 21082,
-      "sha256": "1d85fd7c9b667fdf6a79490760c17436334c4fc6d233da17c58ec3d33f8175f2"
+      "size": 21235,
+      "sha256": "365f8db69be4f3f572c2d584275d0d5dababd0df0e313642cb8ea76df07fea98"
     },
     {
       "path": "src/useBlockReel.ts",
@@ -2363,8 +2468,8 @@
     },
     {
       "path": "tsconfig.node.json",
-      "size": 2517,
-      "sha256": "285a619440fb6f68676a5839a95ed37fee89c304fa3932be103bf5d6689df45d"
+      "size": 2643,
+      "sha256": "eb1ad4ff658fbcb691478919b49d23ae9abd893914019e2379cfea5654e4a06c"
     },
     {
       "path": "vite.config.ts",
@@ -2373,8 +2478,8 @@
     },
     {
       "path": "README.md",
-      "size": 5231,
-      "sha256": "226b867110301330c72b4b843d47c7f610bbdef6a7b19a4656c1d6593c767c2c"
+      "size": 6700,
+      "sha256": "2489c614d723638f6c04025891adff12b56973b8c07d14cd8b10c18ef3861b62"
     },
     {
       "path": ".gitignore",
@@ -2383,8 +2488,8 @@
     },
     {
       "path": "CHANGELOG.md",
-      "size": 2123,
-      "sha256": "9131eed760fb870d83c54d605c5c8f27491a8bae5ad6a256cb3d6355c7620d57"
+      "size": 3658,
+      "sha256": "72875c22ca803ebc008259fa10811a13b5b40a7eb4255211f23b8edec352d5bc"
     },
     {
       "path": ".gitattributes",

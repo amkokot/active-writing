@@ -23,7 +23,7 @@ function host(){
 
 /** A kernel-backed mutex, also held while inspecting a legacy dead scheduling marker. */
 export async function acquireScheduleLease(target:string,waitMs=0):Promise<()=>Promise<void>>{
- const parentName=path.basename(path.dirname(target)),global=['coordinator','reading-coordinator'].includes(path.basename(target))&&parentName==='auto';
+ const parentName=path.basename(path.dirname(target)),global=['coordinator','reading-coordinator','reading-link-coordinator','transfer-coordinator'].includes(path.basename(target))&&parentName==='auto';
  const cycle=path.basename(target)==='cycle'&&/^[A-Za-z0-9_-]{1,128}$/.test(parentName)&&path.basename(path.dirname(path.dirname(target)))==='auto';
  if((!global&&!cycle)||!Number.isInteger(waitMs)||waitMs<0||waitMs>2000)throw Error('Only Aw scheduling slots may use this lease.');
  const parent=await realpath(path.dirname(target)),canonical=path.join(parent,path.basename(target));

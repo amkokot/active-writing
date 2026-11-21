@@ -1,5 +1,43 @@
 # Two-computer workflow
 
+## Send loose files to the desktop
+
+The optional **Send files to desktop** control is in the main folder/project menu
+and Workspace folders. **Open inbox** opens a shared `Desktop inbox` folder in the
+laptop's control Aw home. Put finished files there, then press **Send to desktop**.
+All registered reading views share this inbox; it is not inside a paper checkout.
+Closing the menu does not stop the transfer. The next opening reads saved progress.
+Only an explicit Send starts uploads; dropping files does not trigger a watcher.
+
+Each file is streamed over the configured SSH route, then verified by byte count
+and SHA-256 on the desktop. The source must still match before it leaves the inbox.
+An identical remote file is reused. A different remote file with the same name is
+preserved and the new copy gets a content suffix. Failures, changed sources and
+new arrivals remain pending. Transferred files are inert; no code is executed.
+The campus/VPN gate and existing SSH host-key checks remain in force. There is one
+transfer worker across Aw views, using a process-lifetime OS lease. Interrupted
+uploads can be retried with Send; incomplete remote parts are never final files.
+
+After verification, local files move to `.paperfocus/desktop-transfers/sent/JOB/`
+outside the inbox. **Paths & recovery → Open Sent recovery** exposes these copies.
+The inbox is the pending list; Sent is not pending. Receipts remain separately in
+`receipts/JOB/`. Sending therefore clears the inbox but retains local disk space
+for recovery; there is no automatic purge of sent copies. Empty transferred
+subfolders are removed only if still empty. Symlinks, unsupported paths and
+oversized files stay local. Current limits: 100 files, 1 GiB per file, 4 GiB per
+batch, eight folder levels; there is no project-tree scan or model work while idle.
+
+For an explicitly authorized setup, the private control-home config is
+`.paperfocus/device-sync/transfer-inbox.json`:
+`{"version":1,"enabled":true,"host":"APPROVED_SSH_ALIAS","remoteRoot":"/APPROVED/AW/INSTALLATION","remoteFolder":"references/inbox"}`.
+The root must already exist; child folders are created on the desktop without
+following symlinks. Never put credentials in it or infer a host/destination from a
+received file. It is excluded from public exports. Core-only installs have no
+config and show no inbox controls. An agent can inspect or perform an explicitly
+requested transfer without a server using `node APP_CODE/scripts/awSendFiles.ts
+status|send --workspace CONTROL_HOME`. This uses the same gate and receipts.
+Agents must not send inbox contents merely because they discover pending files.
+
 ## Slow VPN and travel connections
 
 SSH handshakes allow up to 30 seconds (bounded by the overall exchange budget),
@@ -77,9 +115,65 @@ not individual key events. Browser recovery is immediate and self-contained,
 packing immutable state fields separately so an edit does not recompress unchanged
 notebook/comment history. Readers retain support for earlier raw and LZW copies.
 
+## Automatically queue a new project's laptop reading copy
+
+This optional integration is separate from the basic editor/notebook installation.
+Once both machines, the campus/VPN gate and journals are installed, a human can
+enable a private reading inbox for one approved SSH alias and projects root.
+When asked to create a project on that setup, the desktop assistant creates a
+usable TeX root, then runs:
+
+```text
+node APP_CODE/scripts/awReadingLink.mjs request --workspace DESKTOP_PROJECT_HOME --project PROJECT_ID
+```
+
+An optional `--main-file ROOT.tex` selects its initial reading root; otherwise
+the pinned notes root wins, followed by the current main file. The default
+producer config is `APP_CODE/.paperfocus/device-sync/reading-producer.json`.
+An explicit `--config FILE` works for a different installed setup. This is an
+intent queue: unsettled files or pending requests can wait without losing it.
+Repeating the command for the same home/ID returns the existing request. Scratch
+branches and research phases do not need separate projects/copies, and an explicit
+desktop-only choice wins. This integration needs the person's transfer authority;
+installing the editor alone does not enable it.
+
+The laptop runs `awReadingLink.mjs once --config RECIPIENT.json`. One windowless
+scheduled task, installed with `installReadingInbox.ps1 -ConfigPath RECIPIENT.json`,
+checks the small inbox every two minutes, exits when idle and imports at most one
+new project per pass. An ineligible network stops before SSH or research traversal.
+The desktop does not connect back to the laptop. It prepares only explicitly
+queued projects, never walks the projects tree, and executes no received code.
+One bounded inline baseline contains ordinary readable source, figures, comments,
+current notebook cells and their exact saved-run references; bulk arrays/archives
+stay desktop-backed. The configured packet cap cannot exceed 96 MiB.
+
+Private config fields (version 1): `enabled: true`, `host` (SSH alias), absolute
+POSIX `projectsRoot`, `queue`, `remoteTool` (installed `scripts/awReadingLink.mjs`),
+`producerConfig` (exact desktop config path), and `maxPacketBytes`. The recipient
+also pins absolute local `workspace` and `destinationRoot`, a child of that home.
+Create the private queue directory once. Never put these machine-specific configs
+or request packets in a public app export. Both installed journal daemons must
+already exist. Use verified host keys and the existing network gate.
+
+Only the exact native clone/peer/journal plan is committed. Occupied or differently
+paired homes, changed interrupted plans, protected/pending work and over-budget
+copies stay pending for inspection, rather than being overwritten or replayed.
+Requests and prepared bundles remain immutable; disconnected acknowledgements
+retry from saved local completion receipts without reimporting the project.
+An already-linked project with the exact enabled peer/device is acknowledged
+and reused; that receipt explicitly says its new baseline was not imported.
+Different peers or deliberately paused sync remain held. This is not a forced
+refresh of the source or a change to its reading pins.
+The kernel scheduling lease prevents overlapping collectors and releases after
+a crash. A partially written native clone/store lock still needs its documented
+inspection; never delete it to force progress. Status is available with
+`awReadingLink.mjs status --config RECIPIENT.json`; exact per-request receipts are
+in the laptop's private `device-sync/reading-inbox/REQUEST_ID/` and desktop queue.
+The shared chooser updates without restarting research chats or the main Aw app.
+
 ## Bring a desktop idea to the laptop when it is ready to read
 
-Do not pair every scratch idea or research phase. Keep exploration on the desktop
+For setups without the explicitly enabled inbox above, do not pair every scratch idea or research phase. Keep exploration on the desktop
 until the user asks to read/audit a substantial note. Then prepare one frozen,
 complete inline reading baseline with no missing parents or pending requests and
 a `link-plan.json` describing its SHA-256, byte count, snapshot/project/device IDs,

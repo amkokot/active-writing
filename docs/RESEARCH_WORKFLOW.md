@@ -145,6 +145,58 @@ Bindings, batches, manifests, delta inspection and waiting work with the current
 
 ### Human notebook controls
 
+For a collection of collaboration candidates, make **Current writeups** the
+reading entry point. Each row should name the candidate, link its main complete
+current TeX writeup, and optionally offer a shorter brief and supporting notes.
+Keep older experiments and superseded reports in the professor/topic folders;
+the reader should not have to infer the current writeup from notebook chronology.
+The Notebook has a small **Current writeups ↑** button that returns to this list
+even after restoring an old scroll position. **Edit links** lets the human change
+the selected TeX files; ordinary writing passes should maintain the list for them.
+
+One existing conversation owns the project-wide reading list: set its catalogue
+`readingListCellId` through the guarded notebook store. It names an existing
+Markdown/raw navigation cell; moving or renaming its folder keeps this role.
+For compatibility, a conversation in the `Current writeups` folder defaults
+to `aw-current-writeups`. The cell's source is JSON:
+`{"version":1,"items":[{"id":"candidate","person":"Collaborator","title":"Main idea","file":"current-note.tex","brief":"brief.tex","related":[{"title":"Supporting argument","file":"details.tex"}]}]}`.
+Use relative TeX roots, not OS paths or web URLs. Reuse an existing navigation
+cell in a full notebook; preserve its ID/kind and other evidence. This UI reads
+one exact cell across manuscript roots without opening its conversation, running
+code or loading unrelated outputs. The list is saved in the notebook and follows
+its normal synchronization. Initial catalogue designation must be present on
+both paired copies (or in their first-copy baseline); do not assume it is an
+automatic publication/policy transfer.
+`src/currentWriteups.ts` exposes `parseWriteups` and `replaceWriteups` for
+validation and exact-source-guarded single-cell replacement through the native
+notebook store. The latter takes the optional designated cell ID; it never saves
+or executes anything by itself. Keep the store's revision guard too.
+
+When authorized new writing supersedes a candidate's main explanation, update
+its row during that same pass. Use the explicit latest handoff and actual content,
+not modification time: recompiling or tidying an old report does not make it
+current. Retain old files and evidence links. Multiple distinct micro-projects
+for one collaborator can have separate rows with distinct IDs. Choosing a reading
+entry never approves prose, certifies a proof or grants new writing authority.
+
+Use **Notebook → Browse notebooks** to find conversations across manuscript
+roots without moving their ownership. Within a conversation, the folder button
+above its saved notes opens a topic tree. Folder names such as
+`Professor name/Short topic` create two levels; selecting a parent includes all
+its subtopics. Search matches titles and note text in the selected folder;
+choose **All notes** for notebook-wide search. Folder selection is remembered
+locally. New notes inherit the selected folder, and exact cell links reveal their
+folder automatically. Pinned experiment side panels keep their existing display.
+
+For a growing idea collection, use one folder per collaborator or programme,
+with a few topic folders beneath it. Keep a short **Start here** note linking
+current reading entries. Preserve earlier attempts, negative findings and stable
+cell IDs. Assistants set `arrange.folder` in a guarded batch, or use
+`organize --folder "Professor/Topic"`; no code runs. A genuinely independent
+micro-project can have its own conversation and matching folder. Avoid creating
+another owner for every update. Browsing filters are display choices, not changes
+to what an agent must inspect, what counts as evidence, or execution scope.
+
 The same `.ipynb` is editable by the human: add Python or Markdown notes, edit source, explicitly Run, import/export, pin, prioritize, suppress, reorder, file in a topic folder, trash and restore. **Jump to cell** reaches active, filed and trashed records. **Organize cell → + Note below / + Python below** inserts beside the relevant evidence. In a source editor, **Shift+Enter** runs a trusted code cell or saves/previews a note and advances; **Ctrl+Enter** stays. Plain Enter remains a newline. The last cell advances to a blank note. Python permission, run limits, busy-state checks and revision guards still apply; shortcuts do not bypass them.
 
 Assistants need not traverse menus: the scoped CLI covers reading, writing, organizing, running, evidence snapshots and completion. Browser controls have stable cell IDs and named regions if visual inspection is useful. Human controls are not a mandatory approval checklist. Incoming results never scroll the current editor or force a notebook open.

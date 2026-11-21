@@ -25,7 +25,11 @@ export function manuscriptRoots(sources: Record<string, string>, insensitive = p
     && (!reach.get(file)!.has(parent) || parent.localeCompare(file) < 0)));
 }
 export async function discoverManuscriptRoots(root: string, files: string[], known: Record<string, string> = {}) {
+  return (await discoverManuscriptDocuments(root,files,known)).rootFiles;
+}
+export async function discoverManuscriptDocuments(root: string, files: string[], known: Record<string, string> = {}) {
   const sources: Record<string, string> = {};
   for (const file of files.filter(file => file.endsWith(".tex"))) sources[file] = known[file] ?? await readFile(path.join(root, file), "utf8");
-  return manuscriptRoots(sources);
+  const rootFiles=manuscriptRoots(sources);
+  return {rootFiles,slideFiles:rootFiles.filter(file=>/\\documentclass\s*(?:\[[^\]]*\]\s*)?\{beamer\}/.test(sources[file].replace(/(?<!\\)%[^\r\n]*/g,'')))};
 }

@@ -23,6 +23,32 @@ model is optional. Suggestions are saved, not silently applied. Comments remain
 in **Next ▾**, the priority queue, until explicitly resolved. You can reorder the
 queue and choose this project or all projects.
 
+Closing without saving discards a new comment or leaves an existing comment
+unchanged. Replies stay inside their thread. The document title is editable at
+the top of All sections, with its own comment button.
+
+For Beamer projects, the Slides menu keeps the current deck easy to find.
+Fast slide editing in the Compile menu uses one pass; Compile full paper settles
+cross-references before sharing. A separate backup deck is an ordinary TeX file,
+not something Aw removes from a presentation automatically.
+
+## Keyboard shortcuts
+
+| Shortcut | Action |
+| --- | --- |
+| **Ctrl+M** | Comment on highlighted source text or the active block. In a title/heading field, comment on its selection or whole command. |
+| **Ctrl+Enter** | Save a comment or reply; save the command when editing a title or heading. |
+| **Shift+Up / Left** | Previous comment from the reply field or focused comment panel. |
+| **Shift+Down / Right** | Next comment from the reply field or focused comment panel. Unsent reply text is retained. |
+| **Ctrl+K** | Search the manuscript's table of contents. |
+| **Ctrl+A** | Select the source currently visible in the editor. |
+| **Ctrl+Shift+A** | Select the active source block. |
+| **Ctrl+scroll / pinch** | Zoom the source or preview pane under the pointer. Each pane keeps its own zoom. |
+
+Other text fields keep their normal selection shortcuts. Shift+arrow in ordinary
+source text selects text; it does not navigate comments. Click a comment button
+to see its shortcut in the tooltip.
+
 ## Keep a question and its evidence together
 
 Open **Notebook**. Conversations fold up; pin an experiment or summary you want

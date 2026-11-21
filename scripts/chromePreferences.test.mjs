@@ -125,12 +125,12 @@ test("highlight action bars wait for pointer release without erasing the selecti
   assert.doesNotMatch(finish, /clearCrossSelection|removeAllRanges|onSelection\(undefined\)/);
 });
 
-test("fresh manuscript defaults are split PDF and implicit blocks, with guarded linked-root navigation", async () => {
+test("fresh manuscript defaults are split rendered text and implicit blocks, with guarded linked-root navigation", async () => {
   const [app, state] = await Promise.all(["src/App.tsx", "src/state.ts"].map(file => readFile(file, "utf8")));
   assert.match(state, /sourcePresentation: "plain"/);
   assert.match(state, /previewMode: "split"/);
   assert.match(app, /const \[preambleEditing,\s*setPreambleEditing\]\s*=\s*useState\(false\)/);
-  assert.match(app, /const \[previewFormat, setPreviewFormat\] = useState<"pdf" \| "reading">\("pdf"\)/);
+  assert.match(app, /const \[previewFormat, setPreviewFormat\] = useState<"pdf" \| "reading">\("reading"\)/);
   assert.match(app, /value=\{previewFormat\}/);
   assert.match(app, /automaticLinkedManuscript\(initialWindowRequest, document, latestState.current, preambleEditing\)/);
   assert.match(app, /linkedSourceAutoAttempt.current = true;\s*void openLinkedSource\(\)/);
@@ -156,14 +156,17 @@ test("manuscript PDF scrolling includes every selected page with bounded nearby 
   assert.match(preview, /<PdfViewer continuous active=/);
   assert.match(viewer, /Array.from\(\{ length: document.numPages \}/);
   assert.match(viewer, /selectedPages\?\.length \? selectedPages/);
-  assert.match(pages, /sizes.map\(size => <div[\s\S]*data-pdf-page=\{size.page\}/);
-  assert.match(pages, /active && \(nearby.has\(size.page\) \|\| selectedPages.has\(size.page\)\) && <ContinuousPdfCanvas/);
-  assert.match(pages, /IntersectionObserver[\s\S]*root: pane/);
+  assert.match(pages, /layout.filter\(size=>mounted.has\(size.page\)\).map\(size => <div[\s\S]*data-pdf-page=\{size.page\}/);
+  assert.match(pages, /const mounted=new Set\(\[\.\.\.retained,\.\.\.selectedPages\]\)/);
+  assert.match(pages, /active && <ContinuousPdfCanvas/);
+  assert.match(pages, /retainedPdfPages\(previous,next,layout,scale,window.devicePixelRatio\|\|1\)/);
+  assert.match(pages, /style=\{\{height:layout.at\(-1\)\?\.bottom\?\?0/);
+  assert.match(pages, /work.pause\(\);clearTimeout\(settled\);settled=setTimeout\(update,150\)/);
   assert.match(pages, /task\?\.cancel\(\)/);
   assert.match(pages, /cancelled \|\| !canvasRef.current/);
   assert.match(pages, /onSourcePosition\?\.\(pageNumber/);
   assert.match(viewer, /continuousNavigator.current\?\.\(index \+ 1, y\)/);
-  assert.match(pages, /\(returning \|\| previousScale.current !== scale\) && anchor.current/);
+  assert.match(pages, /else if \(anchor.current\) \{\s*scrollTo\(anchor.current.page, anchor.current.y\)/);
   assert.match(pages, /if \(!active \|\| !sizes.length[\s\S]*!readingPaneVisible/);
   assert.match(viewer, /const updateFit = async \(\) => \{\s*if \(cancelled \|\| liveDocument.current !== document \|\| !readingPaneVisible\(scroll\)\) return;/);
   assert.match(viewer, /await document.getPage\([\s\S]*?if \(cancelled \|\| liveDocument.current !== document \|\| !readingPaneVisible\(scroll\)\) return;\s*const natural/);
@@ -379,7 +382,8 @@ test("legacy section-PDF settings migrate to the standard incremental compiler",
   assert.doesNotMatch(app, /aria-label="PDF layout"|Section PDF · cache each section/);
   assert.match(app, /sectionPdf: false/);
   const button = app.slice(app.indexOf('className="primary-button compile-main"'), app.indexOf('className="primary-button compile-menu-button"'));
-  assert.match(button, /compileLatex\("full"\)/);
+  assert.match(button, /compileLatex\("full", false, false, fastSlideCompile && Boolean\(document\?\.slideFiles\?\.includes\(document.project.mainFile\)\)\)/);
+  assert.match(app, /compileLatex\("full"\)\}><strong>Compile full paper/);
   const scopeEffect = app.slice(app.indexOf("if (!scopeCompileRequest || !document)"), app.indexOf("useIdleCompilation({"));
   assert.match(scopeEffect, /matchingManuscriptBuild\(compileResult, document\) && compileResult\?\.mode === "full"\) return/);
 });
@@ -658,7 +662,7 @@ test("review comments use the main queue and a compact detail view, not a duplic
   assert.match(panel, /Resolve closes this comment and its replies; the full thread stays in History/);
   assert.match(panel, /Reopen affects only the selected comment/);
   assert.equal(panel.includes('className="review-mode-switch"'), false);
-  assert.match(panel, /reviewComments\(blockComments \?\? attentionQueue\(tasks\)\)/);
+  assert.match(panel, /reviewCommentQueue\(blockComments \?\? tasks\)/);
   assert.match(panel, /Independent manuscript review/);
 });
 

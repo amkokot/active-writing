@@ -33,6 +33,7 @@ test('comment blur/navigation flushes once to its own owner and cancels pending 
   assert.deepEqual(a.commits,['A']);assert.deepEqual(b.commits,[]);a.advance(5000);assert.deepEqual(a.commits,['A']);
   b.buffer.flush();assert.deepEqual(b.commits,['B']);
 });
+
 test('continuous comment typing has a bounded save delay and respects composition',()=>{
   const f=commentTyping();for(let i=0;i<25;i++){f.buffer.change(String(i));f.advance(100);}
   assert.deepEqual(f.commits,['24']);

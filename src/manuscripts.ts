@@ -4,6 +4,13 @@ export function manuscriptPurpose(project: PaperProject, file = project.mainFile
   const purpose = project.manuscriptPurposes?.[file];
   return purpose === "publication" || purpose === "overview" ? purpose : "notes";
 }
+/** Personal references use an explicit filename convention, not a new writing policy. */
+export function isPersonalNote(project: PaperProject, file: string) {
+  return manuscriptPurpose(project, file) === "notes" && /(?:^|\/)personal-notes(?:[-.]|\/)/i.test(file);
+}
+export function manuscriptDisplayLabel(project: PaperProject, file = project.mainFile) {
+  return isPersonalNote(project, file) ? "Personal notes" : manuscriptPurposeLabels[manuscriptPurpose(project, file)];
+}
 export const manuscriptRoles = ["overview", "notes", "publication"] as const;
 export const manuscriptPurposeLabels = { overview: "Overview", notes: "Research notes", publication: "Publication draft" };
 /** Never guess between several notes or promote a note to a publication. */
@@ -11,7 +18,8 @@ export function pinnedManuscripts(project: PaperProject, roots: string[]) {
   return Object.fromEntries(manuscriptRoles.map(role => {
     const candidates = roots.filter(file => manuscriptPurpose(project, file) === role);
     const saved = project.manuscriptPins?.[role];
-    return [role, saved && candidates.includes(saved) ? saved : candidates.length === 1 ? candidates[0] : undefined];
+    const automatic = candidates.filter(file => !isPersonalNote(project, file));
+    return [role, saved && candidates.includes(saved) ? saved : automatic.length === 1 ? automatic[0] : undefined];
   })) as Partial<Record<ManuscriptPurpose, string>>;
 }
 export function manuscriptLink(base: string, projectId: string, file: string, revision?: string) {

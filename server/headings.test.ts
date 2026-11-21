@@ -4,10 +4,54 @@ import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { manuscriptHeadingTag, sectionHeadingLevel } from "../src/headingHierarchy.ts";
 import { outlineRows, sourceOrderedBlocks } from "../src/workspaceTools.ts";
-import { parseProject, registerProject, saveEdits } from "./projects.ts";
+import { editableProject, parseProject, registerProject, saveEdits } from "./projects.ts";
 import { focusedDocument } from "./focus.ts";
 import { collaborationPages } from "./collaboratorExport.ts";
 import type { ManuscriptNode } from "../src/types.ts";
+import { makeCommandReviewComment } from "../src/review.ts";
+
+test("document titles are editable and commentable in standard source, including preamble inputs", async () => {
+  const workspace = await mkdtemp(path.join(process.cwd(), ".paperfocus/trials/title-editor-"));
+  const root = path.join(workspace, "paper"); await mkdir(root);
+  const command = String.raw`\title[Short]{A {worked} title}`;
+  const preamble = `% \\title{Commented out}\n\\newcommand{\\example}{\\title{Not the title}}\n${command}\n`;
+  const main = String.raw`\documentclass{article}
+\input{metadata}
+\begin{document}
+\maketitle
+\section{First}
+Unchanged prose.
+\end{document}`;
+  await writeFile(path.join(root, "main.tex"), main);
+  await writeFile(path.join(root, "metadata.tex"), preamble);
+  const project = await registerProject(workspace, root);
+  const parsed = await parseProject(workspace, project.id);
+  const title = parsed.nodes.find(n => n.id === "document")!;
+  assert.equal(title.title, "A {worked} title");
+  assert.equal(title.paragraphIds.length, 0, "no fake source paragraph is introduced");
+  assert.equal(title.sourceOpening?.text, command);
+  assert.equal(title.sourceOpening?.file, "metadata.tex");
+  assert.equal(sourceOrderedBlocks(parsed.nodes, parsed.paragraphs)[0].id, "document");
+  const note = makeCommandReviewComment(parsed, { nodeId: title.id, command: "opening", file: "metadata.tex", value: command, start: 0, end: command.length }, "Make this more specific.");
+  assert.equal(note.review?.kind === "comment" && note.review.quote, command);
+  const range = title.sourceOpening!;
+  await saveEdits(workspace, project.id, { "title-edit": String.raw`\title{A clearer title}` }, parsed.revision, [{ paragraphId: "title-edit", ...range }]);
+  assert.equal(await readFile(path.join(root, "main.tex"), "utf8"), main);
+  assert.equal(await readFile(path.join(root, "metadata.tex"), "utf8"), preamble.replace(command, String.raw`\title{A clearer title}`));
+  const current = await parseProject(workspace, project.id);
+  assert.equal(current.nodes[0].title, "A clearer title");
+  await writeFile(path.join(root, "main.tex"), main.replace(String.raw`\input{metadata}`, command));
+  const inline = await parseProject(workspace, project.id);
+  assert.equal(inline.nodes[0].sourceOpening?.file, "main.tex");
+  await writeFile(path.join(root, "main.tex"), String.raw`\documentclass{article}
+\title{New note}
+\begin{document}
+\maketitle
+\end{document}`);
+  const empty = await editableProject(workspace, project.id);
+  assert.equal(empty.nodes[0].sourceOpening?.text, String.raw`\title{New note}`);
+  assert.ok(empty.paragraphs.some(p => p.emptySource), "a title-only note still has a place to type its body");
+});
 
 test("heading controls do not move later section prose ahead of a newly wrapped theorem",()=>{
   const nodes:ManuscriptNode[]=[{id:"s",title:"Section",kind:"section",depth:0,paragraphIds:["before","after"]},{id:"t",title:"Theorem",kind:"theorem",depth:1,parentId:"s",paragraphIds:["statement"]},{id:"e",title:"Empty",kind:"section",depth:0,paragraphIds:[]}];

@@ -1,8 +1,8 @@
-import { useEffect, useRef, useState } from "react";
+import { memo,useEffect, useRef, useState } from "react";
 import { TextLayer, type PDFDocumentProxy } from "pdfjs-dist";
 
 /** Native, selectable text aligned with the same CSS-pixel viewport as the canvas. */
-export function PdfTextLayer({ document, pageNumber, scale, onSourcePosition }: {
+export const PdfTextLayer=memo(function PdfTextLayer({ document, pageNumber, scale, onSourcePosition }: {
   document: PDFDocumentProxy; pageNumber: number; scale: number;
   onSourcePosition?: (page: number, x: number, y: number) => void;
 }) {
@@ -30,4 +30,4 @@ export function PdfTextLayer({ document, pageNumber, scale, onSourcePosition }: 
     }} />
     {error && <small className="pdf-text-selection-error" role="status">Text selection unavailable on this page.</small>}
   </>;
-}
+});

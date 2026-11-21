@@ -17,6 +17,7 @@ import {acquireRecordLock} from './recordLock.ts';
 import {projectDataPath} from './projectStorage.ts';
 import {syncHash,canonical} from './syncProtocol.ts';
 import {readingPins,mergeReadingPins,applyReadingPins} from './syncDocumentPins.ts';
+import {applySlideChoice,slideChoice} from './slideDecks.ts';
 import {configureAutoSync,followReadingSync,autoSyncCycle} from './syncAuto.ts';
 import {listReadingSourceReviews,readReadingSourceReview,chooseReadingSource} from './syncReadingSource.ts';
 import type {NotebookEntry} from '../src/types.ts';
@@ -107,7 +108,7 @@ test('settled sources and existing notebooks advance while unrelated desktop rep
 test('fast TeX/comment passes leave notebook changes and large unrelated source assets for the slow lane',async()=>{
  const f=await fixture();await changeNotebook(f.desktop,f.id,'Slow notebook update');await writeFile(path.join(f.remoteRoot,'main.tex'),'Fast source update');await writeFile(path.join(f.remoteRoot,'raw.npy'),Buffer.alloc(1024));
  const requests:any[]=[];const runner:SshRunner=async(...args)=>{requests.push(JSON.parse(args[2].toString()));return f.runner(...args);};
- const result=await syncReadingRecords(f.home,f.id,f.peer.id,runner,{fastOnly:true});assert.deepEqual(result.copied,['source/main.tex']);assert.equal(result.checked,3); // text, comments and the negotiated pin record
+ const result=await syncReadingRecords(f.home,f.id,f.peer.id,runner,{fastOnly:true});assert.deepEqual(result.copied,['source/main.tex']);assert.equal(result.checked,4); // text, comments and the negotiated pin/slide-deck records
  assert.equal((await readExperiments(f.home,f.id,'question')).notebook.cells[0].source,'Initial evidence');assert.ok(requests.every(r=>!r.item?.key.startsWith('notebook/')));assert.equal(requests[0].fastOnly,true);
 });
 
@@ -235,7 +236,12 @@ test('new notebook output requires exact settled run evidence; importing it neve
  const f=await fixture(),nb=await readExperiments(f.desktop,f.id,'question');
  nb.notebook.cells.push({id:'calc',cell_type:'code',source:'raise RuntimeError("DO NOT EXECUTE")',metadata:{paperfocus:{runId:'saved-run'}},execution_count:1,outputs:[{output_type:'stream',name:'stdout',text:'Saved output'}]});
  await writeExperiments(f.desktop,f.id,'question',nb.revision,nb.notebook);
- assert.ok((await syncReadingRecords(f.home,f.id,f.peer.id,f.runner)).held.includes('notebook/question'));
+ const missing=await syncReadingRecords(f.home,f.id,f.peer.id,f.runner);
+ assert.ok(missing.held.includes('notebook/question'));
+ assert.ok(!missing.deferred.includes('notebook/question'));
+ assert.match(missing.issues?.find(i=>i.key==='notebook/question')?.reason??'',/run provenance is missing/);
+ assert.equal(missing.codeExecuted,false);
+ assert.equal((await readExperiments(f.home,f.id,'question')).notebook.cells.length,1,'missing run evidence never reaches the receiving notebook');
  const runs=path.join(projectDataPath(f.desktop,f.id),'experiments/question/runs');await mkdir(runs,{recursive:true});await writeFile(path.join(runs,'saved-run.json'),JSON.stringify({id:'saved-run',cellId:'calc',status:'ready',source:'raise RuntimeError("DO NOT EXECUTE")'}));
  const result=await syncReadingRecords(f.home,f.id,f.peer.id,f.runner);assert.ok(result.copied.includes('notebook/question'));assert.equal(result.codeExecuted,false);assert.equal((await readExperiments(f.home,f.id,'question')).notebook.cells[1].source,'raise RuntimeError("DO NOT EXECUTE")');
  assert.equal(JSON.parse(await readFile(path.join(projectDataPath(f.home,f.id),'experiments/question/runs/saved-run.json'),'utf8')).cellId,'calc');
@@ -271,6 +277,19 @@ test('old peers without a document-pin capability still sync source without impo
  await writeFile(path.join(f.remoteRoot,'other.tex'),'Ordinary text');
  const old:SshRunner=async(...args)=>{const v=JSON.parse((await f.runner(...args)).toString());if(v.inventory)delete v.inventory.documentPins;return Buffer.from(JSON.stringify(v));};
  const result=await syncReadingRecords(f.home,f.id,f.peer.id,old);assert.ok(result.copied.includes('source/other.tex'));assert.equal((await getProject(f.home,f.id)).project.manuscriptPins,undefined);
+});
+
+test('slide deck pins negotiate separately, follow new source and retain old-peer compatibility',async()=>{
+ const f=await fixture(),text='\\documentclass{beamer}\n\\begin{document}\\begin{frame}Talk.\\end{frame}\\end{document}';
+ await writeFile(path.join(f.remoteRoot,'talk.tex'),text);
+ await applySlideChoice(f.desktop,f.id,{version:1,file:'talk.tex'},syncHash(canonical(slideChoice((await getProject(f.desktop,f.id)).project))));
+ // Older peers ignore this side capability; they still get ordinary source.
+ const old:SshRunner=async(...args)=>{const v=JSON.parse((await f.runner(...args)).toString());if(v.inventory)delete v.inventory.slideDeck;return Buffer.from(JSON.stringify(v));};
+ await syncReadingRecords(f.home,f.id,f.peer.id,old,{fastOnly:true});assert.equal((await getProject(f.home,f.id)).project.slideDeck,undefined);
+ let result=await syncReadingRecords(f.home,f.id,f.peer.id,f.runner,{fastOnly:true});assert.ok(result.copied.includes('slide-deck'));assert.equal((await getProject(f.home,f.id)).project.slideDeck,'talk.tex');
+ const baseline=JSON.parse(await readFile(await privateSyncPath(f.home,`reading/${f.id}/${f.peer.id}.json`),'utf8'));assert.ok(baseline.slideDeck);assert.equal(baseline.files['slide-deck'],undefined,'Old clients must not encounter an unknown key in files');
+ await applySlideChoice(f.home,f.id,{version:1,file:null},syncHash(canonical(slideChoice((await getProject(f.home,f.id)).project))));
+ result=await syncReadingRecords(f.home,f.id,f.peer.id,f.runner);assert.ok(!result.held.length);assert.equal((await getProject(f.desktop,f.id)).project.slideDeck,undefined);
 });
 
 test('reading pins combine independent roles, follow explicit unpinning and hold competing choices',async()=>{

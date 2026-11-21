@@ -1,3 +1,4 @@
+import {setSlideDeck} from './slideDecks.ts';
 import { copyFile, mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -45,6 +46,7 @@ import { attachProjectPdf, downloadArxiv, maxReferenceBytes, readReferencePdf, r
 import { readNotebook, writeNotebook } from "./notebookStore.ts";
 import { readExperimentsIfChanged, experimentEtag, writeExperiments, runExperiment, readExperimentJob, cancelExperimentJob, readExperimentSession, restartExperimentSession, experimentRuntime, ExperimentConflict } from "./experiments.ts";
 import { readResearchCell } from "./researchCell.ts";
+import {desktopInboxStatus,startInboxTransfer,openInboxFolder} from './desktopInbox.ts';
 import { readWorkbench, writeWorkbench, WorkbenchConflict } from "./workbenchStore.ts";
 import { createHandoff, readHandoff, readHandoffTicket } from "./handoffs.ts";
 import { finishResearch } from "./researchFinish.ts";
@@ -354,9 +356,14 @@ async function compileUnlocked(workspaceRoot: string, request: CompileRequest, s
   const corpusSource = corpus && project.mainFile === corpus.corpus.mainFile
     ? corpusCompileSource(corpus.corpus, path.join(projectRoot, project.mainFile)) : undefined;
   const mode: CompileMode = corpusSource || request.originalPages || request.mode === "full" ? "full" : "focus";
-  const draft = mode === "focus" && request.draft === true;
+  let draft = request.draft === true;
   const buildRoot = await projectBuildFolder(workspaceRoot, project.id);
   let outputRoot = await projectBuildFolder(workspaceRoot, project.id, mode);
+  if (draft && mode === "full") {
+    // The first build establishes citations/navigation before editing uses one pass.
+    try { await stat(await checkedBuildFile(outputRoot, `${path.basename(project.mainFile, ".tex")}.aux`)); }
+    catch { draft = false; }
+  }
   if (Object.keys(request.paragraphEdits ?? {}).length) {
     await saveEdits(workspaceRoot, project.id, request.paragraphEdits ?? {}, request.revision);
   }
@@ -427,7 +434,7 @@ async function compileUnlocked(workspaceRoot: string, request: CompileRequest, s
   try {
     const record = JSON.parse(await readFile(recordFile, "utf8")) as BuildRecord;
     const dependencyMetadata = JSON.stringify(record.dependencies);
-    if (!request.force && record.cacheVersion === 1 && record.success && Boolean(record.draft) === draft && record.inputHash === inputHash && record.mainFile === project.mainFile && record.engine === project.engine
+    if (!request.force && record.cacheVersion === 1 && record.success && (!record.draft || draft) && record.inputHash === inputHash && record.mainFile === project.mainFile && record.engine === project.engine
       && record.corpusRevision === corpus?.revision
       && (mode === "focus" || record.sourceRevision === parsed.revision) && await dependenciesUnchanged(record.dependencies)) {
       if (dependencyMetadata !== JSON.stringify(record.dependencies)) await writeFile(recordFile, JSON.stringify(record, null, 2), "utf8");
@@ -565,7 +572,7 @@ export function latexMiddleware(workspaceRoot: string) {
     const url = new URL(req.url ?? "/", "http://paperfocus.local");
     if (url.pathname === "/api/paperfocus/health" && req.method === "GET") {
 // The desktop launcher must not open a different app or another checkout.
-json(res, 200, { app: "active-writing", workspaceRoot: path.resolve(workspaceRoot), codeRoot: appCodeRoot, features: { paragraphEditing: true, collaboratorOverview: true, notebookTransfer: true, manuscriptPurpose: true, manuscriptVersions: true, environmentHeadings: true, projectFiles: true, directNotebook: true, researchPreflight: true, projectActivity: true, sourceZip: true, sharingPdf: true, experimentInputs: true, researchCells: true } });
+json(res, 200, { app: "active-writing", workspaceRoot: path.resolve(workspaceRoot), codeRoot: appCodeRoot, features: { slideDecks: true, paragraphEditing: true, collaboratorOverview: true, notebookTransfer: true, manuscriptPurpose: true, manuscriptVersions: true, environmentHeadings: true, projectFiles: true, directNotebook: true, researchPreflight: true, projectActivity: true, sourceZip: true, sharingPdf: true, experimentInputs: true, researchCells: true } });
       return;
     }
     if (url.pathname.startsWith("/api/paperfocus/") && req.method === "POST" && req.headers.origin) {
@@ -608,6 +615,16 @@ json(res, 200, { app: "active-writing", workspaceRoot: path.resolve(workspaceRoo
       try { json(res, 200, await readProjectQueue(workspaceRoot, url.searchParams.get("excludeProjectId") ?? undefined)); }
       catch (error) { json(res, 400, { error: error instanceof Error ? error.message : String(error) }); }
       return;
+    }
+    if(url.pathname==='/api/paperfocus/desktop-inbox'){
+      try{
+        if(req.method==='GET'){json(res,200,await desktopInboxStatus(workspaceRoot));return;}
+        if(req.method!=='POST'||req.headers.origin!==`http://${req.headers.host}`){json(res,403,{error:'Use this local Aw view to send files.'});return;}
+        const r=JSON.parse(await requestBody(req,2000));
+        if(r.action==='send')json(res,202,await startInboxTransfer(workspaceRoot,r.configHash));
+        else if(r.action==='open-inbox'||r.action==='open-sent')json(res,200,await openInboxFolder(workspaceRoot,r.action==='open-inbox'?'inbox':'sent'));
+        else json(res,400,{error:'Choose Open inbox or Send to desktop.'});
+      }catch(e){json(res,400,{error:(e as Error).message});}return;
     }
     if (url.pathname === "/api/paperfocus/workspace-folders" && req.method === "GET") {
       try { json(res, 200, await workspaceFolders(workspaceRoot, url.searchParams.get("projectId") || undefined)); }
@@ -777,6 +794,13 @@ json(res, 200, { app: "active-writing", workspaceRoot: path.resolve(workspaceRoo
           json(res, 200, { success: true, document }); return;
         }
       } catch (error) { json(res, 400, { error: error instanceof Error ? error.message : String(error) }); return; }
+    }
+    if (url.pathname === "/api/paperfocus/manuscripts/slides") {
+      if(req.method!=="POST"){json(res,405,{error:"Use POST to pin slides."});return;}
+      if(req.headers.origin!==`http://${req.headers.host}`){json(res,403,{error:"Pin from this editor's local origin."});return;}
+      try{const request=JSON.parse(await requestBody(req));json(res,200,await serialize(()=>setSlideDeck(workspaceRoot,request)));}
+      catch(error){json(res,409,{error:error instanceof Error?error.message:String(error)});}
+      return;
     }
     if (url.pathname === "/api/paperfocus/manuscripts/pin") {
       if (req.method !== "POST") { json(res, 405, { error: "Use POST to pin a manuscript." }); return; }

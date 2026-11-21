@@ -200,7 +200,7 @@ function PdfViewerView({ continuous = false, active = true, darkDisplay = false,
       cancelled = true;
       observer.disconnect();
     };
-  }, [active, document, pageNumber, viewportRevision]);
+  }, [active, document, continuous ? 0 : pageNumber, viewportRevision]);
 
   const scale = fitScale * zoom;
 

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import {DesktopInbox} from './DesktopInbox';
 import { ArrowDownToLine, ArrowUpFromLine, Check, CheckCircle2, Copy, ExternalLink, FolderGit2, GitBranch, Github, Link2, LoaderCircle, Plus, RefreshCw, X } from "lucide-react";
 import type { CompileResult, PaperProject, ProjectDocument, RepoStatus, RepositoryAccount } from "../types";
 import { prepareProjectUploads, type ProjectUpload } from "../projectFiles";
@@ -185,6 +186,7 @@ export function RepositoryPanel({ document: selectedDocument, pendingEdits, init
         </header>
         <div className="repository-layout">
           <aside className="repository-sidebar">
+            <DesktopInbox/>
             <span className="repository-caption" title="Recently active first, including file edits outside Aw">1 · Choose a paper</span>
             <input className="paper-search" aria-label="Find a paper" placeholder="Find a paper…" autoFocus value={paperQuery} onChange={event => setPaperQuery(event.target.value)} />
             <button disabled={Boolean(busy)} className={tab === "add" ? "is-active" : ""} onClick={() => setTab("add")}><Plus size={15} /><span>New / open project</span></button>

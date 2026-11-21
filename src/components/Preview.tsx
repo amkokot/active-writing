@@ -150,7 +150,7 @@ const PreviewContent = memo(function PreviewContent({
   ) : compileResult?.success && !compileResult.stale ? (
     <span className={`compile-state is-success ${compileResult.mode === "full" ? "is-full" : ""}`}>
       <CheckCircle2 size={14} />
-      {quickReading ? "Quick reading" : compileResult.sectionParts ? "Section PDF" : compileResult.originalPages ? "Original pages" : compileResult.mode === "full" ? "Full PDF" : priorView ? "Older PDF" : partialView ? "Partial PDF" : "Excerpt PDF"}
+      {quickReading ? "Quick reading" : compileResult.draft ? "Quick PDF" : compileResult.sectionParts ? "Section PDF" : compileResult.originalPages ? "Original pages" : compileResult.mode === "full" ? "Full PDF" : priorView ? "Older PDF" : partialView ? "Partial PDF" : "Excerpt PDF"}
     </span>
   ) : compileResult?.stale ? (
     <span className="compile-state is-running"><TriangleAlert size={14} /> Needs update</span>

@@ -76,7 +76,8 @@ async function inspectPacket(snapshot: SyncSnapshot, options: CloneOptions) {
   if (!roots.includes(options.mainFile)) throw new Error("Choose an independent TeX root present in the packet, not an included section.");
   const policy = await json(snapshot, "project/manuscripts.json",options.blobHome);
   if (!policy || typeof policy.name !== "string" || !policy.name.trim() || policy.name.length > 200 || typeof policy.createdAt !== "string" || !Number.isFinite(Date.parse(policy.createdAt))
-    || Object.keys(policy).some(key => !["name", "createdAt", "manuscriptPurposes", "manuscriptVersions", "manuscriptOverviewTargets", "manuscriptPins"].includes(key))) throw new Error("Invalid or newer manuscript policy. No copy made.");
+    || Object.keys(policy).some(key => !["name", "createdAt", "manuscriptPurposes", "manuscriptVersions", "manuscriptOverviewTargets", "manuscriptPins", "slideDeck"].includes(key))) throw new Error("Invalid or newer manuscript policy. No copy made.");
+  if(policy.slideDeck!==undefined&&(typeof policy.slideDeck!=="string"||!roots.includes(policy.slideDeck)||!/\\documentclass\s*(?:\[[^\]]*\]\s*)?\{beamer\}/.test(sources[policy.slideDeck].replace(/(?<!\\)%[^\r\n]*/g,''))))throw new Error("Invalid slide deck metadata.");
   if (policy.manuscriptPins !== undefined && (!policy.manuscriptPins || typeof policy.manuscriptPins !== "object" || Array.isArray(policy.manuscriptPins) || Object.entries(policy.manuscriptPins).some(([role, file]) => !["overview", "notes", "publication"].includes(role) || typeof file !== "string" || !roots.includes(file) || (policy.manuscriptPurposes?.[file] ?? "notes") !== role))) throw new Error("Invalid pinned manuscript metadata.");
   for (const field of ["manuscriptPurposes", "manuscriptOverviewTargets"]) {
     const map = policy[field];
@@ -105,7 +106,7 @@ async function inspectPacket(snapshot: SyncSnapshot, options: CloneOptions) {
     for (const task of workbench.attentionTasks) if (["queued", "working"].includes(task.status) && !task.reminder && task.review?.kind !== "comment" && task.writing?.kind !== "paragraph") pending.push(`manuscript request ${task.id}`);
   }
   const project: PaperProject = { id: snapshot.projectId, name: policy.name, folder: "paper", mainFile: options.mainFile, createdAt: policy.createdAt,
-    ...(options.engine ? { engine: options.engine } : {}), manuscriptPurposes: policy.manuscriptPurposes, manuscriptVersions: policy.manuscriptVersions, manuscriptOverviewTargets: policy.manuscriptOverviewTargets, ...(policy.manuscriptPins ? { manuscriptPins: policy.manuscriptPins } : {}) };
+    ...(options.engine ? { engine: options.engine } : {}), manuscriptPurposes: policy.manuscriptPurposes, manuscriptVersions: policy.manuscriptVersions, manuscriptOverviewTargets: policy.manuscriptOverviewTargets, ...(policy.manuscriptPins ? { manuscriptPins: policy.manuscriptPins } : {}),...(policy.slideDeck?{slideDeck:policy.slideDeck}:{}) };
   return { project, roots, pending, cells, notebooks: notebooks.size, runs, sourceFiles: snapshot.records.filter(record => record.path.startsWith("source/")).length };
 }
 async function newHome(options: CloneOptions) {

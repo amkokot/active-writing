@@ -35,7 +35,7 @@ export async function linkedWorkspaces(control:string){
  return result;
 }
 /** Only a catalogue entry explicitly naming this completed clone permits a shared chooser. */
-async function linkedControl(home:string){
+export async function linkedControl(home:string){
  try{await readFile(await guardedTarget(home,'.paperfocus/device-sync/clone-ready.json'));}catch(e){if((e as NodeJS.ErrnoException).code==='ENOENT')return home;throw e;}
  let parent=path.dirname(home);
  for(let depth=0;depth<7;depth++){
