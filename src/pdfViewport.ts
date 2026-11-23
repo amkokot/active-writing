@@ -36,10 +36,16 @@ export function retainedPdfPages(previous:number[],required:Set<number>,layout:P
  * new raster/text work out of an active scroll gesture. No worker or polling. */
 export function pdfWorkQueue(clock:{now:()=>number;set:(fn:()=>void,ms:number)=>unknown;clear:(id:unknown)=>void}={now:()=>performance.now(),set:(fn,ms)=>setTimeout(fn,ms),clear:id=>clearTimeout(id as ReturnType<typeof setTimeout>)}){
  const pending=new Set<()=>void>();let timer:unknown,until=0,disposed=false;
+ const paints=new Set<()=>Promise<void>>();let painting=false;
+ const startPaint=()=>{if(disposed||painting)return;const next=paints.values().next().value;if(!next)return;paints.delete(next);painting=true;void Promise.resolve().then(next).catch(()=>{}).finally(()=>{painting=false;if(!disposed)schedule(startPaint);});};
  const arm=()=>{if(disposed||timer!==undefined||!pending.size)return;timer=clock.set(()=>{timer=undefined;if(clock.now()<until){arm();return;}const next=pending.values().next().value;if(next){pending.delete(next);next();}arm();},Math.max(8,until-clock.now()));};
+ const schedule=(work:()=>void)=>{if(disposed)return ()=>{};pending.add(work);arm();return ()=>{pending.delete(work);};};
  return {
-  schedule(work:()=>void){if(disposed)return ()=>{};pending.add(work);arm();return ()=>{pending.delete(work);};},
+  schedule,
+  // Serialize whole page paints, while their PDF.js continuations can still
+  // yield through schedule(). A long page must not start eight parallel paints.
+  paint(work:()=>Promise<void>){if(disposed)return ()=>{};paints.add(work);schedule(startPaint);return ()=>{paints.delete(work);};},
   pause(){until=clock.now()+140;if(timer!==undefined){clock.clear(timer);timer=undefined;}arm();},
-  dispose(){disposed=true;pending.clear();if(timer!==undefined)clock.clear(timer);timer=undefined;},
+  dispose(){disposed=true;pending.clear();paints.clear();if(timer!==undefined)clock.clear(timer);timer=undefined;},
  };
 }

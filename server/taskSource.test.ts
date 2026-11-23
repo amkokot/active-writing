@@ -23,6 +23,20 @@ const paragraphs: Paragraph[] = [
 ];
 function document(): ProjectDocument { return { project: { id: "paper", name: "Trial", folder: "paper", mainFile: "main.tex", createdAt: "now" }, files: ["main.tex", "sections/theory.tex"], rootFiles: ["main.tex"], nodes: structuredClone(nodes), paragraphs: structuredClone(paragraphs), revision: "original" }; }
 const auto: HandoffDraft = { effort: 1, scope: "auto", includeProject: false, instruction: "Explain this step", contextMode: "continuation" };
+
+test("comment snapshots retain duplicate and node counts with unrelated long passages", () => {
+  const doc = document();
+  doc.paragraphs.push({ id: "duplicate", nodeId: "other", file: "main.tex", text: paragraphs[0].text });
+  doc.paragraphs.push({ id: "different-file", nodeId: "other", file: "another.tex", text: paragraphs[0].text });
+  doc.paragraphs.push({ id: "long", nodeId: "other", file: "main.tex", text: "Unrelated long text. ".repeat(10000) });
+  const snapshot = captureTaskSource(doc, nodes[0], {}, "paragraph", "p0");
+  assert.equal(snapshot.paragraphs.length, 1);
+  assert.equal(snapshot.paragraphs[0].duplicateAtCapture, true);
+  assert.equal(snapshot.paragraphs[0].nodeParagraphCount, 2);
+  const changed = captureTaskSource(doc, nodes[0], { p0: "Unique edited passage" }, "paragraph", "p0");
+  assert.equal(changed.paragraphs[0].duplicateAtCapture, undefined);
+  assert.equal(changed.paragraphs[0].text, "Unique edited passage");
+});
 function task(snapshot: ReturnType<typeof captureTaskSource>): AttentionTask { return { id: "request", title: "Source trial", nodeId: snapshot.nodeId, paragraphId: snapshot.focusParagraphId, sourceSnapshot: snapshot, packet: "Immutable request", route: "codex", status: "queued", createdAt: "now", updatedAt: "now" }; }
 
 test("handoff scope summary makes the paragraph-only boundary explicit", () => {

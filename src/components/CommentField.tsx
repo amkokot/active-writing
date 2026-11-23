@@ -14,6 +14,7 @@ export function CommentField({ id, body, autoFocus, isNew = false, onEdit, onSav
   const [notice, setNotice] = useState("");
   const [canSave, setCanSave] = useState(Boolean(body.trim()));
   const [dirty, setDirty] = useState(false);
+  useEffect(() => { if (autoFocus) input.current?.focus({ preventScroll: true }); }, [autoFocus, id]);
   useEffect(() => {
     const field = input.current;
     if (!field || body === base.current) return;
@@ -31,7 +32,7 @@ export function CommentField({ id, body, autoFocus, isNew = false, onEdit, onSav
     onEdit(id, value); onSave?.();
   }
   return <>
-    <textarea ref={input} autoFocus={autoFocus} aria-label="Review comment" placeholder="What needs attention?" maxLength={6000} rows={4} defaultValue={body}
+    <textarea ref={input} aria-label="Review comment" placeholder="What needs attention?" maxLength={6000} rows={4} defaultValue={body}
       onKeyDown={event => { if (commentShortcut({ ...event, isComposing: event.nativeEvent.isComposing }) === "save") { event.preventDefault(); event.stopPropagation(); save(); } }}
       onChange={event => { setCanSave(Boolean(event.currentTarget.value.trim())); setDirty(event.currentTarget.value !== body); }}
       onCompositionStart={() => { composing.current = true; }} onCompositionEnd={() => { composing.current = false; }} />

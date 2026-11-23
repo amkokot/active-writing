@@ -55,14 +55,14 @@ export function SourceCommand({ nodeId, closing = false, command, editable, edit
   };
   return <div className="inline-source-command">
     <textarea ref={input} className="literal-source-command" data-source-command-id={sourceCommandId(nodeId, closing ? "closing" : "opening")} aria-label={documentTitle ? "Edit document title" : closing ? "Edit closing LaTeX command" : "Edit LaTeX heading or opening command"}
-      title="Edit here · saved when leaving this command · Ctrl/⌘ Enter to save" spellCheck={false} wrap="soft" readOnly={!editable || !editing || saving} value={value}
+      title="Edit here · saved when leaving this command · Ctrl/⌘ Enter to save and compile" spellCheck={false} wrap="soft" readOnly={!editable || !editing || saving} value={value}
       onChange={event => {
         const next = event.target.value; draft.current = next; setValue(next);
         try { windowStateCache().writeSnapshot(cacheKey, JSON.stringify({original: original.current, draft: next}), JSON.stringify({original: original.current, draft: original.current})); }
         catch { setError("Browser storage is full. Keep this editor open and copy your command."); }
       }}
       onBlur={() => { void save().catch(() => undefined); }}
-      onKeyDown={event => { if (isNewCommentShortcut({ ...event, isComposing: event.nativeEvent.isComposing }) && editing?.comment) { event.preventDefault(); event.stopPropagation(); comment(); } else if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) { event.preventDefault(); void save().catch(() => undefined); } }} />
+      onKeyDown={event => { if (isNewCommentShortcut({ ...event, isComposing: event.nativeEvent.isComposing }) && editing?.comment) { event.preventDefault(); event.stopPropagation(); comment(); } }} />
     {editing?.comment && <button className="command-comment-button" aria-label={documentTitle ? "Comment on document title" : closing ? "Comment on closing command" : "Comment on heading or opening command"} title={`${documentTitle ? "Comment on selected title text, or the whole title" : "Comment on selected heading text, or the whole command"} · Ctrl+M`} disabled={saving}
       onMouseDown={event => event.preventDefault()} onClick={comment}><MessageSquareText size={14} /></button>}
     {error && <small role="alert">{error} <button onClick={() => { void save().catch(() => undefined); }}>Retry</button></small>}

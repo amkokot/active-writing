@@ -29,6 +29,7 @@ export function ContinuousPdfPages(props: Props) {
   const { document, pages, scale, active, scrollRef, navigator } = props;
   const [sizes, setSizes] = useState<{ page: number; width: number; height: number }[]>([]);
   const [retained, setRetained] = useState<number[]>([]);
+  const [readingPages,setReadingPages]=useState<Set<number>>(new Set());
   const work=useMemo(()=>pdfWorkQueue(),[document]);
   const [selectedPages, setSelectedPages] = useState<Set<number>>(new Set());
   const [error, setError] = useState("");
@@ -117,6 +118,7 @@ export function ContinuousPdfPages(props: Props) {
       const at = position(); if (!at) return;
       const row=layout[at.index];
       const next=nearbyPdfPages(layout,(row?.top??0)+at.y*scale,pane.clientHeight);
+      setReadingPages(previous=>previous.size===next.size&&[...next].every(p=>previous.has(p))?previous:next);
       setRetained(previous=>{const value=retainedPdfPages(previous,next,layout,scale,window.devicePixelRatio||1);return value.length===previous.length&&value.every((p,i)=>p===previous[i])?previous:value;});
       anchor.current = at;
       if (anchor.current) {
@@ -145,13 +147,13 @@ export function ContinuousPdfPages(props: Props) {
     {error ? <p role="alert">Unable to lay out PDF pages: {error}</p> : !sizes.length ? <p>Preparing PDF pages…</p> :
       <div className="pdf-page-stack pdf-virtual-stack" ref={stackRef} style={{height:layout.at(-1)?.bottom??0,width:Math.max(...sizes.map(s=>s.width*scale))}}>{layout.filter(size=>mounted.has(size.page)).map(size => <div key={size.page} data-pdf-page={size.page} className="pdf-page-surface pdf-page-slot"
         style={{ top:size.top,width: size.width * scale, height: size.height * scale }} aria-label={`PDF page ${size.page}`}>
-        {active && <ContinuousPdfCanvas document={document} pageNumber={size.page} scale={scale} work={work}
+        {active && <ContinuousPdfCanvas document={document} pageNumber={size.page} scale={scale} work={work} textEnabled={readingPages.has(size.page)||selectedPages.has(size.page)}
           onNaturalSize={naturalSize} onDestination={destination} onSourcePosition={sourcePosition} />}
       </div>)}</div>}
   </div>;
 }
 
-const ContinuousPdfCanvas=memo(function ContinuousPdfCanvas({ document, pageNumber, scale, onDestination, onSourcePosition,work,onNaturalSize }: Pick<Props, "document" | "scale" | "onDestination" | "onSourcePosition"> & { pageNumber: number;work:ReturnType<typeof pdfWorkQueue>;onNaturalSize:(page:number,width:number,height:number)=>void }) {
+const ContinuousPdfCanvas=memo(function ContinuousPdfCanvas({ document, pageNumber, scale, onDestination, onSourcePosition,work,onNaturalSize,textEnabled }: Pick<Props, "document" | "scale" | "onDestination" | "onSourcePosition"> & { pageNumber: number;textEnabled:boolean;work:ReturnType<typeof pdfWorkQueue>;onNaturalSize:(page:number,width:number,height:number)=>void }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [links, setLinks] = useState<{ id: string; url?: string; dest?: string | unknown[]; left: number; top: number; width: number; height: number }[]>([]);
   const [error, setError] = useState("");
@@ -160,10 +162,10 @@ const ContinuousPdfCanvas=memo(function ContinuousPdfCanvas({ document, pageNumb
   useEffect(() => {
     let cancelled = false, task: RenderTask | undefined;
     let cancelContinuation: (()=>void)|undefined,cancelText:(()=>void)|undefined;
-    setLinks([]); setError("");
+    setLinks([]); setError(""); setTextReady(false);
     // Briefly defer new work so a trackpad fling does not paint every page it
     // passes. Existing completed canvases keep scrolling immediately.
-    const cancelStart=work.schedule(()=>{void (async () => {
+    const cancelStart=work.paint(async () => { try {
       const page = await document.getPage(pageNumber);
       if (cancelled || !canvasRef.current) return;
       const natural=page.getViewport({scale:1});onNaturalSize(pageNumber,natural.width,natural.height);
@@ -186,7 +188,7 @@ const ContinuousPdfCanvas=memo(function ContinuousPdfCanvas({ document, pageNumb
         const a = viewport.convertToViewportPoint(item.rect[0], item.rect[1]), b = viewport.convertToViewportPoint(item.rect[2], item.rect[3]);
         return { id: item.id, url: safeLink(item.url), dest: item.dest, left: Math.min(a[0], b[0]), top: Math.min(a[1], b[1]), width: Math.abs(b[0] - a[0]), height: Math.abs(b[1] - a[1]) };
       }));
-    })().catch(reason => { if (!cancelled && reason?.name !== "RenderingCancelledException") setError(String(reason)); });});
+    } catch(reason) { if (!cancelled && (reason as {name?:string})?.name !== "RenderingCancelledException") setError(String(reason)); } });
     return () => { cancelled = true;cancelStart();cancelContinuation?.();cancelText?.();task?.cancel(); };
   }, [document, pageNumber, scale,work,onNaturalSize]);
   useEffect(()=>{const canvas=canvasRef.current;return()=>{const task=render.current;task?.cancel();if(canvas){canvas.width=0;canvas.height=0;}void task?.promise.catch(()=>{}).then(()=>document.getPage(pageNumber)).then(page=>page.cleanup()).catch(()=>{});};},[document,pageNumber]);
@@ -194,7 +196,7 @@ const ContinuousPdfCanvas=memo(function ContinuousPdfCanvas({ document, pageNumb
     {error && <p role="alert">Page {pageNumber}: {error}</p>}
     <canvas ref={canvasRef} aria-label={`Rendered PDF page ${pageNumber}`}
       onDoubleClick={event => { const rect = event.currentTarget.getBoundingClientRect(); onSourcePosition?.(pageNumber, (event.clientX - rect.left) / scale, (event.clientY - rect.top) / scale); }} />
-    {textReady&&<PdfTextLayer document={document} pageNumber={pageNumber} scale={scale} onSourcePosition={onSourcePosition} />}
+    {textReady&&textEnabled&&<PdfTextLayer document={document} pageNumber={pageNumber} scale={scale} onSourcePosition={onSourcePosition} />}
     <div className="pdf-link-layer">{links.map(link => link.url
       ? <a key={link.id} href={link.url} target="_blank" rel="noopener noreferrer" style={link} aria-label={`PDF external link on page ${pageNumber}: ${link.url}`} />
       : <button key={link.id} style={link} title="Jump to referenced location" aria-label={`PDF reference on page ${pageNumber}`} onClick={() => onDestination(link.dest!)} />)}</div>

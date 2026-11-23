@@ -23,6 +23,10 @@ model is optional. Suggestions are saved, not silently applied. Comments remain
 in **Next ▾**, the priority queue, until explicitly resolved. You can reorder the
 queue and choose this project or all projects.
 
+Comments open beside the source and preview, so split view can show three
+columns. In **Advanced**, turn off **Keep preview beside comments** if you prefer
+the preview to hide while commenting. Opening a comment preserves your place.
+
 Closing without saving discards a new comment or leaves an existing comment
 unchanged. Replies stay inside their thread. The document title is editable at
 the top of All sections, with its own comment button.
@@ -37,7 +41,7 @@ not something Aw removes from a presentation automatically.
 | Shortcut | Action |
 | --- | --- |
 | **Ctrl+M** | Comment on highlighted source text or the active block. In a title/heading field, comment on its selection or whole command. |
-| **Ctrl+Enter** | Save a comment or reply; save the command when editing a title or heading. |
+| **Ctrl+Enter** | Compile the PDF; in a comment or reply, save instead. Notebook cells keep their run/preview shortcut. |
 | **Shift+Up / Left** | Previous comment from the reply field or focused comment panel. |
 | **Shift+Down / Right** | Next comment from the reply field or focused comment panel. Unsent reply text is retained. |
 | **Ctrl+K** | Search the manuscript's table of contents. |

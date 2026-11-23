@@ -238,6 +238,10 @@ export function SourceParagraph({ paragraph, text, editable, onEdit, onReference
     setActiveChunk(previous => previous.start === chunk.start && previous.end === chunk.end && previous.bottom === bottom ? previous : { start: chunk.start, end: chunk.end, bottom });
   };
   const repositionChunk = useStableEvent(() => pickChunk(paragraphRef.current?.querySelector<HTMLElement>(".source-chunk[data-active=true]")));
+  const caretChunk = useStableEvent(() => pickChunk());
+  const chunkFrame = useRef(0);
+  const scheduleChunk = () => { if (!chunkFrame.current) chunkFrame.current = requestAnimationFrame(() => { chunkFrame.current = 0; caretChunk(); }); };
+  useEffect(() => () => cancelAnimationFrame(chunkFrame.current), []);
   useEffect(() => {
     if (!selected || !paragraphRef.current) return;
     let frame = 0;
@@ -293,7 +297,7 @@ export function SourceParagraph({ paragraph, text, editable, onEdit, onReference
       h.index = h.entries.length - 1;
     }
     if (emittedText.current !== value) { delete root.dataset.savedEmptyTail; emittedText.current = value; onEdit(paragraph.id, value); }
-    pickChunk();
+    scheduleChunk();
   };
   const insert = (value: string) => {
     const root = paragraphRef.current, selection = window.getSelection(); if (!root || !selection?.rangeCount) return;
@@ -476,7 +480,7 @@ export function SourceParagraph({ paragraph, text, editable, onEdit, onReference
         event.preventDefault(); insert("\n");
       }
     }}
-    onKeyUp={event => { if(event.key.length!==1 || event.ctrlKey || event.metaKey || event.altKey)pickChunk(); }}
+    onKeyUp={event => { if(event.key.length!==1 || event.ctrlKey || event.metaKey || event.altKey)scheduleChunk(); }}
     onFocus={(event) => { if (event.target === event.currentTarget) { setEditing(true); setSelected(true); event.currentTarget.querySelectorAll<HTMLElement>(".source-reference").forEach((link) => { if (!link.dataset.compactLabel || link.dataset.referenceExpanded === "true") link.contentEditable = "inherit"; }); normalizeChunks(); } onFocus(paragraph.id, paragraph.nodeId); pickChunk(); }} onInput={() => {
       const root=paragraphRef.current,caret=root && editableCaret(root);
       const completed=root && caret != null && !typeControl?.environment && completeTypedEnvironment(editableText(root),caret,typeControl?.options ?? []);

@@ -11,6 +11,13 @@ export class BlobReader {
  async end(){if(this.pending.length||await this.fill())throw new Error('Unexpected trailing bulk bytes.');}
 }
 export function validateBlobList(refs:BlobRef[]){if(!Array.isArray(refs)||refs.length>blobLimits.records)throw new Error('Invalid bulk batch.');let total=0;const seen=new Set<string>();for(const r of refs){checkBlob(r);if(seen.has(r.sha256)||(total+=r.bytes)>blobLimits.totalBytes)throw new Error('Duplicate/oversized bulk batch.');seen.add(r.sha256);}return refs;}
+/** Immutable, verified local content need not cross SSH again. Corruption and
+ * access errors stay errors; only an absent cache entry requests a transfer. */
+export async function missingBlobRefs(home:string,refs:BlobRef[],verify:typeof verifyBlob=verifyBlob){
+ validateBlobList(refs);const missing:BlobRef[]=[];
+ for(const ref of refs)try{await verify(home,ref);}catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error;missing.push(ref);}
+ return missing;
+}
 export async function writeBytes(out:Writable,bytes:Uint8Array){if(!out.write(bytes))await once(out,'drain');}
 export async function sendBlobs(home:string,refs:BlobRef[],out:Writable){validateBlobList(refs);for(const ref of refs){const file=await verifyBlob(home,ref);for await(const chunk of createReadStream(file,{highWaterMark:blobLimits.chunkBytes}))await writeBytes(out,chunk);}}
 export async function readBlobs(home:string,refs:BlobRef[],reader:BlobReader){validateBlobList(refs);for(const ref of refs)await receiveBlob(home,ref,reader.exact(ref.bytes));await reader.end();}

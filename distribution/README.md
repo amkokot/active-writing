@@ -74,7 +74,7 @@ exports without removing its master source.
 | Shortcut | Action |
 | --- | --- |
 | **Ctrl+M** | Comment on highlighted source text, or the active block when nothing is selected. Also works in title and heading fields. |
-| **Ctrl+Enter** | Save a comment or reply. In a title/heading field, save that command. |
+| **Ctrl+Enter** | Compile the PDF; in a comment or reply, save instead. Notebook cells keep their run/preview shortcut. |
 | **Shift+Up / Left** | Previous comment while replying. |
 | **Shift+Down / Right** | Next comment while replying. Unsent reply text stays available when you return. |
 | **Ctrl+K** | Search the table of contents in the manuscript view. |

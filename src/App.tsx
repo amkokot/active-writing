@@ -80,7 +80,7 @@ import type { ProjectQueueTask } from "./projectQueue";
 import { useIdleCompilation } from "./useIdleCompilation";
 import { ManuscriptBuildCache, manuscriptBuildIdentity, manuscriptBuildScope, matchingManuscriptBuild } from "./manuscriptBuildCache";
 import { restoreWorkbenchDraft, rewriteSourceMatches } from "./workbench";
-import { editReviewComment, makeCommandReviewComment, makeReviewComment, makeReviewCommentReply, makeReviewRequest, resolveReviewComment, resolveQueuedReviewComments, reviewSnapshot, reviewCommentTarget, reviewCommentLocation, nextCommentAfterResolve, blockReviewComments } from "./review";
+import { editReviewComment, makeCommandReviewComment, makeReviewComment, makeReviewCommentReply, makeReviewRequest, resolveReviewComment, resolveQueuedReviewComments, reviewSnapshot, reviewCommentTarget, reviewCommentLocation, reviewCommentJumpLocation, nextCommentAfterResolve, blockReviewComments } from "./review";
 import { acceptWritingParagraph, dropWritingParagraph, editWritingDraft, editWritingFeedback, makeWritingRequest, placeWritingDraft, reconcileWritingReviews, writingRoundTheme, writingSnapshot, writingLocks, writingDecisions, writingMarkers, unlockWritingParagraph } from "./writing";
 import { WorkbenchStatus } from "./components/WorkbenchStatus";
 import { checkTaskSource, taskSourceTarget } from "./taskSource";
@@ -97,6 +97,7 @@ import { preserveEnvironmentMarks, wrapSourceBlock, validateEnvironmentFields } 
 import type { EnvironmentFields } from "./environmentEditing";
 import type { BlockTypes } from "./environmentEditing";
 import type { QueuedPassage } from "./queueEntries";
+import { isCompileShortcut } from "./commentKeyboard";
 import type { SavedCaret } from "./acknowledgedSave";
 import { finishNavigationDraft, prepareProjectNavigation, sourceFileTarget } from "./projectNavigation";
 import { checkParagraph, turboWindows, scrollTurbo, reviewed, turboPass, undoCheck } from "./turbo";
@@ -613,7 +614,8 @@ export default function App() {
     if (activeRewrite || activeHandoff || latexAssistantOpen || referenceRequest || replyTask || state.destination === "notebook") setReviewOpen(false);
     if (reviewOpen || activeRewrite || activeHandoff || latexAssistantOpen || referenceRequest || replyTask || state.destination === "notebook") setWritingOpen(false);
   }, [reviewOpen, activeRewrite, activeHandoff, latexAssistantOpen, referenceRequest, replyTask, state.destination]);
-  const effectivePreviewMode = inspectorOpen || state.destination === "notebook" ? "hidden" : state.previewMode;
+  const commentColumnOpen = reviewOpen && chromePreferences.commentColumn && state.destination === "manuscript";
+  const effectivePreviewMode = inspectorOpen && !commentColumnOpen || state.destination === "notebook" ? "hidden" : state.previewMode;
   const turboBlocked = inspectorOpen || compiling || savingHandoff || repositoryOpen || state.destination === "notebook";
   const sectionNavigation = document && state.destination === "manuscript" && state.lens === "paper" && !preambleEditing && !state.blockWindow && !state.turbo.enabled && state.focusedNodeId ? {
     key: `${document.project.id}:${document.project.mainFile}:${state.focusedNodeId}`,
@@ -2238,7 +2240,7 @@ export default function App() {
     const doc = latestDocument.current;
     if (!doc || task.review?.kind !== "comment") return;
     flushParagraph();
-    const target = reviewCommentLocation(task, doc, latestState.current.paragraphEdits);
+    const target = reviewCommentJumpLocation(task, doc, latestState.current.paragraphEdits);
     if (!target) { setToast("The original passage could not be located safely. The saved quote and comment are kept."); return; }
     setReviewOpen(false); // Reveal the normal source/PDF layout, not the detail inspector.
     if (target.command) {
@@ -2249,7 +2251,7 @@ export default function App() {
     } else { syncToSource(target.paragraphId); syncToPreview(target.paragraphId); }
     setPreambleEditing(false);
     setState(current => ({ ...current, detachedPreview: false }));
-    setToast(target.changedBlock ? "Returned to the edited block. The original quote is preserved." : "Comment's passage shown in source and preview. No comment was resolved.");
+    setToast(target.approximate ? "Returned near the original comment. The text has changed; the saved quote is kept." : target.changedBlock ? "Returned to the edited block. The original quote is preserved." : "Comment's passage shown in source and preview. No comment was resolved.");
   });
   useEffect(() => {
     if (!pendingCommentJump) return;
@@ -2820,6 +2822,21 @@ export default function App() {
     }
   }
 
+  const compileCurrent = useStableEvent(() => {
+    const doc = latestDocument.current;
+    return compileLatex("full", false, false, fastSlideCompile && Boolean(doc?.slideFiles?.includes(doc.project.mainFile)));
+  });
+  const compileShortcut = useStableEvent((event: KeyboardEvent) => {
+    const inComments = event.target instanceof Element && Boolean(event.target.closest(".review-panel"));
+    if (!isCompileShortcut(event, inComments) || !latestDocument.current) return;
+    event.preventDefault();
+    void compileCurrent();
+  });
+  useEffect(() => {
+    window.addEventListener("keydown", compileShortcut);
+    return () => window.removeEventListener("keydown", compileShortcut);
+  }, [compileShortcut]);
+
   async function dispatchLatexAssistant(
     route: "chatgpt" | "codex",
     effort: string,
@@ -2910,6 +2927,8 @@ export default function App() {
                 <label>Editor text size<input aria-label="Editor text size" type="range" min="50" max="250" step="5" value={Math.round(editorTextZoom * 100)} onChange={event => setEditorTextZoom(Number(event.target.value) / 100)} /><output>{Math.round(editorTextZoom * 100)}%</output><button type="button" onClick={() => setEditorTextZoom(1)}>Reset</button></label>
                 <small>Also use Ctrl/⌘ + wheel or +/− inside the editor. Wraps visually; saved LaTeX line breaks are unchanged.</small>
                 <label><input type="checkbox" checked={chromePreferences.compactAwLinks} onChange={event => setChromePreferences(current => ({ ...current, compactAwLinks: event.target.checked }))} /> Fold long references</label>
+                <label><input type="checkbox" checked={chromePreferences.commentColumn} onChange={event => setChromePreferences(current => ({ ...current, commentColumn: event.target.checked }))} /> Keep preview beside comments</label>
+                <small>Comments open in a separate column. Split view keeps source, preview and comments visible.</small>
                 <small>Click … to expand the exact source; leave the passage to fold again. Full-file source stays literal.</small>
                 <label><input type="checkbox" aria-label="Explicit source blocks" checked={state.sourcePresentation==="blocks"} disabled={!document || savingPaper} onChange={()=>{void toggleSourceBlocks();}} /> Show source boxes</label>
                 <small>Off by default. Block tools, focus views and linked proofs remain available either way.</small>
@@ -3168,7 +3187,7 @@ export default function App() {
               </select></label>
               <div className="compile-control" ref={compileControlRef}>
                 <button className="primary-button compile-main" disabled={compiling || !document} aria-label={compiling ? "Compiling…" : "Compile"}
-                  title="Compile · slide editing can use one pass; choose a full build from the arrow menu" onClick={() => void compileLatex("full", false, false, fastSlideCompile && Boolean(document?.slideFiles?.includes(document.project.mainFile)))} type="button">
+                  title="Compile · Ctrl+Enter (⌘+Enter on Mac) · slide editing can use one pass; choose a full build from the arrow menu" onClick={() => void compileCurrent()} type="button">
                   <Play size={12} fill="currentColor" /> <span>{compiling ? "Compiling…" : "Compile"}</span>
                 </button>
                 <button className="primary-button compile-menu-button" aria-label="Compile options" aria-expanded={compileMenuOpen} aria-controls="compile-options" disabled={compiling || !document} onClick={() => setCompileMenuOpen(open => !open)} type="button"><ChevronDown size={12} /></button>

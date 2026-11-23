@@ -1,5 +1,18 @@
 import test from 'node:test';import assert from 'node:assert/strict';
 import {initialPdfSizes,pdfPageLayout,pdfPageIndex,nearbyPdfPages,retainedPdfPages,pdfWorkQueue} from '../src/pdfViewport.ts';
+
+test('large PDF pages paint one at a time while continuations remain responsive',async()=>{
+ const q=pdfWorkQueue(),events:string[]=[];
+ let release!:()=>void,started!:()=>void,continued!:()=>void,finished!:()=>void;
+ const hold=new Promise<void>(r=>{release=r;}),first=new Promise<void>(r=>{started=r;}),chunk=new Promise<void>(r=>{continued=r;}),last=new Promise<void>(r=>{finished=r;});
+ q.paint(async()=>{events.push('first');started();await hold;events.push('first done');});
+ const cancel=q.paint(async()=>{events.push('canceled');});cancel();
+ q.paint(async()=>{events.push('second');finished();});
+ await first;
+ q.schedule(()=>{events.push('continuation');continued();});await chunk;
+ assert.deepEqual(events,['first','continuation']);release();await last;
+ assert.deepEqual(events,['first','continuation','first done','second']);q.dispose();
+});
 test('a thousand-page PDF opens at its resume page with only one metadata request',async()=>{
  const calls:number[]=[];const s=await initialPdfSizes(Array.from({length:1000},(_,i)=>i+1),720,async p=>{calls.push(p);return {width:600,height:800};});assert.deepEqual(calls,[720]);assert.equal(s.length,1000);assert.equal(s[719].page,720);
 });

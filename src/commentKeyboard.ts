@@ -12,3 +12,8 @@ export function commentShortcut(event: CommentKey, replies = false): "save" | -1
   if (event.key === "ArrowUp" || event.key === "ArrowLeft") return -1;
   if (event.key === "ArrowDown" || event.key === "ArrowRight") return 1;
 }
+
+/** Let comment saves and notebook-cell shortcuts consume the key first. */
+export function isCompileShortcut(event: CommentKey & { defaultPrevented?: boolean }, inComments = false) {
+  return !event.defaultPrevented && !inComments && commentShortcut(event) === "save";
+}

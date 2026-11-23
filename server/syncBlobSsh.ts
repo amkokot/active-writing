@@ -1,10 +1,11 @@
 import {spawnOwnedSsh} from './ownedProcess.ts';
-import {BlobReader,readBlobs,sendBlobs,validateBlobList,writeBytes} from './syncBlobWire.ts';
+import {BlobReader,readBlobs,sendBlobs,validateBlobList,writeBytes,missingBlobRefs} from './syncBlobWire.ts';
 import type {BlobRef} from './syncBlobs.ts';
 import type {SshPeerOptions} from './syncSsh.ts';
 export async function transferSshBlobs(home:string,projectId:string,peer:SshPeerOptions,refs:BlobRef[],direction:'read'|'write',budgetBytes=1024**3){
  validateBlobList(refs);if(!refs.length)return {files:0,bytes:0};
  if(!Number.isSafeInteger(budgetBytes)||budgetBytes<0||budgetBytes>128*1024**3||refs.reduce((n,r)=>n+r.bytes,0)>budgetBytes)throw new Error('Bulk transfer exceeds the approved per-direction budget (default 1 GB). Stage a deliberately budgeted batch first; nothing was sent.');
+ if(direction==='read'){refs=await missingBlobRefs(home,refs);if(!refs.length)return {files:0,bytes:0};}
  const tool=peer.tool.replace(/awSync\.ts$/,'awSyncBlob.ts');if(tool===peer.tool)throw new Error('Unknown bulk tool location.');
  const q=(s:string)=>"'"+s.replaceAll("'","'\"'\"'")+"'";
  if(peer.platform!=='posix')throw new Error('Streaming SSH bulk transport currently requires a POSIX receiver; no fallback or unguarded copy.');

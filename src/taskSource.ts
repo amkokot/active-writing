@@ -53,12 +53,17 @@ export function sourceCommands(document: ProjectDocument): SourceParagraph[] {
 }
 const paragraphKey = (p: SourceParagraph) => JSON.stringify([p.file ?? "", p.command ?? "paragraph", p.text]);
 export function captureTaskSource(document: ProjectDocument, node: ManuscriptNode, edits: Record<string, string>, scope: TaskSourceSnapshot["scope"], paragraphId?: string): TaskSourceSnapshot {
-  const included = descendants(document, node.id);
+  const included = scope === "paragraph" ? undefined : descendants(document, node.id);
   const all = currentParagraphs(document, edits);
+  const selected = all.filter(p => scope === "paragraph" ? p.id === paragraphId : included!.has(p.nodeId));
+  // A comment needs duplicate counts only for its own text, not a serialized
+  // index of every paragraph in a potentially book-length manuscript.
+  const wanted = new Set(selected.map(paragraphKey));
   const counts = new Map<string, number>();
   const nodeCounts = new Map<string, number>();
-  for (const paragraph of all) { const key = paragraphKey(paragraph); counts.set(key, (counts.get(key) ?? 0) + 1); nodeCounts.set(paragraph.nodeId, (nodeCounts.get(paragraph.nodeId) ?? 0) + 1); }
-  const paragraphs = all.filter((p) => scope === "paragraph" ? p.id === paragraphId : included.has(p.nodeId))
+  const wantedTexts = new Set(selected.map(p => p.text));
+  for (const paragraph of all) { if (wantedTexts.has(paragraph.text)) { const key = paragraphKey(paragraph); if (wanted.has(key)) counts.set(key, (counts.get(key) ?? 0) + 1); } nodeCounts.set(paragraph.nodeId, (nodeCounts.get(paragraph.nodeId) ?? 0) + 1); }
+  const paragraphs = selected
     .map((p) => ({ ...p, nodeParagraphCount: nodeCounts.get(p.nodeId), ...((counts.get(paragraphKey(p)) ?? 0) > 1 ? { duplicateAtCapture: true } : {}) }));
   const oversized = paragraphs.length > sourceSnapshotLimits.paragraphs || paragraphs.reduce((size, p) => size + p.text.length, 0) > sourceSnapshotLimits.characters;
   return { version: 1, projectId: document.project.id, revision: document.revision, rootFile: document.project.mainFile, scope,
@@ -76,10 +81,16 @@ export function checkTaskSource(snapshot: TaskSourceSnapshot | undefined, docume
   const paragraphs: SourceParagraph[] = snapshot.paragraphs.some(p => p.command) ? sourceCommands(document) : currentParagraphs(document, edits);
   const nodeCounts = new Map<string, number>();
   for (const paragraph of paragraphs) nodeCounts.set(paragraph.nodeId, (nodeCounts.get(paragraph.nodeId) ?? 0) + 1);
-  const byId = new Map(paragraphs.map((p) => [p.id, p]));
+  const wantedIds = new Set(snapshot.paragraphs.map(p => p.id));
+  const wantedTexts = new Set(snapshot.paragraphs.map(p => p.text));
+  const byId = new Map(paragraphs.filter(p => wantedIds.has(p.id)).map((p) => [p.id, p]));
   const byText = new Map<string, SourceParagraph[]>();
   for (const paragraph of paragraphs) {
-    const group = byText.get(paragraphKey(paragraph)) ?? []; group.push(paragraph); byText.set(paragraphKey(paragraph), group);
+    // Only saved excerpts can match. Avoid serializing unrelated manuscript
+    // text for every comment badge on every keystroke; still count ALL exact
+    // duplicates across files before deciding whether an anchor is safe.
+    if (!wantedTexts.has(paragraph.text)) continue;
+    const key = paragraphKey(paragraph), group = byText.get(key) ?? []; group.push(paragraph); byText.set(key, group);
   }
   const matches: SourceMatch[] = snapshot.paragraphs.map((before) => {
     const exact = byText.get(paragraphKey(before)) ?? [];
@@ -103,8 +114,8 @@ export function checkTaskSource(snapshot: TaskSourceSnapshot | undefined, docume
     }
   }
   const scopeMissing = snapshot.scope === "section" && !document.nodes.some((node) => node.id === snapshot.nodeId);
-  const included = descendants(document, snapshot.nodeId);
-  const added = snapshot.scope === "section" && !scopeMissing ? paragraphs.filter((p) => included.has(p.nodeId) && !claimed.has(p.id)) : [];
+  const included = snapshot.scope === "section" && !scopeMissing ? descendants(document, snapshot.nodeId) : undefined;
+  const added = included ? paragraphs.filter((p) => included.has(p.nodeId) && !claimed.has(p.id)) : [];
   const focus = matches.find((match) => match.before.id === snapshot.focusParagraphId) ?? matches[0];
   const locationUnverified = snapshot.locationUnverified || matches.some((m) => m.before.locationUnverified);
   const anchored = !snapshot.locationUnverified && !focus?.before.locationUnverified ? locateReturnAnchor(snapshot.returnAnchor, document, edits) : undefined;

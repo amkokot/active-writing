@@ -1,9 +1,9 @@
 import { ArrowLeft, ArrowRight, ArrowUpRight, MessageSquareText, X } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { commentShortcut } from "../commentKeyboard";
 import { CommentField } from "./CommentField";
 import type { AttentionTask, ProjectDocument, HandoffDraft, ReviewComment } from "../types";
-import { reviewComments, reviewCommentQueue, reviewCommentTitle, defaultReviewInstructions, reviewCommentTarget, reviewCommentLocation, adjacentReviewComment, nextCommentOutsideBlock } from "../review";
+import { reviewComments, reviewCommentQueue, reviewCommentTitle, defaultReviewInstructions, reviewCommentTarget, reviewCommentJumpLocation, adjacentReviewComment, nextCommentOutsideBlock } from "../review";
 import { checkTaskSource } from "../taskSource";
 import { LazyDisclosure } from "../lazyDisclosure";
 
@@ -31,10 +31,12 @@ export function ReviewPanel({ unsaved, onReply, blockComments, onAllComments, on
   const open = reviewCommentQueue(blockComments ?? tasks), resolved = reviewComments(tasks, true).filter(task => task.review?.kind === "comment" && !task.review.replyTo);
   const selected = tasks.find(t => t.id === selectedId && t.review?.kind === "comment");
   const comment = selected?.review as ReviewComment | undefined;
-  const source = selected && checkTaskSource(selected.sourceSnapshot, document, edits);
-  const location = selected && reviewCommentLocation(selected, document, edits);
+  // New drafts already have a freshly captured quote and do not show source
+  // actions. Avoid repeatedly walking the manuscript just to open the field.
+  const source = useMemo(() => !unsaved && selected ? checkTaskSource(selected.sourceSnapshot, document, edits) : undefined, [unsaved, selected, document, edits]);
+  const location = useMemo(() => !unsaved && selected ? reviewCommentJumpLocation(selected, document, edits) : undefined, [unsaved, selected, document, edits]);
   const otherManuscript = Boolean(selected?.sourceSnapshot && (selected.sourceSnapshot.projectId !== document.project.id || selected.sourceSnapshot.rootFile !== document.project.mainFile));
-  const editableQuote = selected && reviewCommentTarget(selected, document, edits);
+  const editableQuote = useMemo(() => !unsaved && selected ? reviewCommentTarget(selected, document, edits) : undefined, [unsaved, selected, document, edits]);
   const request = tasks.find(t => t.id === selectedId && t.review?.kind === "request") ?? [...tasks].reverse().find(t => t.review?.kind === "request" && t.status !== "reviewed");
   useEffect(() => {
     const task = tasks.find(t => t.id === selectedId);
@@ -80,9 +82,9 @@ export function ReviewPanel({ unsaved, onReply, blockComments, onAllComments, on
     <div className="review-navigation" aria-label="Unresolved comments"><button aria-label="Previous unresolved comment" disabled={!open.length} onClick={() => move(-1)}><ArrowLeft size={14} /></button><span>{open.some(t => t.id === selectedId) ? `${open.findIndex(t => t.id === selectedId) + 1} / ${open.length} open` : `${open.length} open`}<small>{blockComments ? "On this block" : "In your priority queue"}</small></span><button aria-label="Next unresolved comment" disabled={!open.length} onClick={() => move(1)}><ArrowRight size={14} /></button></div>
     {selected && comment && <article className="review-current" aria-label="Selected review comment">
       <small>{comment.author === "human" ? "Your comment" : `Assistant comment · unchecked${comment.editedByHuman ? " · edited by you" : ""}`}{selected.status === "reviewed" ? " · resolved" : ""}</small>
-      <div className="review-actions review-location"><button className="primary-button" aria-label="Jump to commented text" disabled={busy || !location && !otherManuscript} title={otherManuscript ? `Open ${selected.sourceSnapshot?.rootFile} and locate the saved passage` : location ? "Show this passage in source and preview" : source?.message} onClick={() => onJump(selected)}><ArrowUpRight size={14} /> Jump to commented text</button></div>
+      <div className="review-actions review-location"><button className="primary-button" aria-label="Jump to commented text" disabled={busy || !location && !otherManuscript} title={otherManuscript ? `Open ${selected.sourceSnapshot?.rootFile} and locate the saved passage` : location?.approximate ? "Return near the original block; the text has changed" : location ? "Show this passage in source and preview" : source?.message} onClick={() => onJump(selected)}><ArrowUpRight size={14} /> Jump to commented text</button></div>
       <small>{location ? `${document.nodes.find(node => node.id === location.nodeId)?.title ?? "Passage"} · ${document.paragraphs.find(p => p.id === location.paragraphId)?.file ?? document.project.mainFile}` : otherManuscript ? `In ${selected.sourceSnapshot?.rootFile}. Jump opens its project and manuscript before checking the location.` : "The original passage could not be located safely. Its saved quote is shown below."}</small>
-      {location?.changedBlock && <small>The text was edited. Jump returns to its saved block, not an exact quoted range.</small>}
+      {location?.changedBlock && <small>The text was edited. Jump returns to the remembered block or nearby section; the saved quote stays unchanged.</small>}
       <blockquote>{comment.quote}</blockquote>
       <CommentField key={selected.id} projectId={document.project.id} id={selected.id} body={comment.body} autoFocus={comment.author === "human" && !comment.body} onEdit={onEdit} onSave={onClose} />
       <small>{location?.changedBlock ? "The remembered block is available, but the original quoted range no longer matches." : source?.message} The saved quote is kept even if its location changes.</small>

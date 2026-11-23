@@ -5,6 +5,16 @@ import { chromePreferencesKey, defaultChromePreferences, loadChromePreferences, 
 import { createHoverIntent, hoverRevealDelayMs } from "../src/hoverIntent.ts";
 import { compiledPdfDownloadUrl, pdfDownloadName } from "../src/pdfLinks.ts";
 
+test("comment column keeps the chosen preview visible and can be disabled", async () => {
+  assert.equal(loadChromePreferences().commentColumn, true);
+  assert.equal(loadChromePreferences({ getItem: () => '{"commentColumn":false}' }).commentColumn, false);
+  assert.equal(loadChromePreferences({ getItem: () => '{"commentColumn":"false"}' }).commentColumn, true);
+  const app = await readFile("src/App.tsx", "utf8");
+  assert.match(app, /const commentColumnOpen = reviewOpen && chromePreferences.commentColumn/);
+  assert.match(app, /inspectorOpen && !commentColumnOpen/);
+  assert.match(app, /Keep preview beside comments/);
+});
+
 test("manuscript menu prioritizes reading copies and hides configuration and creation clutter", async () => {
   const menu = await readFile("src/components/ManuscriptSwitcher.tsx", "utf8");
   assert.match(menu, /manuscriptRoles\.filter\(role => pins\[role\]\)/);
@@ -359,7 +369,7 @@ test("plain-source selection retains visible passage actions but no top environm
 test("top bar and sidebar choices persist independently of manuscript storage", () => {
   const stored = new Map();
   const storage = { getItem: key => stored.get(key), setItem: (key, value) => stored.set(key, value) };
-  const choices = { autoHideTopbar: true, hideTopbarByDefault: true, sidebarPinned: true, theme: "dark", darkPdf: true, automaticCompilation: true, sectionPdf: true, interfaceSize: "comfortable", compactAwLinks: false };
+  const choices = { autoHideTopbar: true, hideTopbarByDefault: true, sidebarPinned: true, theme: "dark", darkPdf: true, automaticCompilation: true, sectionPdf: true, interfaceSize: "comfortable", compactAwLinks: false, commentColumn: false };
   assert.equal(saveChromePreferences(choices, storage), true);
   assert.deepEqual(loadChromePreferences(storage), { ...choices, sectionPdf: false });
   assert.deepEqual([...stored.keys()], [chromePreferencesKey]);
@@ -382,7 +392,10 @@ test("legacy section-PDF settings migrate to the standard incremental compiler",
   assert.doesNotMatch(app, /aria-label="PDF layout"|Section PDF · cache each section/);
   assert.match(app, /sectionPdf: false/);
   const button = app.slice(app.indexOf('className="primary-button compile-main"'), app.indexOf('className="primary-button compile-menu-button"'));
-  assert.match(button, /compileLatex\("full", false, false, fastSlideCompile && Boolean\(document\?\.slideFiles\?\.includes\(document.project.mainFile\)\)\)/);
+  assert.match(button, /onClick=\{\(\) => void compileCurrent\(\)\}/);
+  const action = app.slice(app.indexOf("const compileCurrent ="), app.indexOf("const compileShortcut ="));
+  assert.match(action, /const doc = latestDocument.current/);
+  assert.match(action, /compileLatex\("full", false, false, fastSlideCompile && Boolean\(doc\?\.slideFiles\?\.includes\(doc.project.mainFile\)\)\)/);
   assert.match(app, /compileLatex\("full"\)\}><strong>Compile full paper/);
   const scopeEffect = app.slice(app.indexOf("if (!scopeCompileRequest || !document)"), app.indexOf("useIdleCompilation({"));
   assert.match(scopeEffect, /matchingManuscriptBuild\(compileResult, document\) && compileResult\?\.mode === "full"\) return/);
@@ -820,12 +833,12 @@ test("comment source highlights persist independently of selection and never ste
   assert.match(css, /\.selected-block-actions \{ transform: none/);
 });
 
-test("comment jumps expose source without guessing changed passages; bulk Resolve requires a project-scoped confirmation", async () => {
+test("comment jumps preserve owning scope and allow approximate navigation; bulk Resolve requires a project-scoped confirmation", async () => {
   const [app, panel, queue] = await Promise.all(["src/App.tsx", "src/components/ReviewPanel.tsx", "src/components/AttentionStrip.tsx"].map(file => readFile(file, "utf8")));
   assert.match(panel, /aria-label="Jump to commented text" disabled=\{busy \|\| !location && !otherManuscript\}/);
   assert.match(panel, /onClick=\{\(\) => onJump\(selected\)\}/);
   const jump = app.slice(app.indexOf("function jumpToComment"), app.indexOf("function resolveProjectComments"));
-  assert.match(jump, /reviewCommentLocation/); assert.match(jump, /if \(!target\)/); assert.match(jump, /syncToSource\(target.paragraphId\)/);
+  assert.match(jump, /reviewCommentJumpLocation/); assert.match(jump, /target.approximate/); assert.match(jump, /if \(!target\)/); assert.match(jump, /syncToSource\(target.paragraphId\)/);
   assert.match(jump, /syncToPreview\(target.paragraphId\)/);
   assert.match(jump, /setReviewOpen\(false\)/);
   assert.match(jump, /owner.projectId !== before.project.id/);

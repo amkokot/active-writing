@@ -1,14 +1,14 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { createServer } from "vite";
-import { commentShortcut, isNewCommentShortcut } from "../src/commentKeyboard.ts";
+import { commentShortcut, isNewCommentShortcut, isCompileShortcut } from "../src/commentKeyboard.ts";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { mkdir, mkdtemp, readFile, writeFile, symlink } from "node:fs/promises";
 import path from "node:path";
 import { Readable } from "node:stream";
 import type { AppState, ProjectDocument, AttentionTask } from "../src/types.ts";
-import { defaultReviewInstructions, makeCommandReviewComment, makeReviewComment, editReviewComment, resolveReviewComment, resolveQueuedReviewComments, reviewComments, adjacentReviewComment, nextCommentAfterResolve, reviewSnapshot, makeReviewRequest, parseReviewReply, reviewCommentTarget, reviewCommentLocation, blockReviewComments } from "../src/review.ts";
+import { defaultReviewInstructions, makeCommandReviewComment, makeReviewComment, editReviewComment, resolveReviewComment, resolveQueuedReviewComments, reviewComments, adjacentReviewComment, nextCommentAfterResolve, reviewSnapshot, makeReviewRequest, parseReviewReply, reviewCommentTarget, reviewCommentLocation, reviewCommentJumpLocation, blockReviewComments } from "../src/review.ts";
 import { archiveAttentionTask, archiveReadyNotebookTasks, attentionQueue, queueAttentionTask, reopenAttentionTask } from "../src/attention.ts";
 import { receiveHandoffReply } from "../src/handoffs.ts";
 import { checkTaskSource } from "../src/taskSource.ts";
@@ -43,6 +43,15 @@ test("comment keyboard saves explicitly and reply arrows navigate without consum
   }
 });
 
+test("compile shortcut yields to comments and handled notebook keys", () => {
+  const event={key:"Enter",ctrlKey:true,metaKey:false,shiftKey:false,altKey:false};
+  assert.equal(isCompileShortcut(event),true);
+  assert.equal(isCompileShortcut({...event,ctrlKey:false,metaKey:true}),true);
+  assert.equal(isCompileShortcut(event,true),false);
+  assert.equal(isCompileShortcut({...event,defaultPrevented:true}),false);
+  for(const guard of [{repeat:true},{isComposing:true},{shiftKey:true},{altKey:true},{ctrlKey:false},{key:"m"}])assert.equal(isCompileShortcut({...event,...guard}),false);
+  assert.equal(commentShortcut(event),"save");
+});
 test("new-comment shortcut is scoped to an intentional Ctrl M without repeats or composition", () => {
   const key = { key: "m", ctrlKey: true, metaKey: false, shiftKey: false, altKey: false };
   assert.equal(isNewCommentShortcut(key), true);
@@ -232,6 +241,29 @@ test("edited comments can navigate to explicit stable blocks without enabling st
   const unverified = structuredClone(task); unverified.sourceSnapshot!.paragraphs[0].locationUnverified = true;
   assert.equal(reviewCommentLocation(unverified, edited), undefined);
   assert.deepEqual(reviewCommentLocation(task, doc, { p1: "Unsaved new wording." }), { nodeId: "intro", paragraphId: "p1", changedBlock: true });
+});
+test("comment jump keeps an approximate edited-block or section destination without enabling edits", () => {
+  const doc = document(), task = comment(doc), before = JSON.stringify(task);
+  const edited = structuredClone(doc); edited.revision = "new";
+  edited.paragraphs[0].text = "Entirely new wording.";
+  assert.deepEqual(reviewCommentJumpLocation(task, edited), { nodeId:"intro", paragraphId:"p1", changedBlock:true, approximate:true });
+  assert.equal(reviewCommentTarget(task, edited), undefined);
+  assert.deepEqual(blockReviewComments([task], edited), {});
+  edited.paragraphs[0].id = "replacement";
+  assert.equal(reviewCommentJumpLocation(task, edited)?.paragraphId, "replacement", "renumbered blocks return to the original section");
+  assert.equal(reviewCommentJumpLocation(task, { ...edited, project:{...edited.project, mainFile:"different.tex"} }), undefined);
+  assert.equal(reviewCommentJumpLocation(task, { ...edited, project:{...edited.project, id:"different"} }), undefined);
+  edited.paragraphs.forEach(p => p.file = "different.tex");
+  assert.equal(reviewCommentJumpLocation(task, edited), undefined);
+  assert.equal(JSON.stringify(task), before, "navigation never changes saved quotes or anchors");
+});
+test("comment jump prefers an own-save return anchor over the old ordinal position", () => {
+  const doc=document(),task=comment(doc),edited=structuredClone(doc);edited.revision="new";
+  edited.paragraphs[0].text="Old position now contains other text.";
+  edited.paragraphs.push({...edited.paragraphs[0],id:"saved-new-block",text:"Updated destination."});
+  task.sourceSnapshot!.returnAnchor={paragraphId:"saved-new-block",paragraphText:"Previously saved destination.",file:edited.paragraphs[0].file,revision:"intermediate"};
+  assert.equal(reviewCommentJumpLocation(task,edited)?.paragraphId,"saved-new-block");
+  assert.equal(reviewCommentTarget(task,edited),undefined);
 });
 test("comment highlight uses exact quote offsets through note typing and verified source relocation", () => {
   const doc = document(), p = doc.paragraphs[0], start = p.text.indexOf("$x"), quote = "$x \\leq 1$";

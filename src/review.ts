@@ -54,6 +54,28 @@ export function reviewCommentLocation(task: AttentionTask, document: ProjectDocu
   if (!block?.explicitId || !before.file || block.file !== before.file) return undefined;
   return { nodeId: block.nodeId, paragraphId: block.id, changedBlock: true };
 }
+/** Approximate positions are navigation only, never anchors for edits or badges. */
+export function reviewCommentJumpLocation(task: AttentionTask, document: ProjectDocument, edits: Record<string, string> = {}) {
+  const located = reviewCommentLocation(task, document, edits);
+  if (located) return { ...located, approximate: false };
+  const saved = task.sourceSnapshot;
+  if (task.review?.kind !== "comment" || !saved || saved.projectId !== document.project.id || saved.rootFile !== document.project.mainFile) return undefined;
+  const before = saved.paragraphs.find(p => p.id === saved.focusParagraphId) ?? saved.paragraphs[0];
+  if (!before?.file) return undefined;
+  const anchor = saved.returnAnchor;
+  const candidates = before.command ? sourceCommands(document) : document.paragraphs;
+  const sameFile = candidates.filter(p => p.file === before.file && (!before.command || "command" in p && p.command === before.command));
+  const ids = [anchor?.file === before.file ? anchor.paragraphId : undefined, before.id];
+  for (const id of ids) {
+    const matches = sameFile.filter(p => p.id === id);
+    if (matches.length === 1) return { nodeId: matches[0].nodeId, paragraphId: matches[0].id, ...(before.command ? { command: before.command } : {}), changedBlock: true, approximate: true };
+  }
+  const node = document.nodes.find(n => n.id === before.nodeId);
+  const titled = document.nodes.filter(n => n.title === saved.nodeTitle);
+  const nodeId = node?.id ?? (titled.length === 1 ? titled[0].id : undefined);
+  const nearby = nodeId && sameFile.find(p => p.nodeId === nodeId);
+  return nearby ? { nodeId: nearby.nodeId, paragraphId: nearby.id, ...(before.command ? { command: before.command } : {}), changedBlock: true, approximate: true } : undefined;
+}
 /** Visible annotations belong to the current root and a safely located block. */
 export function blockReviewComments(tasks: AttentionTask[], document: ProjectDocument, edits: Record<string, string> = {}) {
   const groups: Record<string, AttentionTask[]> = {};

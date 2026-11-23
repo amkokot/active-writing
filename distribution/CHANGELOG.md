@@ -1,5 +1,24 @@
 # Changes
 
+## 0.2.0 preview 5
+
+- Comments can open beside both source and preview. Turn off **Keep preview
+  beside comments** in Advanced settings to use the previous layout.
+- Opening a comment no longer performs source checks for actions that aren't
+  available until it is saved. Focusing the comment field preserves scroll.
+- Typing in long, heavily commented manuscripts does less work: source checks
+  index only relevant excerpt text, and block controls coalesce layout measures.
+  Exact-quote, duplicate-source and conflict safeguards remain in place.
+- Large PDFs paint one page at a time while yielding to scrolling. Nearby text
+  stays selectable; cached pages retain their image without unnecessary text
+  layers. Selected text and source/PDF navigation remain available.
+- Ctrl+Enter compiles from the editor, including saving title and heading edits.
+  In comments and replies it saves instead; notebook shortcuts keep their role.
+- Jump to commented text remains available after edits, returning near the old
+  block when an exact match is gone. Approximate jumps never authorize edits.
+- Paired-machine sync reuses verified immutable local blobs rather than asking
+  for them again. Corrupt cache entries and genuine conflicts still stop safely.
+
 ## 0.2.0 preview 4
 
 - Updated instructions for Codex and Claude: merge guidance with the user's
