@@ -1,7 +1,7 @@
 {
   "format": "active-writing-distribution",
   "version": 1,
-  "createdAt": "2026-11-25T17:52:22.275Z",
+  "createdAt": "2026-11-25T17:57:00.933Z",
   "appVersion": "0.2.0-preview.5",
   "privateWorkspaceIncluded": false,
   "setup": "scripts/portableSetup.mjs",
@@ -983,8 +983,8 @@
     },
     {
       "path": "server/personalNotes.test.ts",
-      "size": 3396,
-      "sha256": "b8e24135704f06b8c3ed56f07a0da9b7cd3b73ab47e24eefa07c23e0ebf13807"
+      "size": 3519,
+      "sha256": "872db6aa3dcdf6a470820377f05e50ccc737cf7a49dde4a3da14f9958235bb1f"
     },
     {
       "path": "server/portableExport.test.ts",

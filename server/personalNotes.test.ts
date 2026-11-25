@@ -31,10 +31,11 @@ test("document menu exposes a personal-notes group and respects disabled navigat
   const server = await createServer({ configFile: false, optimizeDeps: { noDiscovery: true, include: [] }, server: { middlewareMode: true, hmr: false }, appType: "custom", logLevel: "error" });
   try {
     const { ManuscriptSwitcher } = await server.ssrLoadModule("/src/components/ManuscriptSwitcher.tsx");
-    const props = { document: { project: project({ mainFile: "personal-notes-mmd.tex" }), rootFiles: ["research-notes.tex", "personal-notes-mmd.tex"], revision: "test" }, disabled: true, onSelect: async () => {}, onCreate: async () => {}, onVersion: async () => {}, onPurpose: async () => {}, onPin: async () => {}, onPinSlides: async () => {}, onSectionFile: async () => {} };
+    const props = { document: { project: project({ mainFile: "personal-notes-mmd.tex" }), rootFiles: ["research-notes.tex", "personal-notes-mmd.tex"], files: ["research-notes.tex", "personal-notes-mmd.tex"], nodes: [], paragraphs: [], revision: "test" }, disabled: true, onSelect: async () => {}, onCreate: async () => {}, onVersion: async () => {}, onPurpose: async () => {}, onPin: async () => {}, onPinSlides: async () => {}, onSectionFile: async () => {} };
     const html = renderToStaticMarkup(createElement(ManuscriptSwitcher, props));
     assert.ok(html.includes('<summary>Personal notes · 1</summary>'));
     assert.match(html, /Current · Personal notes/);
+    assert.match(html, /Source file/);
     assert.match(html, /aria-label="Personal notes"/);
     assert.match(html, /disabled="" title="personal-notes-mmd.tex" aria-pressed="true"/);
     assert.ok(html.includes('<strong>Research notes</strong><small>research-notes.tex'));
