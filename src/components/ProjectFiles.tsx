@@ -1,3 +1,4 @@
+import {FileLocationButton} from './FileLocationButton';
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { Copy, File, FileImage, FileText, FolderOpen, Plus, Upload, X } from "lucide-react";
 import { prepareProjectUploads, projectFileCommand, projectFileKind, type ProjectFilePreview, type ProjectUpload } from "../projectFiles";
@@ -68,6 +69,7 @@ export function ProjectFiles({ document, busy, onOpenFile, onAdd, perform }: Pro
       const Icon = kind === "image" || kind === "pdf" ? FileImage : kind === "tex" || kind === "text" ? FileText : File;
       return <div key={file} className={selected === file ? "is-selected" : ""}>
         <button className="project-file-open" disabled={busy} title={kind === "tex" ? `Edit ${file}` : `Preview ${file}`} onClick={() => { if (kind === "tex") void onOpenFile(file, true); else { setSelected(file); setCopyNotice(undefined); } }}><Icon size={15} /><span>{name}<small>{parent}{parent && file === document.project.mainFile ? " · " : ""}{file === document.project.mainFile ? "Main file" : !parent ? kind === "tex" ? "TeX source" : kind === "pdf" ? "PDF" : kind === "image" ? "Image" : "Project file" : ""}</small></span></button>
+        <FileLocationButton projectId={document.project.id} file={file} iconOnly disabled={busy}/>
         <button className="project-file-copy icon-button" aria-label={`${fileCommand ? "Copy LaTeX command" : "Copy path"} for ${file}`} title={fileCommand ?? file} onClick={() => { setSelected(file); void copy(fileCommand ?? file); }}><Copy size={12} /></button>
       </div>;
     })}{!files.length && <p>No matching files.</p>}</div>

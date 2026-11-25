@@ -5,6 +5,17 @@ import { locateReturnAnchor } from "./sourceAnchors.ts";
 
 export type QueuedPassage = Pick<PendingSelection, "paragraphId" | "nodeId" | "start" | "end" | "text">;
 
+/** Checklist resets never create tasks or resolve comments. Done closes only
+ * generated section reminders belonging to these exact current sections. */
+export function setSectionProgress(state:AppState,document:ProjectDocument,ids:string[],done:boolean):AppState {
+  const valid=new Set(document.nodes.map(node=>node.id)),selected=new Set(ids.filter(id=>valid.has(id)));
+  const progressByNode={...state.progressByNode};
+  for(const id of selected) { if(done)progressByNode[id]='done';else delete progressByNode[id]; }
+  let next={...state,progressByNode};
+  if(done)for(const task of state.attentionTasks) { const target=sectionReminderTarget(task,document);if(target&&selected.has(target.nodeId)&&task.status!=='reviewed')next=archiveAttentionTask(next,task.id); }
+  return next;
+}
+
 /** Exact saved range, not a fuzzy match to a similarly worded passage. */
 export function passageBookmark(tasks: AttentionTask[], document: ProjectDocument, edits: Record<string, string>, selection: QueuedPassage, includeHistory = false) {
   return tasks.find(task => {

@@ -1,5 +1,6 @@
 import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { PaneDivider, usePaneSplit } from "./components/PaneDivider";
+import { EditorAssist } from "./EditorAssist";
 import { useSourceLines } from "./useSourceLines";
 import type { SourceCommandRange, SourceCommandEditing } from "./components/SourceCommand";
 import { appName, appInitials } from "./brand";
@@ -51,7 +52,6 @@ import {
   TriangleAlert,
   Type,
   X,
-  Zap,
 } from "lucide-react";
 import { Manuscript } from "./components/Manuscript";
 import { PlainSourceEditor } from "./components/PlainSourceEditor";
@@ -102,7 +102,7 @@ import type { SavedCaret } from "./acknowledgedSave";
 import { finishNavigationDraft, prepareProjectNavigation, sourceFileTarget } from "./projectNavigation";
 import { checkParagraph, turboWindows, scrollTurbo, reviewed, turboPass, undoCheck } from "./turbo";
 import { adjacentManuscriptSection, chooseManuscriptScope, locateSourcePassage, manuscriptBlockWindow, manuscriptScope } from "./manuscriptView";
-import type { SourceJumpTarget, SourceViewportPosition } from "./sourceViewport";
+import { currentSourceFile, type SourceJumpTarget, type SourceViewportPosition } from "./sourceViewport";
 import { BlockWindowBar } from "./components/BlockWindowBar";
 import { referenceTokens } from "./references";
 import { createRewriteSession, effortLabels, fingerprint, generateRuleCandidates, generateSelectionCandidates, sameProtectedLatex } from "./rewrite";
@@ -118,7 +118,7 @@ import { windowStateCache } from "./windowCache";
 import { parseWorkspaceResume, rememberProject, resumeKey, startupProject } from "./workspaceResume";
 import { announceSaved, subscribeWindowMessages, workspaceWindowId } from "./windowMessages";
 import { useWindowWorkspace } from "./useWindowWorkspace";
-import { cycleQueuedProgress, passageBookmark, sectionReminderTarget, togglePassageBookmarks } from "./queueEntries";
+import { cycleQueuedProgress, setSectionProgress, passageBookmark, sectionReminderTarget, togglePassageBookmarks } from "./queueEntries";
 import { localModelForEffort } from "./components/LocalModelPicker";
 import type {
   AppState,
@@ -2242,7 +2242,7 @@ export default function App() {
     flushParagraph();
     const target = reviewCommentJumpLocation(task, doc, latestState.current.paragraphEdits);
     if (!target) { setToast("The original passage could not be located safely. The saved quote and comment are kept."); return; }
-    setReviewOpen(false); // Reveal the normal source/PDF layout, not the detail inspector.
+    // Keep the comment visible while locating its passage in source and preview.
     if (target.command) {
       const paragraphId = doc.nodes.find(n => n.id === target.nodeId)?.paragraphIds[0];
       setState(current => ({ ...locateSourcePassage(current, target.nodeId, paragraphId ?? "", manuscriptNodes), previewMode: "split" }));
@@ -2698,13 +2698,13 @@ export default function App() {
     continueUsefulWork(task);
   }
 
-  function syncToSource(paragraphId: string) {
+  function syncToSource(paragraphId: string, paragraphOffset?: number) {
     const paragraph = document?.paragraphs.find(item => item.id === paragraphId);
     if (!paragraph) return;
     forwardSyncSequence.current++; setForwardSyncRequest(undefined);
     flushParagraph();
     setState(current => ({ ...locateSourcePassage(current, paragraph.nodeId, paragraphId, manuscriptNodes), previewMode: "split" }));
-    setJumpTarget({ nodeId: paragraph.nodeId, paragraphId, flash: true, sequence: ++sourceSyncSequence.current });
+    setJumpTarget({ nodeId: paragraph.nodeId, paragraphId, paragraphOffset: Number.isFinite(paragraphOffset) ? paragraphOffset : undefined, flash: true, sequence: ++sourceSyncSequence.current });
   }
 
   async function syncPdf(direction: "forward" | "inverse", position: { paragraphId?: string; page?: number; x?: number; y?: number }, build = compileResult) {
@@ -2724,7 +2724,7 @@ export default function App() {
       // Autosave may finish during the lookup. Navigation is approximate and
       // read-only: a revision change must not silently cancel an explicit jump.
       if (!currentSource || currentSource.project.mainFile !== document.project.mainFile || currentSource.project.engine !== document.project.engine) return;
-      if (direction === "inverse") syncToSource(target.paragraphId);
+      if (direction === "inverse") syncToSource(target.paragraphId, target.paragraphOffset);
       else {
         if (compileResult.originalPages && !compileResult.originalPages.includes(target.page)) setCompileResult(current => current ? { ...current, originalPages: undefined, viewNote: "Opened the full PDF to show this passage outside the selected pages." } : current);
         setPreviewJumpTarget({ ...target, sequence });
@@ -2891,6 +2891,23 @@ export default function App() {
     } catch (error) { setToast(error instanceof Error ? error.message : String(error)); }
   });
   const selectThemeOutline = useStableEvent((themeId: string) => patchState({ activeThemeId: themeId }));
+  const setOutlineProgress = useStableEvent((ids:string[],done:boolean) => {
+    const doc=latestDocument.current;if(!doc)return;
+    setState(current=>setSectionProgress(current,doc,ids,done));
+    setToast(done?"Sections marked done. Comments stay open.":"Section marks cleared. Comments and queue items are kept.");
+  });
+  const editDocumentTitle = useStableEvent(async () => {
+    try {
+      if(unsavedComments.length)throw Error("Save or close your new comment before editing the title.");
+      await savePaper();
+      const title=latestDocument.current?.nodes.find(node=>node.id==="document" && node.sourceOpening);
+      if(!title)throw Error("No editable title was found. You can add a title in Preamble.");
+      setPreambleEditing(false);
+      setReviewOpen(false);
+      setState(current=>({...current,lens:"paper",focusedNodeId:undefined,blockWindow:undefined,hiddenNodeIds:current.hiddenNodeIds.filter(id=>id!==title.id),activeNodeId:title.id,activeParagraphId:title.paragraphIds[0],previewMode:current.previewMode==="full"?"split":current.previewMode,turbo:{...current.turbo,enabled:false}}));
+      setJumpTarget({nodeId:title.id,command:"opening",flash:true,sequence:++sourceSyncSequence.current});
+    }catch(error){setToast((error as Error).message);}
+  });
 
   return (
     <div className="app-shell" data-interface-size={chromePreferences.interfaceSize} data-compact-aw-links={chromePreferences.compactAwLinks}>
@@ -2914,6 +2931,11 @@ export default function App() {
 
         <div className="topbar-actions">
           {document && <ManuscriptSwitcher key={`${document.project.id}:${document.project.mainFile}`} document={document} disabled={manuscriptBusy || compiling || savingPaper || savingHandoff || sourceRefreshing || queueNavigating || repositoryOpen || environmentBusy}
+            getSourceFile={() => {
+              const position = sourcePositionReader.current?.();
+              return currentSourceFile(document, { raw: preambleEditing, file: plainFile,
+                paragraphId: position?.paragraphId ?? state.activeParagraphId, nodeId: position?.nodeId ?? state.activeNodeId });
+            }}
             onSelect={switchManuscript} onVersion={newVersion} onPurpose={changeManuscriptPurpose} onPin={pinManuscript} onPinSlides={pinSlideDeck} onCreate={(file, title, kind) => switchManuscript(file, { title, kind })}
             section={document.nodes.find(node => node.id === chooseManuscriptScope(state, "section", document.nodes).focusedNodeId)} onSectionFile={saveSectionFile} />}
           <ToolbarDetails className="appearance-settings" summary={<><SlidersHorizontal size={14} /><span className="sr-only">Appearance settings</span></>}>
@@ -2921,6 +2943,8 @@ export default function App() {
               <strong>Appearance</strong>
               <p>Text and controls follow the theme. PDFs stay white by default.</p>
               <details><summary>Advanced</summary>
+                <label>Special view<select aria-label="Special manuscript view" value={state.lens} disabled={!document || scopeChanging} onChange={event=>{void changeLens(event.target.value as Lens);}}>{lenses.map(({id,label})=><option key={id} value={id}>{label}</option>)}</select></label>
+                <label><input type="checkbox" checked={state.turbo.enabled} disabled={!document || compiling || savingHandoff} onChange={toggleTurbo}/> Wording pass</label>
                 <label><input type="checkbox" checked={chromePreferences.hideTopbarByDefault} onChange={event => setChromePreferences(current => ({ ...current, hideTopbarByDefault: event.target.checked }))} /> Hide top bar by default</label>
                 <label>Interface size<select aria-label="Interface size" value={chromePreferences.interfaceSize} onChange={event => setChromePreferences(current => ({ ...current, interfaceSize: event.target.value as typeof current.interfaceSize }))}><option value="auto">Automatic · larger on monitors</option><option value="compact">Compact</option><option value="comfortable">Comfortable</option><option value="large">Large</option></select></label>
                 <small>Sizes controls and menus, not the manuscript or PDF. Text panes keep their own zoom.</small>
@@ -2928,6 +2952,10 @@ export default function App() {
                 <small>Also use Ctrl/⌘ + wheel or +/− inside the editor. Wraps visually; saved LaTeX line breaks are unchanged.</small>
                 <label><input type="checkbox" checked={chromePreferences.compactAwLinks} onChange={event => setChromePreferences(current => ({ ...current, compactAwLinks: event.target.checked }))} /> Fold long references</label>
                 <label><input type="checkbox" checked={chromePreferences.commentColumn} onChange={event => setChromePreferences(current => ({ ...current, commentColumn: event.target.checked }))} /> Keep preview beside comments</label>
+                <label><input type="checkbox" checked={chromePreferences.spelling} onChange={event=>setChromePreferences(current=>({...current,spelling:event.target.checked}))}/> Spellcheck prose</label>
+                <small>Uses your browser's spelling dictionary. Saved math, commands and reference keys are excluded; mathematical correctness is not checked.</small>
+                <label><input type="checkbox" checked={chromePreferences.latexCompletion} onChange={event=>setChromePreferences(current=>({...current,latexCompletion:event.target.checked}))}/> LaTeX suggestions</label>
+                <small>Type inside cite, ref or includegraphics braces. Ctrl+Space reopens suggestions; Enter or Tab inserts.</small>
                 <small>Comments open in a separate column. Split view keeps source, preview and comments visible.</small>
                 <small>Click … to expand the exact source; leave the passage to fold again. Full-file source stays literal.</small>
                 <label><input type="checkbox" aria-label="Explicit source blocks" checked={state.sourcePresentation==="blocks"} disabled={!document || savingPaper} onChange={()=>{void toggleSourceBlocks();}} /> Show source boxes</label>
@@ -3014,7 +3042,6 @@ export default function App() {
           if (sidebarPointerNavigation.current && focused instanceof HTMLButtonElement && event.currentTarget.contains(focused)) focused.blur();
         }}>
         {state.destination === "manuscript" ? <>
-          <nav className="lens-tabs outline-lenses" aria-label="Manuscript view">{lenses.map(({ id, label, icon: Icon }) => <button key={id} aria-label={label} title={label} className={state.lens === id ? "lens-tab is-active" : "lens-tab"} onClick={() => {void changeLens(id);}}><Icon size={14} /><span>{label}</span></button>)}<button className={`lens-tab turbo-toggle ${state.turbo.enabled ? "is-active" : ""}`} aria-label="Turbo" title="Turbo" aria-pressed={state.turbo.enabled} disabled={!document || compiling || savingHandoff} onClick={toggleTurbo}><Zap size={14} /><span>Turbo</span></button></nav>
           <div className="search-box">
             <button className="outline-search-trigger" aria-label="Find text in this paper" title="Search paper · Ctrl/⌘ K" onClick={() => searchRef.current?.focus()}><Search size={15} /></button>
             <input
@@ -3048,6 +3075,8 @@ export default function App() {
             </div>
           )}
           <Outline
+            onTitle={document?.nodes.some(node=>node.id==="document" && node.sourceOpening)?()=>{void editDocumentTitle();}:undefined}
+            onSetProgress={setOutlineProgress}
             onPreamble={()=>{void openPlainSource(document?.project.mainFile,true);}}
             lens={state.lens}
             nodes={manuscriptNodes}
@@ -3226,7 +3255,7 @@ export default function App() {
             onImportReply={(id, reply) => importPastedReply(id, reply, document.project.id)} onFinishWithoutImport={finishExternalTask} onFinishTask={finishQueueTask} onReopenTask={reopenTask}
             onContinue={nextUsefulPlace} onReference={openReference} /></Suspense>}
           {state.destination === "manuscript" && !preambleEditing && blockWindow && <BlockWindowBar index={blockWindow.index} total={blockWindow.total} radius={blockWindow.radius} disabled={turboBlocked} onMove={moveBlockWindow} onRadius={radius => setState(current => ({ ...current, blockWindow: { ...current.blockWindow, radius } }))} />}
-          <div className={`editor-stage preview-${effectivePreviewMode}`} style={paneSplit.style}>
+          <EditorAssist document={document} spelling={chromePreferences.spelling} completions={chromePreferences.latexCompletion}><div className={`editor-stage preview-${effectivePreviewMode}`} style={paneSplit.style}>
           {effectivePreviewMode !== "full" && (
           <section className="editing-surface">
           {state.destination === "notebook" && document ? <Suspense fallback={toolLoading}><ResearchNotebook key={document.project.id} entry={activeNotebook} entries={manuscriptNotebookEntries.some(e => e.id === activeNotebook?.id) || !activeNotebook ? manuscriptNotebookEntries : [...manuscriptNotebookEntries, activeNotebook]} collapsedIds={state.collapsedNotebookIds ?? []}
@@ -3449,7 +3478,7 @@ export default function App() {
               />
             </div>
           )}
-          </div>
+          </div></EditorAssist>
         </main>
 
         {(writingOpen || reviewOpen || activeRewrite || activeHandoff || latexAssistantOpen || referenceRequest || replyTask) && (

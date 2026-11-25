@@ -1384,3 +1384,35 @@ defers metadata while other files continue, then the next pass retries the pin.
 Full registry bytes are fenced before saving and other projects are retained.
 This is ordinary reading navigation, never permission to relabel publication
 text, approve wording or switch a user away from the document they are editing.
+
+## Requested-only reading projects
+
+An optional project-local reading selection keeps unrequested reports/notebooks
+on the desktop. Other projects keep their existing scope. Saved comments remain
+two-way. Exclusions never delete desktop evidence or acknowledge excluded history.
+
+Use `node scripts/awReadingSelection.ts status --workspace HOME --project ID`.
+To change scope, prepare `{ "version": 1, "files": ["note.tex", "figure.png"],
+"notebooks": ["EXISTING_OWNER"] }` and run `set --workspace HOME --project ID
+--file PLAN.json`. Review the preview, then repeat with `--review HASH --commit`.
+Install the same explicitly chosen scope on both paired homes. This saves scope
+only; it never transfers, executes, prunes or publishes. Include literal TeX inputs,
+figures and bibliography needed for reading. Do not invent empty notebook owners;
+use the guarded collection workflow for a newly requested conversation. Old scope
+copies remain in selection-history. Never broaden scope merely to clear a warning.
+
+The existing reading-list notebook can retain a broader lightweight report index.
+Professor shelves show available files by default, with per-professor pins. Primary
+rows and related links accept `updatedAt` (ISO date or UTC instant) and `pinned`.
+Use substantive saved-report dates, not compilation or transfer timestamps. If report dates are missing, source-file modification timestamps can serve as
+a fallback.
+
+Retained report dependencies: the optional selection `roots` list restricts
+bounded literal compile-dependency discovery to those existing `.tex` entries in
+`files`. If absent, existing selected TeX files are the legacy discovery seeds.
+New input/include files, bibliography resources and figures can follow an already
+requested report automatically; href links and unrelated directory contents do
+not. Discovery never executes TeX/macros, is limited by source count/bytes, and is
+cached briefly with invalidation after a transferred source save. Existing exact
+byte, source-lock, provenance and conflict guards remain in force. Persisted root
+selection is not silently enlarged. Keep the same deliberate roots on both peers.

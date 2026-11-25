@@ -32,7 +32,7 @@ export function CommentField({ id, body, autoFocus, isNew = false, onEdit, onSav
     onEdit(id, value); onSave?.();
   }
   return <>
-    <textarea ref={input} aria-label="Review comment" placeholder="What needs attention?" maxLength={6000} rows={4} defaultValue={body}
+    <textarea ref={input} aria-label="Review comment" data-comment-dirty={dirty || isNew && Boolean(body.trim()) ? "true" : undefined} placeholder="What needs attention?" maxLength={6000} rows={4} defaultValue={body}
       onKeyDown={event => { if (commentShortcut({ ...event, isComposing: event.nativeEvent.isComposing }) === "save") { event.preventDefault(); event.stopPropagation(); save(); } }}
       onChange={event => { setCanSave(Boolean(event.currentTarget.value.trim())); setDirty(event.currentTarget.value !== body); }}
       onCompositionStart={() => { composing.current = true; }} onCompositionEnd={() => { composing.current = false; }} />

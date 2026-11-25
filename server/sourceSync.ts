@@ -6,6 +6,31 @@ import { run } from "./commands.ts";
 
 export interface CompiledSourceRange { paragraphId: string; file: string; startLine: number; endLine: number; text?: string }
 export function sourceLine(text: string, offset: number) { return text.slice(0, offset).split(/\r?\n/).length; }
+/** Navigation only: preserve a SyncTeX line inside a large environment, even
+ * when edits have inserted lines before it since the PDF was built. */
+export function correspondingOffset(from: CompiledSourceRange, to: CompiledSourceRange, line: number, column = 0) {
+  const oldLines = (from.text ?? "").split("\n"), lines = (to.text ?? "").split("\n");
+  const index = Math.max(0, Math.min(oldLines.length - 1, line - from.startLine));
+  let mapped = Math.min(index, lines.length - 1), nearest = Infinity;
+  const positions = new Map<string, number[]>();
+  lines.forEach((text, i) => { const key = text.trim(); if (key) positions.set(key, [...(positions.get(key) ?? []), i]); });
+  oldLines.forEach((text, i) => {
+    const matches = positions.get(text.trim());
+    if (matches?.length === 1 && Math.abs(i - index) < nearest) {
+      nearest = Math.abs(i - index); mapped = matches[0] + index - i;
+    }
+  });
+  mapped = Math.max(0, Math.min(lines.length - 1, mapped));
+  // TeX often tags a paragraph with its terminating blank line.
+  if (!lines[mapped].trim()) {
+    let previous = mapped;
+    while (previous > 0 && !lines[previous].trim()) previous--;
+    if (lines[previous].trim()) mapped = previous;
+    else while (mapped < lines.length - 1 && !lines[mapped].trim()) mapped++;
+  }
+  return lines.slice(0, mapped).reduce((total, text) => total + text.length + 1, 0)
+    + Math.max(0, Math.min(lines[mapped].replace(/\r$/, "").length, Number.isFinite(column) ? column : 0));
+}
 export function sourcePath(file: string) {
   const resolved = path.resolve(file);
   return process.platform === "win32" ? resolved.toLowerCase() : resolved;

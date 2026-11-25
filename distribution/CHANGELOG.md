@@ -1,5 +1,18 @@
 # Changes
 
+## Unreleased
+
+- Jump to commented text keeps the comment panel open. Esc closes it, with
+  confirmation before discarding unsaved comment or reply text.
+- The file-location menu follows the current source passage, including included
+  files, and keeps the compiling master file separately accessible.
+- Improved source typing, proof-level PDF navigation, heading editing, spelling
+  checks and citation/reference completion in long documents.
+- Current writeups can be grouped and pinned within notebook folders. Optional
+  reading sync follows selected roots and their referenced compilation files,
+  leaving unselected research on its original device.
+
+
 ## 0.2.0 preview 5
 
 - Comments can open beside both source and preview. Turn off **Keep preview

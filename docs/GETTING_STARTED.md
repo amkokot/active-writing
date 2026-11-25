@@ -5,6 +5,19 @@ ordinary TeX files so you can see how a small project fits together.
 
 ## Write and navigate
 
+Use **Title** above **Preamble** in the contents pane to edit the document title
+in the main source editor. The contents **…** menu marks listed or all sections
+done and clears marks. Shift-click progress circles to mark a range. Comments
+stay open. Proofs, Themes and the wording pass are available under **Advanced**.
+
+Inside `\cite{...}`, `\ref{...}` (also `\eqref`/`\cref`) and
+`\includegraphics{...}`, type a key or filename to see project suggestions.
+Citation suggestions also search titles and authors. Use arrows to choose,
+Enter/Tab to insert, Escape to close, or Ctrl+Space to reopen. Nothing is inserted
+without your choice. **Advanced** can turn suggestions or prose spellcheck off.
+Spelling uses the browser's dictionary and excludes math and LaTeX commands;
+it does not check the correctness of mathematics.
+
 Choose **Rendered text** in the Preview menu if TeX is not installed. The reading
 preview is approximate; **Compile** makes the real LaTeX PDF when a compiler is
 available. The source is editable in either view. Double Enter starts a paragraph;
@@ -41,6 +54,8 @@ not something Aw removes from a presentation automatically.
 | Shortcut | Action |
 | --- | --- |
 | **Ctrl+M** | Comment on highlighted source text or the active block. In a title/heading field, comment on its selection or whole command. |
+| **Ctrl+Space** | Show citation, reference or figure suggestions inside the command's braces. Enter/Tab inserts; Escape closes. |
+| **Esc** | Close the comment panel; unsaved comment or reply text asks before discarding. |
 | **Ctrl+Enter** | Compile the PDF; in a comment or reply, save instead. Notebook cells keep their run/preview shortcut. |
 | **Shift+Up / Left** | Previous comment from the reply field or focused comment panel. |
 | **Shift+Down / Right** | Next comment from the reply field or focused comment panel. Unsent reply text is retained. |
@@ -109,3 +124,15 @@ The notebook can display linked scatter plots, exact rows, uncertainty bands,
 matrix grids, parameter frames, 2D/3D trajectories and saved animations. Ask an
 agent to read `RESEARCH_VISUALS.md` when these would help explain results. Use
 saved evidence during exploration instead of rerunning it for presentation.
+
+To find a source file on disk, open the filename dropdown at the top and choose
+**Show in folder**. Windows Explorer opens with that file selected. **Copy full
+path** is beside it. The folder icon beside each file in **Paper & files** works
+for TeX, figures and other project files too. On systems without Explorer, the
+control copies the path instead. These actions never edit or move your files.
+
+In multi-file manuscripts, the filename menu's **Source file** selector follows
+the passage currently visible or being edited. **Show in folder** and **Copy full
+path** use that file. Choose another included source file there when needed;
+**Master file** remains available separately for compiling the whole manuscript.
+Only the current manuscript's source graph is listed, rather than older versions.

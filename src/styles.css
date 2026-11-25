@@ -4435,6 +4435,13 @@ article.theme-card > p[contenteditable="true"]:focus { background: light-dark(#f
 .selected-block-actions:hover, .selected-block-actions:focus-within { opacity: 1; }
 .outline-preamble { width: 100%; text-align: left; padding: 5px 8px; border: 0; color: var(--muted); background: transparent; cursor: pointer; font-size: calc(11px * var(--aw-interface-scale, 1)); }
 .outline-preamble:hover { color: var(--ink); background: var(--accent-soft); }
+.outline-progress-menu { position: relative; margin-left: auto; }
+.outline-progress-menu > summary { display: flex; padding: 3px; cursor: pointer; list-style: none; }
+.outline-progress-menu > summary::-webkit-details-marker { display: none; }
+.outline-progress-menu > div { position: absolute; top: 100%; right: 0; z-index: 35; width: 190px; padding: 6px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); box-shadow: 0 5px 16px #0002; }
+.outline-progress-menu button { display: block; width: 100%; padding: 7px; text-align: left; border: 0; border-radius: 4px; background: transparent; color: var(--ink); cursor: pointer; font: inherit; }
+.outline-progress-menu button:hover { background: var(--accent-soft); }
+.outline-progress-menu small { display: block; padding: 5px 7px; color: var(--muted); font-weight: normal; text-transform: none; }
 .plain-block-source .source-editor-shell.is-chunk-selected .source-chunk { outline: none; background: transparent; }
 .plain-block-source :is(.manuscript-node.kind-theorem,.manuscript-node.kind-lemma,.manuscript-node.kind-corollary,.manuscript-node.kind-proof) { background: transparent; border-left-color: transparent; }
 .literal-source-command { display: block; padding: 0; border: 0; background: transparent; color: var(--ink); text-align: left; white-space: pre-wrap; font: 12px/1.7 var(--font-code); cursor: text; }
@@ -4628,3 +4635,43 @@ article.theme-card > p[contenteditable="true"]:focus { background: light-dark(#f
 .optional-tool-settings summary { cursor: pointer; }
 .optional-tool-settings label { display: flex; align-items: center; gap: .4rem; margin: .5rem 0; }
 .optional-tool-settings small { display: block; line-height: 1.45; margin: .35rem 0 .6rem; }
+
+/* The retired mode grid no longer reserves a clipped band above contents. */
+@media (min-width: 821px) and (hover: hover) {
+  .compact-sidebar > .outline-pane { clip-path: none; }
+  .compact-sidebar > .outline-pane[data-sidebar-content="notebook"] { padding-top: 0; }
+}
+.outline-caption { gap: 8px; }
+.latex-completion { position: fixed; z-index: 100; width: min(320px, calc(100vw - 16px)); max-height: 220px; overflow-y: auto; border: 1px solid var(--line); border-radius: 7px; background: var(--panel); color: var(--ink); box-shadow: 0 5px 18px #0003; padding: 4px; font-size: 12px; }
+.latex-completion button { display: block; width: 100%; text-align: left; border: 0; border-radius: 4px; padding: 6px 8px; background: transparent; color: inherit; cursor: pointer; }
+.latex-completion button[aria-selected=true], .latex-completion button:hover { background: var(--accent-soft); }
+.latex-completion strong { display: block; overflow: hidden; text-overflow: ellipsis; font-family: var(--font-code); }
+.latex-completion small { display: block; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.latex-completion footer { padding: 5px 8px; color: var(--muted); font-size: 10px; }
+
+/* Compact professor reading shelves; pins belong to each professor. */
+.writeup-filters { display:flex; gap:12px; align-items:end; flex-wrap:wrap; margin:14px 0; }
+.writeup-filters label { display:flex; align-items:center; gap:8px; font-size:12px; color:var(--muted); }
+.writeup-filters input:not([type=checkbox]) { min-width:150px; flex:1; }
+.professor-writeup-group { margin:14px 0 22px; }
+.professor-writeup-group > header { display:flex; gap:12px; align-items:baseline; border-bottom:1px solid var(--line); padding-bottom:6px; }
+.professor-writeup-group h3 { font-size:15px; margin:0; }
+.professor-writeup-group article { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:9px 4px; border-bottom:1px solid var(--line-soft); }
+.professor-writeup-group article > div { min-width:0; }
+.professor-writeup-group article a { color:var(--accent); font-size:13px; text-decoration:none; }
+.professor-writeup-group article a:hover { text-decoration:underline; }
+.professor-writeup-group article small { display:block; font-size:10px; margin-top:3px; overflow-wrap:anywhere; }
+.professor-pins { border-left:2px solid var(--accent); padding-left:10px; margin-top:8px; }
+.professor-writeup-group .writeup-pin { padding:4px; background:transparent; border:0; flex-shrink:0; color:var(--muted); }
+.professor-writeup-group .writeup-pin[aria-pressed=true] { color:var(--accent); background:var(--accent-soft); }
+.professor-writeup-group summary { cursor:pointer; color:var(--muted); font-size:12px; padding:9px 4px; }
+
+.manuscript-file-location { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px; }
+.file-location-control { display:inline-flex; align-items:center; gap:5px; flex-shrink:0; }
+.file-location-control small { font-size:11px; color:var(--muted); max-width:230px; overflow-wrap:anywhere; }
+.project-file-list .file-location-control { opacity:.4; }
+.project-file-list > div:hover .file-location-control, .project-file-list .file-location-control:focus-within { opacity:1; }
+
+.manuscript-source-location { display:block; margin-bottom:6px; }
+.manuscript-source-location code { display:block; color:var(--ink); overflow-wrap:anywhere; font-size:11px; }
+.manuscript-source-location select { display:block; width:100%; margin-top:4px; font-family:var(--font-code); font-size:11px; }

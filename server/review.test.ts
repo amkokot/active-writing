@@ -1,7 +1,7 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { createServer } from "vite";
-import { commentShortcut, isNewCommentShortcut, isCompileShortcut } from "../src/commentKeyboard.ts";
+import { commentShortcut, isNewCommentShortcut, isCompileShortcut, isCloseCommentShortcut } from "../src/commentKeyboard.ts";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { mkdir, mkdtemp, readFile, writeFile, symlink } from "node:fs/promises";
@@ -474,6 +474,7 @@ test("new comments require explicit save and omit reply, resolve and export acti
     const html = renderToStaticMarkup(createElement(ReviewPanel, props));
     assert.match(html, /disabled="">Save comment/);
     assert.match(html, /Discard unsaved comment/);
+    assert.match(html, /Close comments \(Esc\)/);
     assert.doesNotMatch(html, /Saved as you type|>Resolve<|>Reply<|Request a review|Unresolved comments/);
     assert.equal(saves, 0);
     parent.review.body = "Please clarify.";
@@ -482,7 +483,14 @@ test("new comments require explicit save and omit reply, resolve and export acti
     assert.doesNotMatch(saved, />Save comment<\/|>Save changes<\//, "reviewing saved comments has no redundant save action");
     assert.match(saved, /1 \/ 1 open/);
     assert.match(saved, /Replies to this comment/);
+    assert.match(saved, /Close comments \(Esc\)/);
     assert.doesNotMatch(saved, /2 open|1 \/ 2 open/);
     assert.equal(saves, 0);
   } finally { await server.close(); }
 });
+
+ test("Escape closes comments without consuming composition or nested controls", () => {
+  const key = { key: "Escape", ctrlKey: false, metaKey: false, shiftKey: false, altKey: false };
+  assert.equal(isCloseCommentShortcut(key), true);
+  for (const guard of [{defaultPrevented:true},{isComposing:true},{repeat:true},{ctrlKey:true},{metaKey:true},{shiftKey:true},{altKey:true},{key:"Enter"}]) assert.equal(isCloseCommentShortcut({...key,...guard}),false);
+ });

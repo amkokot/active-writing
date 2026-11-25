@@ -10,7 +10,23 @@ import { collaborationPages } from "./collaboratorExport.ts";
 import type { ManuscriptNode } from "../src/types.ts";
 import { makeCommandReviewComment } from "../src/review.ts";
 
+test("title navigation stays in the main editor and special views leave the sidebar",async()=>{
+  const app=await readFile('src/App.tsx','utf8'),manuscript=await readFile('src/components/Manuscript.tsx','utf8'),outline=await readFile('src/components/Outline.tsx','utf8');
+  assert.doesNotMatch(app,/<nav[^>]*aria-label="Manuscript view"/);
+  assert.match(app,/aria-label="Special manuscript view"/);
+  const action=app.slice(app.indexOf('const editDocumentTitle ='),app.indexOf('return (',app.indexOf('const editDocumentTitle =')));
+  assert.match(action,/await savePaper\(\)/);
+  assert.match(action,/command:"opening"/);
+  assert.match(action,/blockWindow:undefined/);
+  assert.match(action,/setPreambleEditing\(false\)/);
+  assert.match(manuscript,/explicitBlocks && node.id !== "document"/);
+  assert.match(outline,/aria-label="Edit document title"/);
+  assert.match(outline,/Section checkmarks/);
+  assert.match(outline,/event.shiftKey && onSetProgress/);
+});
+
 test("document titles are editable and commentable in standard source, including preamble inputs", async () => {
+  await mkdir(path.join(process.cwd(), ".paperfocus/trials"), { recursive: true });
   const workspace = await mkdtemp(path.join(process.cwd(), ".paperfocus/trials/title-editor-"));
   const root = path.join(workspace, "paper"); await mkdir(root);
   const command = String.raw`\title[Short]{A {worked} title}`;

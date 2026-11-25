@@ -1,4 +1,16 @@
 import { reelCandidate } from "./blockReel.ts";
+import type { ProjectDocument } from "./types.ts";
+
+/** Resolve against this loaded manuscript, never an older version's paragraph. */
+export function currentSourceFile(document: Pick<ProjectDocument, "project" | "files" | "paragraphs" | "nodes">,
+  context: { paragraphId?: string; nodeId?: string; raw?: boolean; file?: string }) {
+  const available = (file?: string) => file && document.files.includes(file) ? file : undefined;
+  if (context.raw) return available(context.file) ?? document.project.mainFile;
+  const paragraph = document.paragraphs.find(p => p.id === context.paragraphId && (!context.nodeId || p.nodeId === context.nodeId));
+  const node = document.nodes.find(n => n.id === context.nodeId);
+  return available(paragraph?.file) ?? available(node?.sourceOpening?.file) ?? available(node?.sourceInsertion?.file)
+    ?? available(document.paragraphs.find(p => p.nodeId === node?.id)?.file) ?? document.project.mainFile;
+}
 
 export interface SourceViewportPosition {
   nodeId: string;
@@ -11,6 +23,7 @@ export interface SourceJumpTarget {
   sequence: number;
   viewportOffset?: number;
   sourceOffset?: number;
+  paragraphOffset?: number;
   edge?: "start" | "end";
   flash?: boolean;
   command?: "opening" | "closing";

@@ -17,3 +17,8 @@ export function commentShortcut(event: CommentKey, replies = false): "save" | -1
 export function isCompileShortcut(event: CommentKey & { defaultPrevented?: boolean }, inComments = false) {
   return !event.defaultPrevented && !inComments && commentShortcut(event) === "save";
 }
+
+/** Escape closes comments only after nested controls have had a chance to consume it. */
+export function isCloseCommentShortcut(event: CommentKey & { defaultPrevented?: boolean }) {
+  return event.key === "Escape" && !event.defaultPrevented && !event.isComposing && !event.repeat && !event.ctrlKey && !event.metaKey && !event.shiftKey && !event.altKey;
+}

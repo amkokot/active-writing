@@ -369,7 +369,7 @@ test("plain-source selection retains visible passage actions but no top environm
 test("top bar and sidebar choices persist independently of manuscript storage", () => {
   const stored = new Map();
   const storage = { getItem: key => stored.get(key), setItem: (key, value) => stored.set(key, value) };
-  const choices = { autoHideTopbar: true, hideTopbarByDefault: true, sidebarPinned: true, theme: "dark", darkPdf: true, automaticCompilation: true, sectionPdf: true, interfaceSize: "comfortable", compactAwLinks: false, commentColumn: false };
+  const choices = { autoHideTopbar: true, hideTopbarByDefault: true, sidebarPinned: true, theme: "dark", darkPdf: true, automaticCompilation: true, sectionPdf: true, interfaceSize: "comfortable", compactAwLinks: false, commentColumn: false, spelling:false, latexCompletion:false };
   assert.equal(saveChromePreferences(choices, storage), true);
   assert.deepEqual(loadChromePreferences(storage), { ...choices, sectionPdf: false });
   assert.deepEqual([...stored.keys()], [chromePreferencesKey]);

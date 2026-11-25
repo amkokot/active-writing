@@ -1,4 +1,4 @@
-import { realpath } from "node:fs/promises";
+import { realpath, stat } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -6,6 +6,25 @@ import { getProject } from "./projects.ts";
 import type { WorkspaceFolders } from "../src/workspaceFolders.ts";
 import { projectStorage } from "./projectStorage.ts";
 import { appCodeRoot } from "./appPaths.ts";
+import { guardedTarget } from "./guardedFile.ts";
+
+export async function projectFileLocation(workspace: string, projectId: string, file: string) {
+  const { root } = await getProject(workspace, projectId);
+  const target = await guardedTarget(root, file);
+  if (!(await stat(target)).isFile()) throw new Error("Choose an existing project file.");
+  return { path: target, folder: path.dirname(target), canOpen: process.platform === "win32" };
+}
+
+export async function revealProjectFile(workspace: string, projectId: string, file: string, launch: typeof spawn = spawn) {
+  const location = await projectFileLocation(workspace, projectId, file);
+  if (!location.canOpen) return { ...location, success: false };
+  await new Promise<void>((resolve, reject) => {
+    const child = launch("explorer.exe", ["/select,", location.path], { windowsHide: false, detached: true, stdio: "ignore" });
+    child.once("error", reject);
+    child.once("spawn", () => { child.unref(); resolve(); });
+  });
+  return { ...location, success: true };
+}
 
 export async function workspaceFolders(workspace: string, projectId?: string): Promise<WorkspaceFolders> {
   const home = await realpath(workspace);

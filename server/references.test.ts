@@ -5,6 +5,48 @@ import path from "node:path";
 import { parseBibliography, parseInlineBibliography, arxivId } from "./bibliography.ts";
 import { referenceTokens, safeLink, sourceReferenceSummary, expandSourceReference } from "../src/references.ts";
 import { editableText } from "../src/editableText.ts";
+import {latexCatalogue,latexCompletion,acceptLatexCompletion,latexSpellingSegments} from '../src/latexCompletion.ts';
+
+test('LaTeX completion uses supplied keys and preserves citation separators and closing braces',()=>{
+ const catalogue={citations:[{value:'Alpha2025',detail:'Useful transport book'},{value:'Beta2024',detail:'Another paper'}],labels:[{value:'thm:main',detail:'Main result'}],figures:[]};
+ const text=String.raw`See \cite{Beta2024, Al} next.`,caret=text.indexOf('}'),match=latexCompletion(text,caret,catalogue)!;
+ assert.deepEqual(match.options.map(o=>o.value),['Alpha2025']);
+ assert.equal(acceptLatexCompletion(text,match,'Alpha2025')?.text,String.raw`See \cite{Beta2024, Alpha2025} next.`);
+ assert.equal(acceptLatexCompletion(text+'x',match,'Alpha2025'),undefined);
+ assert.equal(acceptLatexCompletion(text,match,'InventedKey'),undefined);
+ const ref=String.raw`Use \eqref{thm`,found=latexCompletion(ref,ref.length,catalogue)!;
+ assert.equal(acceptLatexCompletion(ref,found,'thm:main')?.text,String.raw`Use \eqref{thm:main}`);
+});
+
+test('LaTeX figure completion supports options and ignores escaped or commented commands',()=>{
+ const c={citations:[],labels:[],figures:[{value:'figures/result plot.pdf',detail:'Project figure'}]};
+ const source=String.raw`\includegraphics[width=.7\textwidth]{fig`,match=latexCompletion(source,source.length,c)!;
+ assert.equal(acceptLatexCompletion(source,match,c.figures[0].value)?.text,String.raw`\includegraphics[width=.7\textwidth]{figures/result plot.pdf}`);
+ for(const source of [String.raw`% \includegraphics{fig`,String.raw`\\includegraphics{fig`])assert.equal(latexCompletion(source,source.length,c),undefined);
+ const unknown=String.raw`\ref{missing`;assert.equal(latexCompletion(unknown,unknown.length,c),undefined);
+});
+
+test('cached LaTeX lookup keeps prefix priority, metadata search and fresh catalogue entries',()=>{
+ const c={citations:[{value:'Zulu',detail:'Alpha reference'},{value:'Alpha2',detail:'Other'},{value:'Alpha1',detail:'Worked proof'}],labels:[],figures:[]};
+ const source=String.raw`\cite{Alpha`;
+ for(let i=0;i<3;i++)assert.deepEqual(latexCompletion(source,source.length,c)?.options.map(o=>o.value),['Alpha1','Alpha2','Zulu']);
+ const fresh={...c,citations:[...c.citations,{value:'Alpha0',detail:'New bibliography entry'}]};
+ assert.deepEqual(latexCompletion(source,source.length,fresh)?.options.map(o=>o.value),['Alpha0','Alpha1','Alpha2','Zulu']);
+ const metadata=String.raw`\cite{proof`;
+ assert.deepEqual(latexCompletion(metadata,metadata.length,c)?.options.map(o=>o.value),['Alpha1']);
+});
+
+test('math-aware spelling preserves exact source and leaves instructional prose checkable',()=>{
+ const source=String.raw`Explain $x+y$ directly. \emph{Work carefully}. \cite{Alpha2025} \href{https://example.test}{Readable link} \begin{proof}We multiply both sides.\end{proof} \[unfinished math`;
+ const segments=latexSpellingSegments(source),prose=segments.filter(s=>s.check).map(s=>s.text).join('');
+ assert.equal(segments.map(s=>s.text).join(''),source);
+ assert.match(prose,/Work carefully/);assert.match(prose,/Readable link/);assert.match(prose,/multiply both sides/);
+ assert.doesNotMatch(prose,/x\+y|Alpha2025|example.test|unfinished math|begin|proof/);
+ const escaped=String.raw`Cost \$5 and a literal \% sign.`;
+ assert.equal(latexSpellingSegments(escaped).map(s=>s.text).join(''),escaped);
+ const equation=String.raw`Before \begin{align}x&=y+z\\ y&=1\end{align} After`;
+ assert.equal(latexSpellingSegments(equation).filter(s=>s.check).map(s=>s.text).join(''),'Before  After');
+});
 import { parseProject, publicDocument, registerProject, saveEdits } from "./projects.ts";
 import { attachProjectPdf, downloadArxiv, readReferencePdf, referenceLibrary, saveReferencePage, storeReference } from "./referenceLibrary.ts";
 import { editorFont, paperAppearance } from "../src/paperAppearance.ts";

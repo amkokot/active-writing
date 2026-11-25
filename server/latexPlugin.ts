@@ -38,7 +38,7 @@ import type { CompileResult, SectionPdfPart } from "../src/types.ts";
 import type { ParsedProject } from "./projects.ts";
 import { visiblePreviewNodes } from "../src/workspaceTools.ts";
 import { buildDependencies, dependenciesUnchanged, focusedJobName, seedFocusedBuild, compilationCommand, type BuildDependency } from "./buildCache.ts";
-import { compiledSourceRanges, correspondingRange, pagesForSource, querySync, sourceLine, sourcePath, type CompiledSourceRange } from "./sourceSync.ts";
+import { compiledSourceRanges, correspondingRange, correspondingOffset, pagesForSource, querySync, sourceLine, sourcePath, type CompiledSourceRange } from "./sourceSync.ts";
 import { cloneRepository, connectRemote, fullVerified, githubAccount, githubLoginStatus, githubRepositories, publishGithub, repoStatus, selectProject, startGithubLogin, syncRepository } from "./repositories.ts";
 import { focusedDocument, focusedSourceSnippets, writeFocusedSource } from "./focus.ts";
 import { missingPdfDestinations } from "../src/pdfLinks.ts";
@@ -57,7 +57,7 @@ import { readProjectQueue } from "./projectQueue.ts";
 import { readEvidenceFile, saveEvidenceSnapshot } from "./experimentEvidence.ts";
 import { exportReview, annotateCompletedReview } from "./reviewExport.ts";
 import { createSourceMonitor } from "./sourceMonitor.ts";
-import { workspaceFolders, openWorkspaceFolder } from "./workspaceFolders.ts";
+import { workspaceFolders, openWorkspaceFolder, projectFileLocation, revealProjectFile } from "./workspaceFolders.ts";
 import { readSourceDraftCopies, saveSourceDraftCopy } from "./sourceDrafts.ts";
 import { localModels, localDiagnostic, queueLocalRewrite, queueLocalStudy, readLocalJob, unloadLocalModels, cancelLocalJob } from "./localModels.ts";
 
@@ -635,7 +635,11 @@ json(res, 200, { app: "active-writing", workspaceRoot: path.resolve(workspaceRoo
       if (req.headers.origin !== `http://${req.headers.host}`) { json(res, 403, { error: "Open folders from this editor's local origin." }); return; }
       try {
         const request = JSON.parse(await requestBody(req));
-        json(res, 200, await openWorkspaceFolder(workspaceRoot, request.projectId, request.target));
+        if (request.target === "file") {
+          json(res, 200, request.copy === true
+            ? await projectFileLocation(workspaceRoot, request.projectId, request.file)
+            : await revealProjectFile(workspaceRoot, request.projectId, request.file));
+        } else json(res, 200, await openWorkspaceFolder(workspaceRoot, request.projectId, request.target));
       } catch (error) { json(res, 400, { error: error instanceof Error ? error.message : String(error) }); }
       return;
     }
@@ -1059,7 +1063,8 @@ json(res, 200, { app: "active-writing", workspaceRoot: path.resolve(workspaceRoo
             const range = candidates.sort((a, b) => distance(a) - distance(b))[0];
             const currentRange = range && correspondingRange(range.paragraphId, record.sourceRanges, currentRanges);
             const paragraph = currentRange && parsed.paragraphs.find(item => item.id === currentRange.paragraphId);
-            if (paragraph) return { paragraphId: paragraph.id, nodeId: paragraph.nodeId, approximate };
+            if (paragraph && range && currentRange) return { paragraphId: paragraph.id, nodeId: paragraph.nodeId,
+              paragraphOffset: correspondingOffset(range, currentRange, line, Number(target.Column)), approximate };
           }
           throw new Error("No editable passage was found at this PDF position.");
         });

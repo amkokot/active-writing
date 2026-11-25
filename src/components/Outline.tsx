@@ -18,11 +18,13 @@ import type {
 } from "../types";
 import { outlineRows } from "../workspaceTools";
 import { sectionHeadingLevel } from "../headingHierarchy";
-import { memo } from "react";
+import { memo, useRef } from "react";
 import type { CSSProperties } from "react";
 
 interface OutlineProps {
   onPreamble?:()=>void;
+  onTitle?:()=>void;
+  onSetProgress?:(ids:string[],done:boolean)=>void;
   lens: Lens;
   nodes: ManuscriptNode[];
   activeNodeId: string;
@@ -50,6 +52,8 @@ function ProgressIcon({ state }: { state: ProgressState }) {
 
 function OutlineView({
   onPreamble,
+  onTitle,
+  onSetProgress,
   lens,
   nodes,
   activeNodeId,
@@ -68,6 +72,7 @@ function OutlineView({
   onCycleProgress,
   onSelectTheme,
 }: OutlineProps) {
+  const progressAnchor=useRef<string | undefined>(undefined);
   if (lens === "themes") {
     return (
       <div className="outline-body">
@@ -98,7 +103,7 @@ function OutlineView({
     );
   }
 
-  const displayedNodes = outlineRows(nodes, lens, collapsedNodeIds);
+  const displayedNodes = outlineRows(nodes, lens, collapsedNodeIds).filter(row=>!onTitle || row.node.id!=="document");
   const visibleIds = new Set(displayedNodes.map(({ node }) => node.id));
   const visited = new Set<string>();
   let railCurrent = nodes.find(node => node.id === activeNodeId);
@@ -111,11 +116,9 @@ function OutlineView({
     <div className="outline-body">
       <div className="outline-caption">
         <span>{lens === "proofs" ? "Results & proofs" : "Contents"}</span>
-        <button className="text-button" aria-label="Collapse contents branches" onClick={onFold}>Fold</button>
-        <button className="text-button" onClick={() => onFocusNode(undefined)}>
-          Clear focus
-        </button>
+        <details className="outline-progress-menu"><summary aria-label="Section checkmarks" title="Contents actions"><MoreHorizontal size={14}/></summary><div><button aria-label="Collapse contents branches" onClick={onFold}>Fold branches</button>{onSetProgress && <><button onClick={()=>onSetProgress(displayedNodes.map(row=>row.node.id),true)}>Mark shown done</button><button onClick={()=>onSetProgress(nodes.filter(node=>node.id!=="document").map(node=>node.id),true)}>Mark all done</button><button onClick={()=>onSetProgress(nodes.map(node=>node.id),false)}>Clear all marks</button><small>Shift-click a checkmark to mark a range.</small></>}</div></details>
       </div>
+      {onTitle && <button className="outline-preamble" aria-label="Edit document title" title="Edit the title in the main source pane" onClick={onTitle}><span className="outline-full-label">Title</span><span className="outline-rail-label" aria-hidden="true">T</span></button>}
       {onPreamble && <button className="outline-preamble" aria-label="Edit preamble" title="Preamble · document settings and theorem declarations" onClick={onPreamble}><span className="outline-full-label">Preamble</span><span className="outline-rail-label" aria-hidden="true">P</span></button>}
       {displayedNodes.map(({ node, depth, expandable }, index) => {
         const hidden = hiddenNodeIds.includes(node.id);
@@ -144,7 +147,12 @@ function OutlineView({
               className={`status-control is-${progressByNode[node.id] ?? "blank"}`}
               aria-label={`Progress for ${label}: ${progressByNode[node.id] ?? "blank"}`}
               title={(progressByNode[node.id] ?? "blank") === "progress" ? "Mark done; remove its section reminder (comments stay open)" : (progressByNode[node.id] ?? "blank") === "done" ? "Mark unfinished; add a section reminder" : "Mark in progress; add a section reminder"}
-              onClick={() => onCycleProgress(node.id)}
+              onClick={event => {
+                const anchor=displayedNodes.findIndex(row=>row.node.id===progressAnchor.current),at=displayedNodes.findIndex(row=>row.node.id===node.id);
+                if(event.shiftKey && onSetProgress && anchor>=0)onSetProgress(displayedNodes.slice(Math.min(anchor,at),Math.max(anchor,at)+1).map(row=>row.node.id),progressByNode[node.id]!=="done");
+                else onCycleProgress(node.id);
+                progressAnchor.current=node.id;
+              }}
             >
               <ProgressIcon state={progressByNode[node.id] ?? "blank"} />
             </button>

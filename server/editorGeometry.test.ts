@@ -21,7 +21,7 @@ test("highlight tools stay inside the source pane and away from its toolbar",()=
   assert.deepEqual(highlightActionsPosition({right:70,bottom:200},{left:56,right:160,top:80,bottom:720},220,28),{x:64,y:206});
   assert.deepEqual(highlightActionsPosition({right:310,bottom:680},pane,180,48),{x:324,y:664});
 });
-import { anchoredScrollTop, viewportParagraph } from "../src/sourceViewport.ts";
+import { anchoredScrollTop, viewportParagraph, currentSourceFile } from "../src/sourceViewport.ts";
 import { boundedPaneShare } from "../src/editorGeometry.ts";
 import { sourceLineStarts, lineAtOffset } from "../src/sourceLines.ts";
 import { readFile } from "node:fs/promises";
@@ -176,4 +176,14 @@ test('source layout is contained without clipping controls below the editing box
  const css=await readFile(new URL('../src/styles.css',import.meta.url),'utf8');
  assert.match(css,/\.source-editor-shell \{ contain: layout; \}/);
  assert.doesNotMatch(css,/\.source-editor-shell \{ contain: (?:paint|strict|content);/);
+});
+
+test('file location follows the current included source and rejects stale version anchors',()=>{
+ const doc={project:{id:'p',name:'Paper',folder:'paper',mainFile:'v2.tex',createdAt:''},files:['v1.tex','v2.tex','sections/main-v2.tex','appendix-v2.tex'],paragraphs:[{id:'body',nodeId:'section',file:'sections/main-v2.tex',text:'Current body'},{id:'proof',nodeId:'appendix',file:'appendix-v2.tex',text:'Proof'}],nodes:[{id:'section',kind:'section' as const,title:'Body',depth:1,paragraphIds:['body'],sourceOpening:{file:'sections/main-v2.tex',start:0,end:1,text:''}}]};
+ assert.equal(currentSourceFile(doc,{paragraphId:'body',nodeId:'section'}),'sections/main-v2.tex');
+ assert.equal(currentSourceFile(doc,{paragraphId:'proof',nodeId:'appendix'}),'appendix-v2.tex');
+ assert.equal(currentSourceFile(doc,{nodeId:'section'}),'sections/main-v2.tex');
+ assert.equal(currentSourceFile(doc,{paragraphId:'old-version',nodeId:'old-section'}),'v2.tex');
+ assert.equal(currentSourceFile(doc,{raw:true,file:'appendix-v2.tex'}),'appendix-v2.tex');
+ assert.equal(currentSourceFile(doc,{raw:true,file:'missing.tex'}),'v2.tex');
 });

@@ -10,7 +10,7 @@ import { test } from "node:test";
 import path from "node:path";
 import os from "node:os";
 import { mkdtemp, writeFile, mkdir, readFile, readdir, stat, utimes } from "node:fs/promises";
-import { sourceLine, sourcePath, syncPageIndex, syncRecords, compiledSourceRanges, correspondingRange } from "./sourceSync.ts";
+import { sourceLine, sourcePath, syncPageIndex, syncRecords, compiledSourceRanges, correspondingRange, correspondingOffset } from "./sourceSync.ts";
 import type { ParsedProject } from "./projects.ts";
 import { buildDependencies, dependenciesUnchanged, seedFocusedBuild, compilationCommand } from "./buildCache.ts";
 
@@ -131,4 +131,18 @@ test("published snapshots validate their own bytes, not the mutable compiler wor
   assert.equal(await dependenciesUnchanged(dependencies), true);
   await writeFile(path.join(snapshot, "main.pdf"), "replaced PDF");
   assert.equal(await dependenciesUnchanged(dependencies), false);
+});
+
+
+test("inverse SyncTeX keeps the line inside a proof instead of its opening", () => {
+  const text = "\\begin{proof}\nFirst paragraph.\n\nSecond argument.\nLast step.\n\\end{proof}";
+  const range = {paragraphId:"proof",file:"appendix.tex",startLine:20,endLine:25,text};
+  assert.equal(correspondingOffset(range,range,23),text.indexOf("Second"));
+  assert.equal(correspondingOffset(range,range,22),text.indexOf("First"),"paragraph-ending blank line targets its prose");
+  assert.equal(correspondingOffset(range,range,24,5),text.indexOf("Last")+5);
+  const revised = {...range,text:text.replace("First paragraph.","New explanation.\nFirst paragraph.")};
+  assert.equal(correspondingOffset(range,revised,23),revised.text.indexOf("Second"));
+  assert.equal(correspondingOffset(range,range,999,-1),text.indexOf("\\end"));
+  const crlf={...range,text:text.replaceAll("\n","\r\n")};
+  assert.equal(correspondingOffset(crlf,crlf,23),crlf.text.indexOf("Second"));
 });

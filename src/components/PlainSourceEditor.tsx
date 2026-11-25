@@ -7,7 +7,7 @@ import { usePaneZoomGestures, useStoredPaneZoom } from "../usePaneZoom";
 import { textareaCaretTop } from "../textareaViewport";
 import { SourceLineNumbers } from "./SourceLineNumbers";
 interface SourceFile {file:string;source:string;revision:string;mainFile:string;positions:Array<{paragraphId:string;nodeId?:string;start:number;end:number}>}
-interface Props {document:ProjectDocument;file:string;onFile:(file:string)=>Promise<void>;onSaved:(document:ProjectDocument)=>void;flushRef:MutableRefObject<(()=>Promise<void>)|undefined>;jump?:{paragraphId?:string;nodeId?:string;sequence:number;sourceOffset?:number};preamble?:boolean;onFocus:(paragraphId:string,nodeId:string)=>void;onSyncToPreview?:(paragraphId:string)=>void;readOnly?:boolean;onClose:()=>Promise<void>}
+interface Props {document:ProjectDocument;file:string;onFile:(file:string)=>Promise<void>;onSaved:(document:ProjectDocument)=>void;flushRef:MutableRefObject<(()=>Promise<void>)|undefined>;jump?:{paragraphId?:string;nodeId?:string;sequence:number;sourceOffset?:number;paragraphOffset?:number};preamble?:boolean;onFocus:(paragraphId:string,nodeId:string)=>void;onSyncToPreview?:(paragraphId:string)=>void;readOnly?:boolean;onClose:()=>Promise<void>}
 export function PlainSourceEditor({document:paper,file,onFile,onSaved,flushRef,jump,preamble,onFocus,onSyncToPreview,readOnly,onClose}:Props){
   const [text,setText]=useState(""),[loaded,setLoaded]=useState(false),[saving,setSaving]=useState(false),[error,setError]=useState<string>();
   const [keptDrafts,setKeptDrafts]=useState<Array<{at:string;text:string}>>([]);
@@ -70,7 +70,8 @@ export function PlainSourceEditor({document:paper,file,onFile,onSaved,flushRef,j
   useEffect(()=>{if(!loaded || error || readOnly || draft.current===baseline.current?.source)return;const timer=setTimeout(()=>{void flush().catch(()=>undefined);},650);return()=>clearTimeout(timer);},[text,loaded,error,readOnly,flush]);
   useEffect(()=>{
     if(!loaded || !input.current || draft.current!==baseline.current?.source)return;
-    const position=preamble?0:jump?.sourceOffset ?? baseline.current?.positions.find(p=>jump?.paragraphId?p.paragraphId===jump.paragraphId:p.nodeId===jump?.nodeId)?.start;
+    const passage=baseline.current?.positions.find(p=>jump?.paragraphId?p.paragraphId===jump.paragraphId:p.nodeId===jump?.nodeId);
+    const position=preamble?0:jump?.sourceOffset ?? (passage ? Math.min(passage.end,passage.start+(jump?.paragraphOffset ?? 0)) : undefined);
     if(position===undefined)return;
     const editor=input.current;editor.focus();editor.setSelectionRange(position,position);
     editor.scrollTop=Math.max(0,textareaCaretTop(editor,position)-40);

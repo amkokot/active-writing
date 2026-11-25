@@ -22,7 +22,6 @@ import {requireSyncNetwork} from './syncNetwork.ts';
 import {mergeLiteralText,textMergeLimits} from './syncText.ts';
 import {readingPins,validateReadingPins,mergeReadingPins,applyReadingPins} from './syncDocumentPins.ts';
 import {mergeableReadingSource,sourceText,rememberReadingSource,readingSourceBase,hasReadingSourceBase,saveReadingSourceReview,readingSourceChoice,clearReadingSourceReview} from './syncReadingSource.ts';
-
 const hashPattern=/^[a-f0-9]{64}$/,ownerPattern=/^[A-Za-z0-9_-]{1,64}$/;
 const limit=16*1024**2;
 const sourceTypes=/\.(tex|bib|md|txt|png|jpe?g|webp|gif|pdf|svg|eps)$/i;
@@ -30,6 +29,47 @@ export interface Item {key:string;digest:string;raw:string;bytes:number;binding:
 export interface Packet {item:Item;data:string;runs?:Array<{name:string;data:string;sha256:string}>;commentUnion?:true}
 export interface Inventory {projectId:string;deviceId:string;items:Item[];deferred:string[];absentNotebooks?:string[];documentPins?:Item;slideDeck?:Item;figures?:Item[];maintenance?:boolean}
 class AbsentReadingNotebook extends Error {}
+export interface ReadingSelection {version:1;files:string[];notebooks:string[];roots?:string[]}
+export function validateReadingSelection(v:any):asserts v is ReadingSelection {
+ if(v?.version!==1||!Array.isArray(v.files)||v.files.length>2000||!Array.isArray(v.notebooks)||v.notebooks.length>128
+ ||v.files.some((f:any)=>!safeSyncPath('source/'+f))||v.notebooks.some((id:any)=>typeof id!=='string'||!ownerPattern.test(id))
+ ||v.roots!==undefined&&(!Array.isArray(v.roots)||v.roots.length>128||v.roots.some((f:any)=>typeof f!=='string'||!f.endsWith('.tex')||!v.files.includes(f)))
+ ||new Set(v.files).size!==v.files.length||new Set(v.notebooks).size!==v.notebooks.length)throw Error('Invalid requested reading selection; sync held.');
+}
+export async function readingSelection(home:string,id:string):Promise<ReadingSelection|undefined>{
+ try{const v=JSON.parse((await readSyncBytes(await privateSyncPath(home,`reading/${id}/selection.json`),100000)).toString());validateReadingSelection(v);return v;}
+ catch(error){if((error as NodeJS.ErrnoException).code==='ENOENT')return;throw error;}
+}
+// Follow only literal compile dependencies of retained TeX. Never follow href,
+// bibliography citations, directory trees or research/notebook links.
+const selectionDependencyCache=new Map<string,{until:number;fingerprint:string;value:Promise<ReadingSelection>}>();
+export async function effectiveReadingSelection(home:string,id:string){
+ const selection=await readingSelection(home,id);if(!selection)return;
+ const key=path.resolve(home)+'/'+id,fingerprint=syncHash(canonical(selection)),cached=selectionDependencyCache.get(key);
+ if(cached&&cached.until>Date.now()&&cached.fingerprint===fingerprint)return cached.value;
+ const value=(async()=>{
+  const {root}=await getProject(home,id),files=new Set(selection.files),queue=[...(selection.roots??selection.files.filter(f=>f.endsWith('.tex')))],seen=new Set<string>();let bytes=0;
+  const add=(name:string)=>{if(!safeSyncPath('source/'+name)||!sourceTypes.test(name))return;if(files.size>=2000)throw Error('Reading dependency count exceeds its limit.');if(!files.has(name)){files.add(name);if(name.endsWith('.tex'))queue.push(name);}};
+  while(queue.length){
+   const file=queue.shift()!;if(seen.has(file))continue;if(seen.size>=128)throw Error('Reading dependency source count exceeds its limit.');seen.add(file);
+   let raw:Buffer;try{raw=await readSyncBytes(await guardedTarget(root,file),1024**2);}catch(error){if(['ENOENT','ENOTDIR'].includes((error as NodeJS.ErrnoException).code??''))continue;throw error;}
+   if((bytes+=raw.length)>8*1024**2)throw Error('Reading dependency source bytes exceed their limit.');
+   const text=raw.toString('utf8').replace(/(?<!\\)%[^\r\n]*/g,'');
+   for(const match of text.matchAll(/\\(input|include|includegraphics\*?|bibliography|addbibresource)\s*(?:\[[^\]]*\])?\s*\{([^{}]+)\}/g)){
+    for(const token of match[1]==='bibliography'?match[2].split(','):[match[2]]){
+     const name=token.trim();if(!name||/[\\:{}#$]/.test(name)||name.startsWith('/')||name.split('/').includes('..'))continue;
+     const bases=[name,path.posix.join(path.posix.dirname(file),name)];
+     const extensions=path.posix.extname(name)?['']:match[1].startsWith('includegraphics')?['.pdf','.png','.jpg','.jpeg','.webp','.eps','.svg']:['bibliography','addbibresource'].includes(match[1])?['.bib']:['.tex'];
+     for(const base of bases)for(const ext of extensions)add(base+ext);
+    }
+   }
+  }
+  return {...selection,files:[...files]};
+ })();
+ selectionDependencyCache.set(key,{until:Date.now()+2000,fingerprint,value});
+ try{return await value;}catch(error){selectionDependencyCache.delete(key);throw error;}
+}
+function selectedReadingKey(selection:ReadingSelection|undefined,key:string){return !selection||key==='comments'||key.startsWith('source/')&&selection.files.includes(key.slice(7))||key.startsWith('notebook/')&&selection.notebooks.includes(key.slice(9));}
 interface Baselines {version:1;projectId:string;peerId:string;files:Record<string,string>;documentPins?:string;slideDeck?:string}
 function kind(key:string){
  if(key==='slide-deck')return 'slide-deck';
@@ -107,11 +147,11 @@ export async function fastReadingFigures(root:string,roots:string[]){
  }
  return [...figures];
 }
-export function readingTransferPriority(key:string){return key==='comments'||key==='document-pins'||key==='slide-deck'?0:/\.(tex|bib|md|txt)$/i.test(key)?1:/^source\/.+\//.test(key)&&sourceTypes.test(key)?2:key.startsWith('notebook/')?3:4;}
+export function readingTransferPriority(key:string){return key==='comments'?0:/\.(tex|bib|md|txt)$/i.test(key)?1:/^source\/.+\//.test(key)&&sourceTypes.test(key)?2:key.startsWith('notebook/')?3:4;}
 export async function readingInventory(home:string,id:string,fastOnly=false):Promise<Inventory>{
  const device=(await syncStatus(home)).device;if(!device)throw Error('Name the device first.');
  const items:Item[]=[],deferred:string[]=[],absentNotebooks:string[]=[];
- const keys:string[]=[];
+ const keys:string[]=[];const selection=await effectiveReadingSelection(home,id);
  const inventoryPolicy=await policy(home,id);
  const readingAssets=fastOnly?await fastReadingFigures(inventoryPolicy.root,[inventoryPolicy.project.manuscriptPins?.overview,inventoryPolicy.project.manuscriptPins?.notes,inventoryPolicy.project.mainFile,inventoryPolicy.project.slideDeck].filter((f):f is string=>!!f)):[];
  try{const sources=await sourceInventory(home,id,{retainCompiledPdf:true,readingTextOnly:fastOnly,readingAssets});keys.push(...sources.files.filter(f=>sourceTypes.test(f.name)).map(f=>'source/'+f.name));}
@@ -121,17 +161,17 @@ export async function readingInventory(home:string,id:string,fastOnly=false):Pro
  // One inventory is an observation, not permission to write. Reuse its policy
  // read instead of parsing the whole workbench once per source file. Actual
  // packet reads/imports below still recheck current policy and exact bytes.
- for(const key of keys)try{items.push((await packet(home,id,key,inventoryPolicy)).item);}catch(error){if(error instanceof AbsentReadingNotebook){absentNotebooks.push(key);continue;}deferred.push(key);if((error as Error).message.includes('Shared notebook ownership'))throw error;}
+ for(const key of keys.filter(key=>selectedReadingKey(selection,key)))try{items.push((await packet(home,id,key,inventoryPolicy)).item);}catch(error){if(error instanceof AbsentReadingNotebook){absentNotebooks.push(key);continue;}deferred.push(key);if((error as Error).message.includes('Shared notebook ownership'))throw error;}
  // An optional capability, outside items, keeps older peers fully compatible.
  let documentPins:Item|undefined;
- try{documentPins=(await packet(home,id,'document-pins',inventoryPolicy)).item;}catch{deferred.push('document-pins');}
- let slideDeck:Item|undefined;try{slideDeck=(await packet(home,id,'slide-deck',inventoryPolicy)).item;}catch{deferred.push('slide-deck');}
+ if(!selection)try{documentPins=(await packet(home,id,'document-pins',inventoryPolicy)).item;}catch{deferred.push('document-pins');}
+ let slideDeck:Item|undefined;if(!selection)try{slideDeck=(await packet(home,id,'slide-deck',inventoryPolicy)).item;}catch{deferred.push('slide-deck');}
  const figures=fastOnly?items.filter(i=>!/^source\/.*\.(tex|bib|md|txt)$/i.test(i.key)&&i.key!=='comments'):undefined;
  return {projectId:id,deviceId:device.id,items:figures?items.filter(i=>!figures.includes(i)):items,deferred,absentNotebooks,...(documentPins?{documentPins}:{}),...(slideDeck?{slideDeck}:{}),...(figures?{figures}:{}),maintenance:await (await import('./syncMaintenance.ts')).maintenanceEnabled()};
 }
 export async function readingPacket(home:string,id:string,item:Item,budget=limit):Promise<Packet>{
  if(!Number.isSafeInteger(budget)||budget<1||budget>limit)throw Error('Invalid reading packet budget.');
- checkItem(item);const result=await packet(home,id,item.key);if(result.item.digest!==item.digest||result.item.raw!==item.raw||result.item.binding!==item.binding)throw Error('Reading record moved; leave it for the next pass.');
+ checkItem(item);if(!selectedReadingKey(await effectiveReadingSelection(home,id),item.key))throw Error('This report is desktop-only until requested.');const result=await packet(home,id,item.key);if(result.item.digest!==item.digest||result.item.raw!==item.raw||result.item.binding!==item.binding)throw Error('Reading record moved; leave it for the next pass.');
  if(result.item.bytes>budget)throw Error('Reading batch budget reached; leave this record for the next pass.');
  if(kind(item.key)==='notebook'){
   const owner=item.key.slice(9),nb=JSON.parse(Buffer.from(result.data,'base64').toString()),ids=new Set<string>();
@@ -148,6 +188,7 @@ export async function readingPacket(home:string,id:string,item:Item,budget=limit
  return result;
 }
 export async function applyReadingPacket(home:string,id:string,incoming:Packet,expected:Item|undefined){
+ if(!selectedReadingKey(await effectiveReadingSelection(home,id),incoming.item.key))throw Error('This report is desktop-only until requested.');
  const data=bytes(incoming),type=kind(incoming.item.key);if(expected){checkItem(expected);if(expected.key!==incoming.item.key)throw Error('Reading target differs.');}
  if(incoming.commentUnion!==undefined&&(incoming.commentUnion!==true||type!=='comments'))throw Error('Invalid comment-only union flag.');
  const p=await policy(home,id);let previous:Packet|undefined;
@@ -165,7 +206,7 @@ export async function applyReadingPacket(home:string,id:string,incoming:Packet,e
  }else if(type==='document-pins'){
   if(!previous)throw Error('Missing current reading document pins.');
   await applyReadingPins(home,id,JSON.parse(data.toString()),previous.item.digest);
- }else if(type==='source')await saveGuardedFile(p.root,incoming.item.key.slice(7),previous?.item.raw??'',data,limit);
+ }else if(type==='source'){await saveGuardedFile(p.root,incoming.item.key.slice(7),previous?.item.raw??'',data,limit);selectionDependencyCache.delete(path.resolve(home)+'/'+id);}
  else if(type==='comments'){
   const value=JSON.parse(data.toString());validateWorkbench(value);
   if(value.attentionTasks.some((t:any)=>t.review?.kind!=='comment')||value.rewriteSessions.length||Object.keys(value.handoffDrafts).length||value.recoveredDrafts.length)throw Error('Only comments can cross this reading record.');
@@ -205,7 +246,6 @@ export async function applyReadingPacket(home:string,id:string,incoming:Packet,e
  return {applied:true,alreadyCurrent:false};
 }
 async function workbenchHash(home:string,id:string){try{return syncHash(await readSyncBytes(await guardedTarget(projectDataPath(home,id),'workbench.json'),4_000_000));}catch(error){if((error as NodeJS.ErrnoException).code==='ENOENT')return '';throw error;}}
-
 export async function handleReadingMessage(home:string,id:string,value:any){
  validateSyncJson(value);const extras=value?.action==='reading-maintenance'?['detail']:value?.action==='reading-get'?['item','budget']:value?.action==='reading-put'?['packet','expected']:value?.action==='reading-inventory'?['fastOnly']:[];
  if(!value||value.version!==1||!['reading-maintenance','reading-inventory','reading-get','reading-put'].includes(value.action)||Object.keys(value).some(k=>!['version','expectedDeviceId','action','maxBytes',...extras].includes(k))||value.expectedDeviceId!==(await syncStatus(home)).device?.id||value.maxBytes!==limit)throw Error('Invalid scoped reading message.');
@@ -234,6 +274,8 @@ export async function syncReadingRecords(home:string,id:string,peerId:string,run
  const local=await readingInventory(home,id,options.fastOnly),remote:Inventory=(await send('reading-inventory',options.fastOnly?{fastOnly:true}:{})).inventory;
  if(remote.projectId!==id||remote.deviceId!==peer.options.deviceId||!Array.isArray(remote.items)||remote.items.length>5000||!Array.isArray(remote.deferred)||remote.deferred.length>5000)throw Error('Reading inventory belongs to another project/device or exceeds its budget.');
  for(const item of remote.items)checkItem(item);
+ const requested=await effectiveReadingSelection(home,id);
+ if(requested){remote.items=remote.items.filter(i=>selectedReadingKey(requested,i.key));remote.deferred=remote.deferred.filter(k=>selectedReadingKey(requested,k));remote.absentNotebooks=remote.absentNotebooks?.filter(k=>selectedReadingKey(requested,k));delete remote.documentPins;delete remote.slideDeck;if(remote.figures)remote.figures=remote.figures.filter(i=>selectedReadingKey(requested,i.key));}
  if(remote.absentNotebooks!==undefined&&(!Array.isArray(remote.absentNotebooks)||remote.absentNotebooks.length>2000||remote.absentNotebooks.some(k=>!/^notebook\/[A-Za-z0-9_-]{1,64}$/.test(k))))throw Error('Invalid absent notebook inventory.');
  if(options.fastOnly&&remote.items.some(i=>i.key!=='comments'&&!/^source\/.*\.(tex|bib|md|txt)$/i.test(i.key)))throw Error('Remote exceeded the fast reading scope.');
  // Optional side capability: old clients ignore it and keep their text lane.
@@ -259,7 +301,7 @@ export async function syncReadingRecords(home:string,id:string,peerId:string,run
  for(const key of [...new Set([...left.keys(),...right.keys()])].sort((a,b)=>readingTransferPriority(a)-readingTransferPriority(b)||a.localeCompare(b))){
   if(deferred.includes(key)||key.startsWith('source/')&&deferred.includes('source/'))continue;const l=left.get(key),r=right.get(key),b=key==='slide-deck'?base.slideDeck:key==='document-pins'?base.documentPins:base.files[key];
   if(l&&r&&l.digest===r.digest){
-   if(mergeableReadingSource(key)||key==='document-pins'||key==='slide-deck')try{
+   if(mergeableReadingSource(key))try{
     if(l.bytes<=textMergeLimits.bytes&&seededFiles<16&&seededBytes+l.bytes<=1024**2&&!await hasReadingSourceBase(home,id,l.digest)){await cacheSourcePacket(home,id,await readingPacket(home,id,l));seededFiles++;seededBytes+=l.bytes;}
     await clearReadingSourceReview(home,id,key);
    }catch(error){issues.push({key,reason:(error as Error).message.slice(0,500)});deferred.push(key);continue;}
@@ -369,4 +411,3 @@ export async function syncReadingRecords(home:string,id:string,peerId:string,run
  if(held.length&&remote.maintenance===true)try{maintenance=(await send('reading-maintenance',{detail:'Held reading records: '+held.slice(0,12).join(', ')})).maintenance;}catch{maintenance={phase:'attention',detail:'Desktop maintenance could not be reached',updatedAt:new Date().toISOString()};}
  return {scope:'reading' as const,copied,held,deferred:[...new Set(deferred)],issues,checked:local.items.length,transferredBytes,wholeProjectAcknowledged:false,codeExecuted:false,approvalGranted:false,maintenance};
 }
-

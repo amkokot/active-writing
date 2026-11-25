@@ -1,7 +1,7 @@
 {
   "format": "active-writing-distribution",
   "version": 1,
-  "createdAt": "2026-11-23T19:09:38.948Z",
+  "createdAt": "2026-11-25T17:52:22.275Z",
   "appVersion": "0.2.0-preview.5",
   "privateWorkspaceIncluded": false,
   "setup": "scripts/portableSetup.mjs",
@@ -73,8 +73,8 @@
     },
     {
       "path": "distribution/CHANGELOG.md",
-      "size": 4911,
-      "sha256": "11e57ad85436f8896dddc0f1936115925af8e7f5b6cc0596bacd0ec2aea9d656"
+      "size": 5568,
+      "sha256": "21e8e4b9d0f2b0d2f4faaf00d34ea2fbcb13cb9779f21c9fa943e0a4c00bbd06"
     },
     {
       "path": "distribution/check.yml",
@@ -128,8 +128,8 @@
     },
     {
       "path": "distribution/GETTING_STARTED.md",
-      "size": 6445,
-      "sha256": "70507cd3bd27db0b1bd7da31c0f070d45edd36abcd9e92b52466e2a34578f854"
+      "size": 8297,
+      "sha256": "7761e9a958bb489c751829d1220e810bebd9fb166fad8f5ee2a1da6cb2b1cce0"
     },
     {
       "path": "distribution/MAINTENANCE.md",
@@ -173,8 +173,8 @@
     },
     {
       "path": "docs/AGENT_GUIDE.md",
-      "size": 71439,
-      "sha256": "e9af24dad4d91868ad93722d998b144efed4f4722c7cabd13945573d006e9015"
+      "size": 71930,
+      "sha256": "1a746d212c6601f745e0bae90dc731699acf6000124ee00e61ac852fea70f2c2"
     },
     {
       "path": "docs/ASSISTANT_SETUP.md",
@@ -188,13 +188,13 @@
     },
     {
       "path": "docs/DEVICE_SYNC.md",
-      "size": 94300,
-      "sha256": "65aa5c8394b70cc31a2b23659832f693aa30b019798882af175bd3b6216190fd"
+      "size": 96485,
+      "sha256": "8716b31e0779f7599154f7b40573510762cd789dd123c80b1eb1ee927db15988"
     },
     {
       "path": "docs/GETTING_STARTED.md",
-      "size": 6445,
-      "sha256": "70507cd3bd27db0b1bd7da31c0f070d45edd36abcd9e92b52466e2a34578f854"
+      "size": 8297,
+      "sha256": "7761e9a958bb489c751829d1220e810bebd9fb166fad8f5ee2a1da6cb2b1cce0"
     },
     {
       "path": "docs/MAINTENANCE.md",
@@ -377,6 +377,11 @@
       "sha256": "1a9350a1a6f80ce0d939488ac4138441d0531698892a5745ffbca609b4810421"
     },
     {
+      "path": "scripts/awReadingSelection.ts",
+      "size": 2667,
+      "sha256": "45fef6f6925ca4efc7fea7b3079b3a98fe98376b8516235313326b7238241e11"
+    },
+    {
       "path": "scripts/awRemoteBootstrap.py",
       "size": 5432,
       "sha256": "01bf4575b347d2bcf07703ca70f94b85b62ba4de3dfbd8baacd4802d0bbeeff7"
@@ -493,8 +498,8 @@
     },
     {
       "path": "scripts/chromePreferences.test.mjs",
-      "size": 75540,
-      "sha256": "08c84f376fc63ff9c274826976a2e97ca6428de2a937bbedff84b3f463e4c2e5"
+      "size": 75579,
+      "sha256": "1a8f93486b2aabbd1bacc007f236fd5a37e617db52f691f79ce213978809da60"
     },
     {
       "path": "scripts/desktopBuild.mjs",
@@ -723,8 +728,8 @@
     },
     {
       "path": "server/currentWriteups.test.ts",
-      "size": 2100,
-      "sha256": "0e7a5950958f14369fc08b9362c19f21175c811ebd5e374fa775260fd0e844c2"
+      "size": 3469,
+      "sha256": "f9724c35341176c65bec6f1c07b18e690c4ba694c9ac2da7e7ed91e07cb1d0de"
     },
     {
       "path": "server/desktopInbox.test.ts",
@@ -748,8 +753,8 @@
     },
     {
       "path": "server/editorGeometry.test.ts",
-      "size": 11967,
-      "sha256": "a980011e3f0586bee32e39636c83de2d645a7d9c0e3adf68a6c0eef62f73f259"
+      "size": 13102,
+      "sha256": "12840e61dbd27fc5d5472c167100403cbcc5689804eb6b1739178175f6071073"
     },
     {
       "path": "server/efficiency.test.ts",
@@ -858,8 +863,8 @@
     },
     {
       "path": "server/headings.test.ts",
-      "size": 15683,
-      "sha256": "19db074dc64d13b6b02c9fcf58029e42afa2cb8fa687e87b5f6c57493468d868"
+      "size": 16733,
+      "sha256": "c49408f030426c08e35c27ca2ce16c66c8d0bcbd28416ad051aec6bb9311cba3"
     },
     {
       "path": "server/idleCompilation.test.ts",
@@ -868,8 +873,8 @@
     },
     {
       "path": "server/latexPlugin.ts",
-      "size": 94440,
-      "sha256": "98916fb5bb75f95072cb4f67e83a045c9d7969a88820a56ba3bc2de166e68701"
+      "size": 94904,
+      "sha256": "b164f1c578d1bce122a40306e2f56498d0c0d80f412bc9e4b1b063c4c2d2e0e8"
     },
     {
       "path": "server/linkedWorkspaces.test.ts",
@@ -983,13 +988,13 @@
     },
     {
       "path": "server/portableExport.test.ts",
-      "size": 15486,
-      "sha256": "2bb345a84423b10d8accf8fc8c5e7c665c4dee1c2ed1a6c67593742c6aa7e3d2"
+      "size": 15896,
+      "sha256": "a5628eee60ed0a53647b7198e5330c92e04d48f2632ad8f79e445d45696dc045"
     },
     {
       "path": "server/portableExport.ts",
-      "size": 13427,
-      "sha256": "7b7b04200c6294d5cf38a15a8254a3f3426bbda221ee110d4eadfe2993e1dc67"
+      "size": 13452,
+      "sha256": "a65ecc8d07e497b46bac4a2e79a92e1c4db93907027c09c5fe94cd2814a6389f"
     },
     {
       "path": "server/projectActivity.ts",
@@ -1043,8 +1048,8 @@
     },
     {
       "path": "server/queueEntries.test.ts",
-      "size": 10776,
-      "sha256": "6c721014db83ec7512951a8210defb8093944cf86ded37057225d5d9bbf7f0f2"
+      "size": 12155,
+      "sha256": "7a21edda32ae52a03d4a427200b07227f77ab984e8d7d0e38619a611ab8364b0"
     },
     {
       "path": "server/readerFolder.ts",
@@ -1068,8 +1073,8 @@
     },
     {
       "path": "server/references.test.ts",
-      "size": 15091,
-      "sha256": "a5e97c400d274cd8b065abff0f71ddbde91b4713f579d9561d0b755508ec3f9f"
+      "size": 18665,
+      "sha256": "287d3b59a43b1418b02abc6e62770f878dda0f281685b1d4eba3a3f8d6c10841"
     },
     {
       "path": "server/replyMarkdown.test.ts",
@@ -1143,8 +1148,8 @@
     },
     {
       "path": "server/review.test.ts",
-      "size": 45351,
-      "sha256": "b43c3c66ae8591f36d90c50805af0e69ccda0cb56f1a6c5b9f57dbf62754606b"
+      "size": 45946,
+      "sha256": "ffe46072968076a491ff89c64454615c544ff773ab2c386085ba9ba9b4268f20"
     },
     {
       "path": "server/reviewExport.ts",
@@ -1213,13 +1218,13 @@
     },
     {
       "path": "server/sourceSync.test.ts",
-      "size": 10090,
-      "sha256": "31084dd57c8b554060b92105dc186174e2f6bb0da4a792a5960b2d71b86667ea"
+      "size": 11072,
+      "sha256": "765b41217cb1e6685cae824f8b3d2976f77af622cba6215cd3e3170b879781e4"
     },
     {
       "path": "server/sourceSync.ts",
-      "size": 7166,
-      "sha256": "05935b091d5d985835b4ad0566d9652f32e16985cc8781ebcb2613ecd232e4d9"
+      "size": 8650,
+      "sha256": "fe23cbee3fefe4240d3777cec65e2cab2b97c46c94d8f10ade4305eae2e6fb95"
     },
     {
       "path": "server/sourceZip.ts",
@@ -1398,13 +1403,13 @@
     },
     {
       "path": "server/syncReading.test.ts",
-      "size": 48220,
-      "sha256": "87b4db94111495cdbd7353a263cab6ad3df5d6912e36d0a841e6589ffed567e3"
+      "size": 51516,
+      "sha256": "a284adccc2c453733478acd2a0875e4b8390e067cae14bd6207729994d917f51"
     },
     {
       "path": "server/syncReading.ts",
-      "size": 41489,
-      "sha256": "b7f88516958237c2ae44f800037a0da088eaa59748af6a1547acff6f7eae446c"
+      "size": 46292,
+      "sha256": "7c0226d84bc8a218ee973eabcb5e05c1020d9f370b24639d7cb55265296b0ad3"
     },
     {
       "path": "server/syncReadingSource.test.ts",
@@ -1533,13 +1538,13 @@
     },
     {
       "path": "server/workspaceFolders.test.ts",
-      "size": 6432,
-      "sha256": "d63fdd1bd9e802ce5c439b8cde4cd7e09b7803b91386f4a4625981c5120ec2d4"
+      "size": 8578,
+      "sha256": "68079978091d615bc5c3e4263d74857d5592940bc1e3b11cb9d17884c0d2a560"
     },
     {
       "path": "server/workspaceFolders.ts",
-      "size": 2821,
-      "sha256": "18efd6136dcb58e4fa5bfa7393dd7a913c9d80a779fd0871122eee6686b6ea5e"
+      "size": 3857,
+      "sha256": "9c23d4982755841000c384cd3abd9d97314d669a838b7fc52ee362be28d08a2a"
     },
     {
       "path": "server/writing.test.ts",
@@ -1558,8 +1563,8 @@
     },
     {
       "path": "src/App.tsx",
-      "size": 294463,
-      "sha256": "82697fbebb48d33ecdf324cafcd1a1787612abf7e8bf6498b05b2de2d59cc667"
+      "size": 297213,
+      "sha256": "43cf0afe1c7d4009e2e459b458fb6adf245be20fd832cbf94e44ec0694644590"
     },
     {
       "path": "src/attention.ts",
@@ -1583,8 +1588,8 @@
     },
     {
       "path": "src/chromePreferences.ts",
-      "size": 2131,
-      "sha256": "d948f688204c31248a98c0b3798fbc44c7d507da4ea4c27b9370447a685fda6d"
+      "size": 2299,
+      "sha256": "c56f2b5d6304d5c3172f8d51e857ffa384a1cbe8428e55ab8c06269f522ca2d1"
     },
     {
       "path": "src/commentBuffer.ts",
@@ -1593,8 +1598,8 @@
     },
     {
       "path": "src/commentKeyboard.ts",
-      "size": 1227,
-      "sha256": "0d1575d49a3047d1d48d2df77fb9536ad461cda439b861a5e6bbaca0f6de5216"
+      "size": 1589,
+      "sha256": "1d6013de34c48da7174893b3b3b8276f44699e6888186f5e188543c3c3749804"
     },
     {
       "path": "src/components/AgentHandoff.tsx",
@@ -1623,8 +1628,8 @@
     },
     {
       "path": "src/components/CommentField.tsx",
-      "size": 2553,
-      "sha256": "7cd2279543216a8db7c8b56a48ea2a4fd5de84fc192e80166c275d056f9dcc6f"
+      "size": 2634,
+      "sha256": "11fc186f130e7ae2fedae1c044ce772e376014b1300f372c7767187b28338f8a"
     },
     {
       "path": "src/components/ContinuousPdfPages.tsx",
@@ -1633,8 +1638,8 @@
     },
     {
       "path": "src/components/CurrentWriteups.tsx",
-      "size": 5782,
-      "sha256": "3caacef2a7f37ad3000f50d0552d948728dacfc44840590d84928d4e86347c49"
+      "size": 7633,
+      "sha256": "beed66d022bff7d0c54571ef3dca942ebfb2636334451033e861e7d557b1ebea"
     },
     {
       "path": "src/components/DesktopFiles.tsx",
@@ -1682,6 +1687,11 @@
       "sha256": "1668df50d88a8b1bd925eb7b4f142a3bd9f429960dfa2b9d0746f2ae4b44ae34"
     },
     {
+      "path": "src/components/FileLocationButton.tsx",
+      "size": 1232,
+      "sha256": "6089ca27289c1ff84c9439d2af230d4058962c83863d905d5f7287235a8f51b9"
+    },
+    {
       "path": "src/components/FindingsReader.tsx",
       "size": 1794,
       "sha256": "4f87da8cbd1bc778ccfcb40ea5f3b2a767ce644f6c5dd8660fa908003515718b"
@@ -1708,8 +1718,8 @@
     },
     {
       "path": "src/components/Manuscript.tsx",
-      "size": 77815,
-      "sha256": "1de27fb55d9719d1c5e1a6c28fe9c8f5db71cb4bebf69965f69a153ff99d55dd"
+      "size": 80163,
+      "sha256": "da24c88b60368b3a4f5cada73446a7158d871301c78a06acbd3aaecc806a9f90"
     },
     {
       "path": "src/components/ManuscriptPrompt.tsx",
@@ -1718,8 +1728,8 @@
     },
     {
       "path": "src/components/ManuscriptSwitcher.tsx",
-      "size": 15011,
-      "sha256": "4ff0dbacc7a690ac0bcb48702d7f23a9c2e81b32429d6f3680d50f424af77a07"
+      "size": 16763,
+      "sha256": "9c93dbb810454e0cd080aff902fc4afe178e5ec55621a5410b0da87ef8fd96ba"
     },
     {
       "path": "src/components/NotebookFolders.tsx",
@@ -1733,8 +1743,8 @@
     },
     {
       "path": "src/components/Outline.tsx",
-      "size": 6896,
-      "sha256": "bb0fa81c111616db5fd94e596ed786a2f89151547ff9cee1eacc708d30f97b54"
+      "size": 8268,
+      "sha256": "586dae5ecce112213230cfd665d8397215a2dce301f8f54c62421e8da71ecf15"
     },
     {
       "path": "src/components/PaneDivider.tsx",
@@ -1763,8 +1773,8 @@
     },
     {
       "path": "src/components/PlainSourceEditor.tsx",
-      "size": 11075,
-      "sha256": "b4e945a8d74f0040f4fa2c6cdd8b86ea0cb7ca684a717177aa6a2daffd2a7780"
+      "size": 11200,
+      "sha256": "611138f71acd6275cc37da6503b67aac3c2354809834e1f8c722ae59b65c268c"
     },
     {
       "path": "src/components/PortableAwDownload.tsx",
@@ -1783,8 +1793,8 @@
     },
     {
       "path": "src/components/ProjectFiles.tsx",
-      "size": 9935,
-      "sha256": "9c717d661c3696f3446d4ba2ecedc3190297b7cd510a16a8674153e1029c2dfb"
+      "size": 10091,
+      "sha256": "a5ea99b2def118806c598efbbf06a5af80ad8fc4f2e5237f746610bac429d4d4"
     },
     {
       "path": "src/components/ReelScrollbar.tsx",
@@ -1823,8 +1833,8 @@
     },
     {
       "path": "src/components/ReviewPanel.tsx",
-      "size": 18422,
-      "sha256": "c259978c1b4cfc8f76eda8fbe77335f87ad329f5b567e83d645a63e4e2f60eed"
+      "size": 19294,
+      "sha256": "48eec35f3401bd35f16cb4a2981bd83addd0267a73d63a9ab0e21ea827e34ce8"
     },
     {
       "path": "src/components/RewriteDrawer.tsx",
@@ -1918,8 +1928,8 @@
     },
     {
       "path": "src/currentWriteups.ts",
-      "size": 2247,
-      "sha256": "d925c19ef6257df96fb8b79cdf1240b5d8419ffd72c2157eda2f1f69c2a9be77"
+      "size": 4207,
+      "sha256": "90901f359e23197422afd97dd6c01df0197d7ff84372f2bc0531b3b5f0a3d225"
     },
     {
       "path": "src/demoProject.ts",
@@ -1940,6 +1950,11 @@
       "path": "src/editingFramework.css",
       "size": 16416,
       "sha256": "1809aa6bce80e0f2a64afb1e18c1eef77469e8a1d5796aecb8abb226cd681505"
+    },
+    {
+      "path": "src/EditorAssist.tsx",
+      "size": 1168,
+      "sha256": "b61cad0f8751be29d7b3af8170ee4341e5f3f0f3194c799cf5a8373bc69dd520"
     },
     {
       "path": "src/editorGeometry.ts",
@@ -2050,6 +2065,11 @@
       "path": "src/largerBrowserRecovery.ts",
       "size": 7178,
       "sha256": "506a920a25917494fcf3c1956f92d16021aa4828322c309275b3c262c648e3ef"
+    },
+    {
+      "path": "src/latexCompletion.ts",
+      "size": 4803,
+      "sha256": "f05625ce967fd7afa199e1eb2f9ff59bc8aab8bf6f813a1e0f3ccb34b487479e"
     },
     {
       "path": "src/latexReading.ts",
@@ -2168,8 +2188,8 @@
     },
     {
       "path": "src/queueEntries.ts",
-      "size": 6757,
-      "sha256": "436874a63091c86c82b41913e8780e5153abcf4823f1d13473a5e11648bc1946"
+      "size": 7545,
+      "sha256": "f90d952d9f0aa584f1c8ff4e09ef5edfe12498ddc929d204d3bf9c90824fef5b"
     },
     {
       "path": "src/readingFigures.ts",
@@ -2268,8 +2288,8 @@
     },
     {
       "path": "src/sourceViewport.ts",
-      "size": 2221,
-      "sha256": "432afc20ea680708062476c300d5241f59274200c6df072a6dbf3d7e5302e203"
+      "size": 3186,
+      "sha256": "124a89861576c8db2c690657d76bdfdeb8563a9a6b8c0f033f5e4d14792ecfae"
     },
     {
       "path": "src/state.ts",
@@ -2283,8 +2303,8 @@
     },
     {
       "path": "src/styles.css",
-      "size": 212149,
-      "sha256": "2118ab744765a9f1a689a2622f2678a83e81fc1f29860c5ac3ae35a0b894f3c2"
+      "size": 216556,
+      "sha256": "7fb0bc81c75cacebcd2b0b0e5109bd458db0047e1910520525ffafebb7b66253"
     },
     {
       "path": "src/syncAttention.ts",
@@ -2330,6 +2350,11 @@
       "path": "src/useIdleCompilation.ts",
       "size": 2845,
       "sha256": "b1fb63c052f456bdc07042bc3844f2aa3dc8011fef5c08471929df17fddd0b13"
+    },
+    {
+      "path": "src/useLatexCompletion.tsx",
+      "size": 3101,
+      "sha256": "a0e5ee2d0d418926f42fdb2f720e31940cb6054530b0d2264f1fc8f6f9f4d54b"
     },
     {
       "path": "src/useMediaQuery.ts",
@@ -2468,8 +2493,8 @@
     },
     {
       "path": "tsconfig.node.json",
-      "size": 2643,
-      "sha256": "eb1ad4ff658fbcb691478919b49d23ae9abd893914019e2379cfea5654e4a06c"
+      "size": 3255,
+      "sha256": "d4dbe8c58e0b8439936fb0c2c2006c10fc552f515ae6a2af0b355a74fe787493"
     },
     {
       "path": "vite.config.ts",
@@ -2488,8 +2513,8 @@
     },
     {
       "path": "CHANGELOG.md",
-      "size": 4911,
-      "sha256": "11e57ad85436f8896dddc0f1936115925af8e7f5b6cc0596bacd0ec2aea9d656"
+      "size": 5568,
+      "sha256": "21e8e4b9d0f2b0d2f4faaf00d34ea2fbcb13cb9779f21c9fa943e0a4c00bbd06"
     },
     {
       "path": ".gitattributes",

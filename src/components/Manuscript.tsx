@@ -13,6 +13,8 @@ import { manuscriptHeadingTag, sectionHeadingLevel } from "../headingHierarchy";
 import { usePaneZoomGestures, useStoredPaneZoom } from "../usePaneZoom";
 import { PaneZoomIndicator } from "./PaneZoomIndicator";
 import { SourceLineNumbers } from "./SourceLineNumbers";
+import { useLatexCompletion } from "../useLatexCompletion";
+import { latexSpellingSegments } from "../latexCompletion";
 import { ReelScrollbar } from "./ReelScrollbar";
 import { SourceCommand, type SourceCommandEditing } from "./SourceCommand";
 import { useSectionEdges, type SectionNavigation } from "../useSectionEdges";
@@ -134,7 +136,7 @@ const ManuscriptBlock = memo(function ManuscriptBlock({ blockCommentCounts, onOp
     title: node.environment ? `Type for the whole ${node.environment} environment · all its blocks` : "Wrap just this block in a declared LaTeX environment" } : undefined, [blockTypes, node.environment, node.canChangeEnvironment]);
   return <section className={`manuscript-node kind-${node.kind} ${linkedProof ? "is-linked-proof" : ""} ${active ? "is-active" : ""} ${turbo ? stateLabel ? "turbo-active" : "turbo-context" : ""}`} data-node-id={node.id} data-heading-level={sectionHeadingLevel(node)}>
     {showHeading && !!blockCommentCounts?.[sourceCommandId(node.id, "opening")] && <div className="heading-comments-anchor"><BlockCommentsButton blockId={sourceCommandId(node.id, "opening")} count={blockCommentCounts[sourceCommandId(node.id, "opening")]} onOpen={onOpenBlockComments} /></div>}
-    {showHeading && <div className="manuscript-heading-row">{explicitBlocks ? <Heading className="manuscript-heading" onClick={() => onSelect(node.id)}>{node.number && <span>{node.number} </span>}{headingTitle ?? node.title}</Heading> : node.sourceOpening ? <SourceCommand nodeId={node.id} command={node.sourceOpening} editable={editable} editing={commandEditing}/> : null}{node.environment && paragraphs[0] && typeControl && <EnvironmentHeadingTools node={node} paragraph={paragraphs[0]} text={edits[paragraphs[0].id] ?? paragraphs[0].text} control={typeControl} editable={editable} />}</div>}
+    {showHeading && <div className="manuscript-heading-row">{explicitBlocks && node.id !== "document" ? <Heading className="manuscript-heading" onClick={() => onSelect(node.id)}>{node.number && <span>{node.number} </span>}{headingTitle ?? node.title}</Heading> : node.sourceOpening ? <SourceCommand nodeId={node.id} command={node.sourceOpening} editable={editable} editing={commandEditing}/> : null}{node.environment && paragraphs[0] && typeControl && <EnvironmentHeadingTools node={node} paragraph={paragraphs[0]} text={edits[paragraphs[0].id] ?? paragraphs[0].text} control={typeControl} editable={editable} />}</div>}
     {turbo && (stateLabel ? <div className="turbo-paragraph-state">{stateLabel}</div> : <button className="turbo-context-focus" aria-label="Focus this paragraph" title="Focus this paragraph · no check" onClick={() => onTurboFocus(paragraphs[0].id)}><Focus size={13} /></button>)}
     {showHeading && paragraphs[0]?.file && <small className="source-file-badge" title="Edits are saved back to this original source file">{linkedProof ? "Linked proof · " : ""}{paragraphs[0].file}</small>}
     {paragraphs.map((paragraph) => <ManuscriptParagraph key={paragraph.id} paragraph={paragraph} text={edits[paragraph.id] ?? paragraph.text} editable={editable}
@@ -206,6 +208,7 @@ export function SourceParagraph({ paragraph, text, editable, onEdit, onReference
   const [removedBlank, setRemovedBlank] = useState(false);
   const shellRef = useRef<HTMLDivElement>(null);
   const paragraphRef = useRef<HTMLParagraphElement>(null);
+  const completion=useLatexCompletion(paragraphRef,editable,(value,caret)=>normalizeChunks(value,caret));
   const diskText = useRef(paragraph.text);
   const emittedText = useRef(text);
   const history = useRef({ entries: [{ text, caret: text.length }], index: 0 });
@@ -252,13 +255,20 @@ export function SourceParagraph({ paragraph, text, editable, onEdit, onReference
   const paint = (value: string, decorate = false, caret?: number) => {
     const root = paragraphRef.current; if (!root) return;
     const fragment = window.document.createDocumentFragment();
-    const appendText = (span: HTMLElement, value: string) => {
+    const appendLiteral = (span: HTMLElement, value: string) => {
       // Keep one Enter as one line break, including at the end of a block. A
       // final placeholder BR is visual only and is excluded by editableText.
       value.split("\n").forEach((line, index) => {
         if (index) { const br = window.document.createElement("br"); br.dataset.sourceBreak = "true"; span.append(br); }
         span.append(window.document.createTextNode(line));
       });
+    };
+    const appendText=(span:HTMLElement,value:string)=>{
+      if(!completion.spelling){appendLiteral(span,value);return;}
+      for(const segment of latexSpellingSegments(value)) {
+        if(segment.check)appendLiteral(span,segment.text);
+        else {const technical=window.document.createElement('span');technical.spellcheck=false;technical.dataset.latexTechnical='true';appendLiteral(technical,segment.text);span.append(technical);}
+      }
     };
     chunksFor(value).forEach((chunk, index) => {
       const span = window.document.createElement("span"); span.className = "source-chunk"; span.dataset.chunkIndex = String(index); span.dataset.empty = String(!chunk.text.trim());
@@ -267,7 +277,7 @@ export function SourceParagraph({ paragraph, text, editable, onEdit, onReference
         appendText(span, chunk.text.slice(cursor, token.start));
         const link = window.document.createElement("span"); link.className = "source-reference"; link.setAttribute("role", "link"); link.tabIndex = 0; link.contentEditable = "false";
         const compact = sourceReferenceSummary(token);
-        link.textContent = token.raw;
+        link.textContent = token.raw; link.spellcheck=false;
         if (compact) {
           link.dataset.compactLabel = compact; link.setAttribute("role", "button"); link.setAttribute("aria-expanded", "false");
           link.setAttribute("aria-label", `${compact}. Expand full LaTeX reference.`);
@@ -393,7 +403,7 @@ export function SourceParagraph({ paragraph, text, editable, onEdit, onReference
     paint(keepBlank ? current : text, true);
     emittedText.current = keepBlank ? current : text;
     if (history.current.entries[history.current.index].text !== emittedText.current) history.current = { entries: [{ text: emittedText.current, caret: emittedText.current.length }], index: 0 };
-  }, [text, paragraph.text, editing]);
+  }, [text, paragraph.text, editing, completion.spelling]);
   const follow = (element: HTMLElement, inspect = false) => {
     const source = element.closest("p");
     const current = source ? editableText(source) : text;
@@ -410,8 +420,9 @@ export function SourceParagraph({ paragraph, text, editable, onEdit, onReference
     const root=paragraphRef.current; if(!root)return;
     const value=editableText(root),chunk=chunkAtOffset(chunksFor(value),activeChunk.start);
     typeControl.onChange({paragraphId:paragraph.id,nodeId:paragraph.nodeId,start:chunk.start,end:chunk.end,text:chunk.text},environment);
-  }} /></div>}<p className="source-chunks" ref={paragraphRef} data-paragraph-id={paragraph.id} data-node-id={paragraph.nodeId} data-source-file={paragraph.file} data-placeholder={paragraph.emptySource ? "Write here…" : undefined} aria-label={paragraph.emptySource ? "Write in this empty section" : "Edit manuscript text"} role={editable ? "textbox" : undefined} aria-multiline={editable ? true : undefined} contentEditable={editable} suppressContentEditableWarning
+  }} /></div>}<p className="source-chunks" ref={paragraphRef} spellCheck={completion.spelling} lang="en" autoCapitalize="off" autoCorrect="off" data-paragraph-id={paragraph.id} data-node-id={paragraph.nodeId} data-source-file={paragraph.file} data-placeholder={paragraph.emptySource ? "Write here…" : undefined} aria-label={paragraph.emptySource ? "Write in this empty section" : "Edit manuscript text"} role={editable ? "textbox" : undefined} aria-multiline={editable ? true : undefined} contentEditable={editable} suppressContentEditableWarning
     onDragStart={event => event.preventDefault()} onDrop={event => event.preventDefault()}
+    aria-autocomplete="list" aria-expanded={completion.open} aria-controls={completion.open?completion.listId:undefined} aria-activedescendant={completion.open?completion.activeId:undefined}
     onPaste={event => { if (editable && !event.defaultPrevented) { event.preventDefault(); insert(event.clipboardData.getData("text/plain")); } }}
     onCopy={event => {
       const selection = window.getSelection(); if (!selection?.rangeCount || selection.isCollapsed) return;
@@ -421,9 +432,10 @@ export function SourceParagraph({ paragraph, text, editable, onEdit, onReference
     }}
     onMouseDown={(event) => { const link = referenceElement(event.target); if (link && (event.ctrlKey || event.metaKey || event.button === 2)) { event.preventDefault(); follow(link, event.button === 2); } else if (link && event.button === 0) { if (link.dataset.compactLabel && link.dataset.referenceExpanded !== "true") { event.preventDefault(); expandReference(link); } else if (editable) link.contentEditable = "inherit"; } }}
     onContextMenu={(event) => { const link = referenceElement(event.target); if (link) { event.preventDefault(); follow(link, true); } }}
-    onClick={event => { setSelected(true); const span = event.target instanceof HTMLElement ? event.target.closest<HTMLElement>(".source-chunk") : null; pickChunk(span); }}
+    onClick={event => { setSelected(true); const span = event.target instanceof HTMLElement ? event.target.closest<HTMLElement>(".source-chunk") : null; pickChunk(span); completion.refresh(); }}
     onKeyDown={(event) => {
       if(event.defaultPrevented)return;
+      if(editable && completion.keyDown(event))return;
       const link = referenceElement(event.target);
       if (link?.dataset.compactLabel && ["Enter", " "].includes(event.key) && !event.ctrlKey && !event.metaKey && !event.altKey) { event.preventDefault(); expandReference(link); paragraphRef.current?.focus({ preventScroll: true }); return; }
       if(editable && /^Arrow(Left|Right|Up|Down)$/.test(event.key) && !event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey && !event.nativeEvent.isComposing){
@@ -480,13 +492,15 @@ export function SourceParagraph({ paragraph, text, editable, onEdit, onReference
         event.preventDefault(); insert("\n");
       }
     }}
-    onKeyUp={event => { if(event.key.length!==1 || event.ctrlKey || event.metaKey || event.altKey)scheduleChunk(); }}
+    onKeyUp={event => { if(event.key.length!==1 || event.ctrlKey || event.metaKey || event.altKey)scheduleChunk();if(['ArrowLeft','ArrowRight','Home','End'].includes(event.key))completion.refresh(); }}
     onFocus={(event) => { if (event.target === event.currentTarget) { setEditing(true); setSelected(true); event.currentTarget.querySelectorAll<HTMLElement>(".source-reference").forEach((link) => { if (!link.dataset.compactLabel || link.dataset.referenceExpanded === "true") link.contentEditable = "inherit"; }); normalizeChunks(); } onFocus(paragraph.id, paragraph.nodeId); pickChunk(); }} onInput={() => {
-      const root=paragraphRef.current,caret=root && editableCaret(root);
-      const completed=root && caret != null && !typeControl?.environment && completeTypedEnvironment(editableText(root),caret,typeControl?.options ?? []);
+      const root=paragraphRef.current,caret=root && editableCaret(root),source=root?editableText(root):"";
+      const completed=root && caret != null && !typeControl?.environment && completeTypedEnvironment(source,caret,typeControl?.options ?? []);
       if(completed) normalizeChunks(completed.text,completed.caret); else normalizeChunks();
+      if(caret!=null)completion.refresh({source:completed?completed.text:source,caret:completed?completed.caret:caret});else completion.close();
     }}
-    onBlur={(event) => { if (event.relatedTarget instanceof Node && event.currentTarget.contains(event.relatedTarget)) return; const current = editableText(event.currentTarget); if (current !== emittedText.current) onEdit(paragraph.id, current); expandedReferences.current.clear(); setEditing(false); }} />
+    onBlur={(event) => { if (event.relatedTarget instanceof Node && event.currentTarget.contains(event.relatedTarget)) return; completion.close(); const current = editableText(event.currentTarget); if (current !== emittedText.current) onEdit(paragraph.id, current); expandedReferences.current.clear(); setEditing(false); }} />
+    {completion.panel}
     <SourceLineNumbers target={paragraphRef} text={text} start={paragraph.sourceLine} />
     {onChunkAction && selected && <div className="chunk-controls" aria-label="Block actions" onMouseDown={event => { if (!(event.target instanceof HTMLSelectElement)) event.preventDefault(); }} onKeyDown={event => { if (event.key === "Escape") { event.preventDefault(); setSelected(false); paragraphRef.current?.focus(); } }}>
       <button title="Show in preview · Ctrl/Cmd-click source also works" aria-label="Show this block in preview" data-sync-preview={paragraph.id}><Scan size={12} /></button>
@@ -630,7 +644,21 @@ export function Manuscript({
         void marked.offsetWidth; // Restart the flash for repeated navigation to the same passage.
         marked.dataset.sourceFlash = "true";
       }
-      const rectangle = target.getBoundingClientRect();
+      let rectangle = target.getBoundingClientRect();
+      if (jumpTarget.paragraphOffset !== undefined && target.matches('p[data-paragraph-id]')) {
+        // Keep the browser-owned children stable through the onFocus update.
+        (target as HTMLElement).focus({ preventScroll: true });
+        const range = editableRangeAt(target as HTMLElement, jumpTarget.paragraphOffset);
+        // A collapsed caret between BR and text nodes has no browser rectangle.
+        // Measure one adjacent character without selecting or altering it.
+        const probe = range.cloneRange();
+        const next = editableRangeAt(target as HTMLElement, jumpTarget.paragraphOffset + 1);
+        probe.setEnd(next.startContainer, next.startOffset);
+        const line = probe.getBoundingClientRect();
+        if (line.height) rectangle = line;
+        const selection = target.ownerDocument.defaultView?.getSelection();
+        selection?.removeAllRanges(); selection?.addRange(range);
+      }
       const frame = scroll.getBoundingClientRect();
       if (jumpTarget.viewportOffset !== undefined) {
         // Restore after reel initialization, before paint. Scope changes aren't navigation.

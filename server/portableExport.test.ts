@@ -199,3 +199,11 @@ test("app download requires explicit same-origin POST and exports code, never th
     assert.ok(archive.has("AGENTS.md"));
   } finally { await new Promise<void>(resolve => server.close(() => resolve())); }
 });
+
+test('requested-only reading tool ships with its guidance',async()=>{
+ const {entries}=await files();
+ assert.ok(entries.some(entry=>entry.name==='scripts/awReadingSelection.ts'));
+ const guide=entries.find(entry=>entry.name==='docs/DEVICE_SYNC.md')!.data.toString();
+ assert.equal(guide.split('## Requested-only reading projects').length,2);
+ assert.match(guide,/awReadingSelection\.ts status/);
+});

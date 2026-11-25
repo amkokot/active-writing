@@ -431,3 +431,10 @@ expected digest plus the explicitly intended overview/notes/overviewTarget to
 main-file selection, publication settings and saved research records intact.
 Do not start Aw or hand-edit registry JSON merely to designate reading copies.
 The human's requested reading package supplies the scope; the helper does not.
+
+Professor reading shelves: Current writeups uses its existing guarded JSON cell.
+Group reports by person; deduplicate files within that person. Primary rows and
+related links accept `updatedAt` and `pinned`. Preserve human pins and use dates of
+substantive reading revisions rather than compile/arrival times. An explicitly
+requested-only paired project must not automatically transfer new leads. See
+DEVICE_SYNC.md, Requested-only reading projects, and the owning project's policy.

@@ -1,6 +1,6 @@
 import { ArrowLeft, ArrowRight, ArrowUpRight, MessageSquareText, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { commentShortcut } from "../commentKeyboard";
+import { commentShortcut, isCloseCommentShortcut } from "../commentKeyboard";
 import { CommentField } from "./CommentField";
 import type { AttentionTask, ProjectDocument, HandoffDraft, ReviewComment } from "../types";
 import { reviewComments, reviewCommentQueue, reviewCommentTitle, defaultReviewInstructions, reviewCommentTarget, reviewCommentJumpLocation, adjacentReviewComment, nextCommentOutsideBlock } from "../review";
@@ -26,6 +26,22 @@ export function ReviewPanel({ unsaved, onReply, blockComments, onAllComments, on
   const [replyingTo, setReplyingTo] = useState<string>();
   const panel = useRef<HTMLElement>(null);
   const [preparing, setPreparing] = useState(false);
+  const closePanel = useRef(() => {});
+  closePanel.current = () => {
+    const dirtyComment = panel.current?.querySelector('[data-comment-dirty="true"]');
+    const dirtyReply = Object.values(replyDrafts).some(text => text.trim());
+    if ((dirtyComment || dirtyReply) && !window.confirm("Discard unsaved comment or reply text and close comments?")) return;
+    onClose();
+  };
+  useEffect(() => {
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (!isCloseCommentShortcut(event)) return;
+      event.preventDefault(); event.stopPropagation(); closePanel.current();
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, []);
+
   const navigationTasks = blockComments ?? tasks;
   const outsideComment = blockComments && nextCommentOutsideBlock(tasks, blockComments, selectedId);
   const open = reviewCommentQueue(blockComments ?? tasks), resolved = reviewComments(tasks, true).filter(task => task.review?.kind === "comment" && !task.review.replyTo);
@@ -65,8 +81,8 @@ export function ReviewPanel({ unsaved, onReply, blockComments, onAllComments, on
     setReplyingTo(undefined);
     panel.current?.focus({ preventScroll: true });
   }
-  if (unsaved && selected && comment) return <section className="review-panel" aria-label="New comment">
-    <header className="inspector-header"><h2><MessageSquareText size={17} /> Comment</h2><button aria-label="Discard unsaved comment" onClick={onClose}><X size={16} /></button></header>
+  if (unsaved && selected && comment) return <section ref={panel} className="review-panel" aria-label="New comment">
+    <header className="inspector-header"><h2><MessageSquareText size={17} /> Comment</h2><button aria-label="Discard unsaved comment" title="Close comments (Esc)" onClick={() => closePanel.current()}><X size={16} /></button></header>
     <article className="review-current"><blockquote>{comment.quote}</blockquote>
       <CommentField key={selected.id} projectId={document.project.id} id={selected.id} body={comment.body} autoFocus isNew onEdit={onEdit} onSave={onClose} />
       <small>Not saved until you choose Save comment.</small>
@@ -77,7 +93,7 @@ export function ReviewPanel({ unsaved, onReply, blockComments, onAllComments, on
     const action = commentShortcut({ ...event, isComposing: event.nativeEvent.isComposing }, true);
     if (action === -1 || action === 1) { event.preventDefault(); event.stopPropagation(); moveReply(action); }
   }}>
-    <header className="inspector-header"><h2><MessageSquareText size={17} /> {selected ? "Comment" : "Review"}</h2><button aria-label="Close review" onClick={onClose}><X size={16} /></button></header>
+    <header className="inspector-header"><h2><MessageSquareText size={17} /> {selected ? "Comment" : "Review"}</h2><button aria-label="Close review" title="Close comments (Esc)" onClick={() => closePanel.current()}><X size={16} /></button></header>
     {blockComments && <div className="block-comments-list" aria-label="Comments on this block"><strong>Comments on this block</strong>{rows(blockComments)}{!blockComments.length && <small>No open comments remain on this block.</small>}<button disabled={!outsideComment} title={outsideComment ? "Leave this block's list and open the next unresolved comment in queue order" : "No other open comments"} onClick={() => { if (outsideComment) onOutsideComment(outsideComment); }}>Next comment outside this block <ArrowRight size={14} /></button><button onClick={onAllComments}>Show all comments</button></div>}
     <div className="review-navigation" aria-label="Unresolved comments"><button aria-label="Previous unresolved comment" disabled={!open.length} onClick={() => move(-1)}><ArrowLeft size={14} /></button><span>{open.some(t => t.id === selectedId) ? `${open.findIndex(t => t.id === selectedId) + 1} / ${open.length} open` : `${open.length} open`}<small>{blockComments ? "On this block" : "In your priority queue"}</small></span><button aria-label="Next unresolved comment" disabled={!open.length} onClick={() => move(1)}><ArrowRight size={14} /></button></div>
     {selected && comment && <article className="review-current" aria-label="Selected review comment">

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { cycleQueuedProgress, passageBookmark, sectionReminderTarget, togglePassageBookmarks } from "../src/queueEntries.ts";
+import { cycleQueuedProgress, setSectionProgress, passageBookmark, sectionReminderTarget, togglePassageBookmarks } from "../src/queueEntries.ts";
 import { archiveAttentionTask, attentionQueue, reopenAttentionTask, taskStatusLabel } from "../src/attention.ts";
 import { makeReviewComment } from "../src/review.ts";
 import { freshTurbo } from "../src/turbo.ts";
@@ -20,6 +20,29 @@ function state(): AppState {
 function selection(d = doc(), index = 0, start = 0, end = d.paragraphs[index].text.length) {
   const p = d.paragraphs[index]; return { paragraphId: p.id, nodeId: p.nodeId, start, end, text: p.text.slice(start, end) };
 }
+
+test("bulk section marks preserve comments and reset without adding tasks", () => {
+  const d=doc(),initial=state();
+  const comment=makeReviewComment(d,{},selection(d),"Please explain.");initial.attentionTasks=[comment];
+  const begun=cycleQueuedProgress(initial,d,"intro");
+  const done=setSectionProgress(begun,d,["intro","other","missing","intro"],true);
+  assert.deepEqual(done.progressByNode,{intro:"done",other:"done"});
+  assert.equal(done.attentionTasks.find(t=>t.id===comment.id)?.status,"queued");
+  assert.equal(done.attentionTasks.find(t=>t.reminder?.kind==="section")?.status,"reviewed");
+  const reset=setSectionProgress(done,d,["intro","other"],false);
+  assert.deepEqual(reset.progressByNode,{});
+  assert.deepEqual(reset.attentionTasks,done.attentionTasks);
+  assert.deepEqual(initial.progressByNode,{});
+});
+
+test("bulk section marks do not touch other sections or another manuscript's tasks", () => {
+  const d=doc(),s=cycleQueuedProgress(state(),d,"intro");
+  s.progressByNode.other="progress";
+  const foreign=structuredClone(s.attentionTasks[0]);foreign.id="foreign";foreign.sourceSnapshot!.rootFile="other.tex";s.attentionTasks.push(foreign);
+  const done=setSectionProgress(s,d,["intro"],true);
+  assert.equal(done.progressByNode.other,"progress");
+  assert.equal(done.attentionTasks.find(t=>t.id==="foreign")?.status,"queued");
+});
 test("Later toggles only bookmarks, reuses history, and keeps comments and prompts", () => {
   const d = doc(), chosen = selection(d), s = state();
   s.attentionTasks = [makeReviewComment(d, {}, chosen, "Human concern"), { id: "prompt", title: "Question", nodeId: "intro", paragraphId: "p1", route: "codex", status: "working", createdAt: "now", updatedAt: "now" }];

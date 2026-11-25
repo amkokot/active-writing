@@ -1,11 +1,13 @@
+import {FileLocationButton} from './FileLocationButton';
 import { useRef, useState } from "react";
 import { Check, ChevronDown, FileText, Link, Plus, Presentation } from "lucide-react";
 import { useDismissibleLayer } from "../useDismissibleLayer";
 import { isPersonalNote, manuscriptDisplayLabel, manuscriptPurpose, manuscriptVersionLabel, nextManuscriptVersion, manuscriptRoles, manuscriptPurposeLabels, pinnedManuscripts, manuscriptLink, type ManuscriptKind } from "../manuscripts";
 import type { ManuscriptNode, ManuscriptPurpose, ProjectDocument } from "../types";
 
-export function ManuscriptSwitcher({ document, disabled, onSelect, onCreate, onVersion, onPurpose, onPin, onPinSlides, section, onSectionFile }: {
+export function ManuscriptSwitcher({ document, disabled, getSourceFile, onSelect, onCreate, onVersion, onPurpose, onPin, onPinSlides, section, onSectionFile }: {
   document: ProjectDocument; disabled: boolean; onSelect: (file: string) => Promise<unknown>;
+  getSourceFile?: () => string;
   onCreate: (file: string, title: string, kind: ManuscriptKind) => Promise<unknown>;
   onVersion: (file: string, fresh: boolean) => Promise<unknown>;
   onPurpose: (purpose: ManuscriptPurpose, targetFile?: string) => Promise<unknown>;
@@ -19,6 +21,7 @@ export function ManuscriptSwitcher({ document, disabled, onSelect, onCreate, onV
   const [sectionForm, setSectionForm] = useState(false), [moveSection, setMoveSection] = useState(false), [sectionFile, setSectionFile] = useState("sections/new-section.tex"), [sectionTitle, setSectionTitle] = useState("New section");
   const [versioning, setVersioning] = useState(false), [versionFile, setVersionFile] = useState(nextManuscriptVersion(document.project).file), [fresh, setFresh] = useState(false);
   const [search, setSearch] = useState(""), [copied, setCopied] = useState("");
+  const [locationFile, setLocationFile] = useState(document.project.mainFile);
   useDismissibleLayer(open, root, () => setOpen(false), "summary");
   const roots = [...new Set([document.project.mainFile, ...document.rootFiles])].sort((a, b) => {
     const va = document.project.manuscriptVersions?.find(v => v.file === a), vb = document.project.manuscriptVersions?.find(v => v.file === b);
@@ -34,9 +37,18 @@ export function ManuscriptSwitcher({ document, disabled, onSelect, onCreate, onV
   const decks=(document.slideFiles??[]).filter(file=>roots.includes(file));
   const currentDeck=decks.includes(document.project.slideDeck??'')?document.project.slideDeck:decks.length===1?decks[0]:undefined;
   const matches = roots.filter(file => `${file} ${manuscriptDisplayLabel(document.project, file)}`.toLowerCase().includes(search.trim().toLowerCase()));
-  return <details ref={root} className="manuscript-switcher" open={open} onToggle={event => setOpen(event.currentTarget.open)}>
+  const sourceFiles = [...new Set([document.project.mainFile, ...(document.sourceFiles ?? document.paragraphs.map(p => p.file).filter((f): f is string => Boolean(f))), locationFile])].filter(file => document.files.includes(file));
+  return <details ref={root} className="manuscript-switcher" open={open} onToggle={event => {
+    setOpen(event.currentTarget.open);
+    if (event.currentTarget === event.target && event.currentTarget.open) setLocationFile(getSourceFile?.() ?? document.project.mainFile);
+  }}>
     <summary aria-label="Switch manuscript" title={`Manuscript · ${document.project.mainFile}`}><FileText size={14} /><span>{document.project.mainFile} {manuscriptVersionLabel(document.project, document.project.mainFile)}</span><ChevronDown size={11} /></summary>
     <div className="manuscript-switcher-panel" aria-label="Manuscripts in this project" aria-busy={disabled}>
+      <label className="manuscript-source-location">Source file {sourceFiles.length > 1
+        ? <select aria-label="Source file location" value={locationFile} onChange={event => setLocationFile(event.target.value)}>{sourceFiles.map(file => <option key={file} value={file}>{file}{file === document.project.mainFile ? " (master)" : ""}</option>)}</select>
+        : <code>{locationFile}</code>}</label>
+      <div className="manuscript-file-location"><FileLocationButton key={`open:${locationFile}`} projectId={document.project.id} file={locationFile} disabled={disabled}/><FileLocationButton key={`copy:${locationFile}`} projectId={document.project.id} file={locationFile} copy disabled={disabled}/></div>
+      {locationFile !== document.project.mainFile && <details className="manuscript-manage"><summary>Master file · compiles the whole paper</summary><small>{document.project.mainFile}</small><div className="manuscript-file-location"><FileLocationButton projectId={document.project.id} file={document.project.mainFile} disabled={disabled}/><FileLocationButton projectId={document.project.id} file={document.project.mainFile} copy disabled={disabled}/></div></details>}
       <header className="manuscript-menu-heading"><strong>Documents</strong><small title={document.project.mainFile}>Current · {manuscriptDisplayLabel(document.project)}</small></header>
       <div className="manuscript-pins" aria-label="Pinned project documents">
         {!!decks.length && <div className="manuscript-pin-actions manuscript-slides">

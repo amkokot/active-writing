@@ -7,7 +7,7 @@ import {getProject,registry,saveRegistry} from './projects.ts';
 import {initializeSyncDevice,captureSyncSnapshot,syncStatus,privateSyncPath} from './deviceSync.ts';
 import {previewSyncClone,commitSyncClone} from './syncClone.ts';
 import {previewSshPeer,commitSshPeer,handleExchangeMessage,type SshRunner} from './syncSsh.ts';
-import {readingInventory,readingPacket,applyReadingPacket,syncReadingRecords,handleReadingMessage,fastReadingFigures,readingTransferPriority} from './syncReading.ts';
+import {readingInventory,readingPacket,applyReadingPacket,syncReadingRecords,handleReadingMessage,fastReadingFigures,readingTransferPriority,validateReadingSelection,effectiveReadingSelection} from './syncReading.ts';
 import {exchangeStatus} from './syncExchange.ts';
 import {readNotebook,writeNotebook} from './notebookStore.ts';
 import {readExperiments,writeExperiments} from './experiments.ts';
@@ -378,4 +378,32 @@ test('shared old reply captures do not block subsequent one-sided and independen
  await addComment(f.home,f.id,'laptop-next');await addComment(f.desktop,f.id,'desktop-next');
  const next=await syncReadingRecords(f.home,f.id,f.peer.id,f.runner,{fastOnly:true});assert.deepEqual(next.held,[]);
  for(const home of [f.home,f.desktop]){const wb=await readWorkbench(home,f.id);assert.equal(wb.attentionTasks.length,5);assert.equal(wb.attentionTasks.find(t=>t.id==='old-reply')!.sourceSnapshot!.revision,'later-source');assert.ok(wb.attentionTasks.every(t=>t.status==='queued'));}
+});
+
+test('requested reading selection excludes desktop leads and keeps selected TeX and comments live',async()=>{
+ const f=await fixture();
+ await writeFile(path.join(f.remoteRoot,'unrequested.tex'),original.replace('Original source.','Desktop lead.'));
+ const selection={version:1,files:['main.tex'],notebooks:['question']};
+ for(const home of [f.home,f.desktop]){const target=await privateSyncPath(home,`reading/${f.id}/selection.json`,true);await writeFile(target,JSON.stringify(selection));}
+ const inv=await readingInventory(f.desktop,f.id);assert.ok(!inv.items.some(i=>i.key==='source/unrequested.tex'));assert.ok(inv.items.some(i=>i.key==='comments'));assert.ok(!inv.documentPins);
+ await writeFile(path.join(f.remoteRoot,'main.tex'),original.replace('Original source.','Requested edit.'));
+ const result=await syncReadingRecords(f.home,f.id,f.peer.id,f.runner);assert.deepEqual(result.held,[]);assert.ok(result.copied.includes('source/main.tex'));
+ assert.equal((await readFile(path.join(f.root,'main.tex'),'utf8')).includes('Requested edit.'),true);
+ await assert.rejects(readFile(path.join(f.root,'unrequested.tex')),/ENOENT/);
+ for(const value of [{...selection,files:['../private.tex']},{...selection,notebooks:['../owner']}])assert.throws(()=>validateReadingSelection(value));
+});
+
+test('requested reports follow new literal figures and included TeX without importing unrelated leads',async()=>{
+ const f=await fixture();const selection={version:1,files:['main.tex'],notebooks:['question'],roots:['main.tex']};
+ for(const home of [f.home,f.desktop])await writeFile(await privateSyncPath(home,`reading/${f.id}/selection.json`,true),JSON.stringify(selection));
+ await mkdir(path.join(f.remoteRoot,'figures'),{recursive:true});await mkdir(path.join(f.remoteRoot,'parts'),{recursive:true});
+ const updated=original.replace('Original source.',String.raw`Updated retained report.\input{parts/detail}\includegraphics{figures/new}
+\href{unrequested.tex}{Other lead}
+% \includegraphics{figures/secret.pdf}`);
+ await writeFile(path.join(f.remoteRoot,'main.tex'),updated);await writeFile(path.join(f.remoteRoot,'parts/detail.tex'),'An included derivation.');await writeFile(path.join(f.remoteRoot,'figures/new.pdf'),'%PDF-new');await writeFile(path.join(f.remoteRoot,'unrequested.tex'),original);
+ const allowed=await effectiveReadingSelection(f.desktop,f.id);assert.ok(allowed?.files.includes('figures/new.pdf'));assert.ok(allowed?.files.includes('parts/detail.tex'));assert.ok(!allowed?.files.includes('unrequested.tex'));assert.ok(!allowed?.files.includes('figures/secret.pdf'));
+ await syncReadingRecords(f.home,f.id,f.peer.id,f.runner);
+ const result=await syncReadingRecords(f.home,f.id,f.peer.id,f.runner);assert.deepEqual(result.held,[],JSON.stringify(result));
+ assert.equal(await readFile(path.join(f.root,'figures/new.pdf'),'utf8'),'%PDF-new');assert.equal(await readFile(path.join(f.root,'parts/detail.tex'),'utf8'),'An included derivation.');await assert.rejects(readFile(path.join(f.root,'unrequested.tex')),/ENOENT/);
+ assert.deepEqual((JSON.parse(await readFile(await privateSyncPath(f.home,`reading/${f.id}/selection.json`),'utf8'))).files,['main.tex'],'dependency discovery does not broaden the explicit report selection');
 });
